@@ -26,6 +26,11 @@ from ...execution.contracts import (
     PortSpec,
     ResultProfileSpec,
 )
+from ...execution.energy_filter import (
+    ENERGY_PARAM_KEYS,
+    parse_energy_params,
+    uses_energy_params,
+)
 from ...execution.registry import ExecutionRegistry, RegistryLookupError, default_registry
 from .diagnostics import DiagnosticCode, DiagnosticReason, error
 from .document import (
@@ -516,6 +521,86 @@ def _proven_input_state(
     return relevant
 
 
+def _validate_filter_energy_binding(
+    step: StepDefinition,
+    *,
+    all_steps: tuple[StepDefinition, ...],
+    registry: ExecutionRegistry,
+) -> list[Diagnostic]:
+    """Enforce N3 binding rules for filter steps using energy selection."""
+    diagnostics: list[Diagnostic] = []
+    field_path = f"steps.{step.id}"
+    scientific = step.scientific
+    if scientific is None or scientific.transform != "filter" or not step.enabled:
+        return diagnostics
+    native = scientific.native
+    if uses_energy_params(native):
+        try:
+            parse_energy_params(native)
+        except DomainError as exc:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.CAPABILITY_ERROR,
+                    DiagnosticReason.INVALID_VALUE,
+                    str(exc),
+                    step_id=step.id,
+                    field_path=f"{field_path}.transform.native",
+                )
+            )
+            return diagnostics
+    by_target = {binding.target_port: binding for binding in step.bindings}
+    results_binding = by_target.get("results")
+    if results_binding is None:
+        if uses_energy_params(native):
+            diagnostics.append(
+                error(
+                    DiagnosticCode.BINDING_ERROR,
+                    DiagnosticReason.FILTER_RESULTS_REQUIRED,
+                    "filter steps using energy parameters must bind the 'results' "
+                    "input port to a calculation step's results output port",
+                    step_id=step.id,
+                    field_path=f"{field_path}.bindings.results",
+                    details={
+                        "energy_params": sorted(set(native) & set(ENERGY_PARAM_KEYS)),
+                    },
+                )
+            )
+        return diagnostics
+    source = results_binding.source
+    producer: StepDefinition | None = None
+    if source.kind is SourceKind.STEP_OUTPUT and source.step_id is not None:
+        producer = {item.id: item for item in all_steps}.get(source.step_id)
+    producer_capability: ExecutorCapability | None = None
+    if producer is not None:
+        producer_capability, _, _ = resolve_executor_contract(producer, registry)
+    structure_source_id: str | None = None
+    structure_binding = by_target.get("structure")
+    if structure_binding is not None and structure_binding.source.kind is (SourceKind.STEP_OUTPUT):
+        structure_source_id = structure_binding.source.step_id
+    if not (
+        source.kind is SourceKind.STEP_OUTPUT
+        and producer_capability is ExecutorCapability.CALCULATION
+        and source.port == "results"
+        and structure_source_id == source.step_id
+    ):
+        diagnostics.append(
+            error(
+                DiagnosticCode.BINDING_ERROR,
+                DiagnosticReason.FILTER_RESULTS_SOURCE_MISMATCH,
+                "filter 'results' must bind the same calculation step's results "
+                "port the 'structure' input comes from",
+                step_id=step.id,
+                field_path=f"{field_path}.bindings.results",
+                details={
+                    "results_source_step": source.step_id,
+                    "results_source_port": source.port,
+                    "structure_source_step": structure_source_id,
+                },
+            )
+        )
+    return diagnostics
+
+
 def _validate_step(
     step: StepDefinition,
     run_resources: ResourceRequest,
@@ -838,6 +923,9 @@ def _validate_step(
         )
 
     bound_ports = {binding.target_port for binding in step.bindings}
+    diagnostics.extend(
+        _validate_filter_energy_binding(step, all_steps=all_steps or (), registry=registry)
+    )
     for port in input_ports:
         if port.is_required and port.name not in bound_ports:
             diagnostics.append(

@@ -219,6 +219,8 @@ class TestGeneratedFromRegistries:
             "calculation.native",
             "transform.native",
             "analysis.native",
+            # N3 声明新增：filter 参数 schema（旧块顺序与内容不变，只追加）。
+            "transform.native(filter)",
         ]
         assert envelope["native_escape_hatches"]["overrides"]["allowlist"] == list(
             SCIENTIFIC_OVERRIDE_KEYS

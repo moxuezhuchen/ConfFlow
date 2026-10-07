@@ -78,6 +78,9 @@ class DiagnosticReason(str, Enum):
     PAIRING_UNDEFINED = "pairing_undefined"
     PAIRING_NOT_ALLOWED = "pairing_not_allowed"
     PARTIAL_CONSUMPTION_NOT_ALLOWED = "partial_consumption_not_allowed"
+    # N3 energy-filter binding rules.
+    FILTER_RESULTS_REQUIRED = "filter_results_required"
+    FILTER_RESULTS_SOURCE_MISMATCH = "filter_results_source_mismatch"
 
     # cardinality
     REQUIRED_INPUT_MISSING = "required_input_missing"

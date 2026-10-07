@@ -24,8 +24,10 @@ import pytest
 from confflow.domain import FrozenDict, StructureSet
 from confflow.domain.artifact import ArtifactLocator, ArtifactRef, ArtifactSet
 from confflow.domain.completion import WorkItemStatus
+from confflow.domain.result import ResultSet, ScientificResult
 from confflow.domain.structure import StructureRecord
-from confflow.domain.work_item import WorkItem, WorkItemInputs
+from confflow.domain.units import Unit
+from confflow.domain.work_item import WorkItem, WorkItemInputs, make_work_item_id
 from confflow.execution.binding_resolution import (
     BindingRequestDefaults,
     resolve_execution_binding,
@@ -212,6 +214,205 @@ def test_transform_filter_explicit(tmp_path):
         _item("t1:k", "t1", trio), _ctx(_sci(transform="nope"), str(tmp_path))
     )
     assert out_unknown_kind.status is WorkItemStatus.FAILED
+
+
+def _energy_result(
+    subject_id: str, kind: str, value: object, unit: Unit | None = Unit.HARTREE
+) -> ScientificResult:
+    return ScientificResult(kind=kind, value=value, unit=unit, subject_structure_id=subject_id)
+
+
+def _filter_item(
+    logical_key: str,
+    step_id: str,
+    records: list[StructureRecord],
+    results: list[ScientificResult],
+) -> WorkItem:
+    return WorkItem(
+        id=make_work_item_id(logical_key),
+        logical_key=logical_key,
+        step_id=step_id,
+        named_inputs=WorkItemInputs(
+            structures=FrozenDict({"structure": StructureSet(tuple(records))}),
+            results=FrozenDict({"results": ResultSet(tuple(results))}),
+        ),
+        resources=_resources(),
+        semantic_digest=_digest(logical_key),
+    )
+
+
+def _filter_notes(out: Any) -> list[str]:
+    for diagnostic in out.diagnostics:
+        notes = diagnostic.details.get("notes")
+        if notes:
+            return list(notes)
+    return []
+
+
+def test_filter_energy_window_keeps_structures_near_the_minimum(tmp_path):
+    trio = [_water("m1"), _water("m2"), _water("m3")]
+    results = [
+        _energy_result("m1", "energy", -76.0, Unit.HARTREE),
+        _energy_result("m2", "energy", -76.0005, Unit.HARTREE),
+        _energy_result("m3", "energy", -76.002, Unit.HARTREE),
+    ]
+    out = TransformExecutor().execute(
+        _filter_item("t1:w", "t1", trio, results),
+        _ctx(
+            _sci(transform="filter", native=FrozenDict({"energy_window_kcal": 1.0})),
+            str(tmp_path),
+        ),
+    )
+    assert out.status is WorkItemStatus.COMPLETED
+    assert [r.id for r in out.structures] == ["m2", "m3"]
+    notes = _filter_notes(out)
+    assert any("m1" in note and "window" in note for note in notes)
+
+
+def test_filter_lowest_n_breaks_energy_ties_by_structure_id(tmp_path):
+    trio = [_water("m1"), _water("m2"), _water("m3")]
+    results = [
+        _energy_result("m1", "energy", -76.0, Unit.HARTREE),
+        _energy_result("m2", "energy", -76.0, Unit.HARTREE),
+        _energy_result("m3", "energy", -76.01, Unit.HARTREE),
+    ]
+    out = TransformExecutor().execute(
+        _filter_item("t1:n", "t1", trio, results),
+        _ctx(
+            _sci(transform="filter", native=FrozenDict({"lowest_n": 2})),
+            str(tmp_path),
+        ),
+    )
+    assert out.status is WorkItemStatus.COMPLETED
+    assert [r.id for r in out.structures] == ["m1", "m3"]
+    notes = _filter_notes(out)
+    assert any("m2" in note and "ranked #3" in note for note in notes)
+
+
+def test_filter_imaginary_threshold_decides_noise_modes(tmp_path):
+    pair = [_water("m1"), _water("m2")]
+    results = [
+        _energy_result("m1", "frequencies", [100.0, 200.0], Unit.CM_INVERSE),
+        _energy_result("m2", "frequencies", [-8.0, 100.0, 200.0], Unit.CM_INVERSE),
+    ]
+    strict = TransformExecutor().execute(
+        _filter_item("t1:i", "t1", pair, results),
+        _ctx(
+            _sci(transform="filter", native=FrozenDict({"max_imaginary_count": 0})),
+            str(tmp_path),
+        ),
+    )
+    assert strict.status is WorkItemStatus.COMPLETED
+    assert [r.id for r in strict.structures] == ["m1"]
+    assert any("m2" in note and "1 imaginary" in note for note in _filter_notes(strict))
+    tolerant = TransformExecutor().execute(
+        _filter_item("t1:t", "t1", pair, results),
+        _ctx(
+            _sci(
+                transform="filter",
+                native=FrozenDict({"max_imaginary_count": 0, "imaginary_threshold_cm1": -20.0}),
+            ),
+            str(tmp_path),
+        ),
+    )
+    assert tolerant.status is WorkItemStatus.COMPLETED
+    assert [r.id for r in tolerant.structures] == ["m1", "m2"]
+    # A structure with no frequency record cannot pass the imaginary gate.
+    missing = TransformExecutor().execute(
+        _filter_item(
+            "t1:m",
+            "t1",
+            pair,
+            [_energy_result("m1", "frequencies", [100.0, 200.0], Unit.CM_INVERSE)],
+        ),
+        _ctx(
+            _sci(transform="filter", native=FrozenDict({"max_imaginary_count": 0})),
+            str(tmp_path),
+        ),
+    )
+    assert missing.status is WorkItemStatus.COMPLETED
+    assert [r.id for r in missing.structures] == ["m1"]
+    assert any("m2" in note and "no frequencies" in note for note in _filter_notes(missing))
+
+
+def test_filter_missing_energy_is_listed_not_silently_dropped(tmp_path):
+    pair = [_water("m1"), _water("m2")]
+    out = TransformExecutor().execute(
+        _filter_item("t1:g", "t1", pair, [_energy_result("m1", "energy", -76.0, Unit.HARTREE)]),
+        _ctx(
+            _sci(transform="filter", native=FrozenDict({"lowest_n": 5})),
+            str(tmp_path),
+        ),
+    )
+    assert out.status is WorkItemStatus.COMPLETED
+    assert [r.id for r in out.structures] == ["m1"]
+    notes = _filter_notes(out)
+    assert any("m2" in note and "no electronic energy" in note for note in notes)
+    # A non-numeric energy value is equally unusable, never a silent zero.
+    out2 = TransformExecutor().execute(
+        _filter_item(
+            "t1:u",
+            "t1",
+            pair,
+            [
+                _energy_result("m1", "energy", -76.0, Unit.HARTREE),
+                _energy_result("m2", "energy", "n/a", Unit.HARTREE),
+            ],
+        ),
+        _ctx(
+            _sci(transform="filter", native=FrozenDict({"lowest_n": 5})),
+            str(tmp_path),
+        ),
+    )
+    assert out2.status is WorkItemStatus.COMPLETED
+    assert [r.id for r in out2.structures] == ["m1"]
+    assert any("m2" in note and "no electronic energy" in note for note in _filter_notes(out2))
+
+
+def test_filter_gibbs_key_ranks_by_gibbs_energy(tmp_path):
+    pair = [_water("m1"), _water("m2")]
+    results = [
+        _energy_result("m1", "energy", -76.0, Unit.HARTREE),
+        _energy_result("m1", "gibbs_energy", -75.9, Unit.HARTREE),
+        _energy_result("m2", "energy", -76.05, Unit.HARTREE),
+        _energy_result("m2", "gibbs_energy", -75.8, Unit.HARTREE),
+    ]
+    gibbs = TransformExecutor().execute(
+        _filter_item("t1:g", "t1", pair, results),
+        _ctx(
+            _sci(
+                transform="filter",
+                native=FrozenDict({"energy_key": "gibbs", "lowest_n": 1}),
+            ),
+            str(tmp_path),
+        ),
+    )
+    assert gibbs.status is WorkItemStatus.COMPLETED
+    assert [r.id for r in gibbs.structures] == ["m1"]
+    electronic = TransformExecutor().execute(
+        _filter_item("t1:e", "t1", pair, results),
+        _ctx(
+            _sci(transform="filter", native=FrozenDict({"lowest_n": 1})),
+            str(tmp_path),
+        ),
+    )
+    assert electronic.status is WorkItemStatus.COMPLETED
+    assert [r.id for r in electronic.structures] == ["m2"]
+
+
+def test_filter_invalid_energy_params_fail_closed(tmp_path):
+    trio = [_water("m1"), _water("m2", 0.5), _water("m3", 1.0)]
+    for native in (
+        {"lowest_n": -1},
+        {"energy_key": "dft"},
+        {"energy_window_kcal": -0.5},
+        {"max_imaginary_count": -1},
+    ):
+        out = TransformExecutor().execute(
+            _filter_item("t1:x", "t1", trio, []),
+            _ctx(_sci(transform="filter", native=FrozenDict(native)), str(tmp_path)),
+        )
+        assert out.status is WorkItemStatus.FAILED
 
 
 def test_uniform_executor_seam_signatures():

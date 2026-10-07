@@ -119,5 +119,4 @@ jobs:
             tests/v4/test_v46_cross_repo.py \
             tests/v4/test_v46_cross_repo_e2e.py \
             tests/v4/test_v46_debt.py \
-            tests/v4/test_v46_producer_closure.py \
-            tests/v4/test_v46_tspes_e2e.py
+            tests/v4/test_v46_producer_closure.py

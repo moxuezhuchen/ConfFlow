@@ -30,9 +30,9 @@ The geometry comparison science lives in :mod:`confflow.science`
   typed V4 domain records.
 
 What is NOT carried over: XYZ file I/O, multiprocessing pools, CLI
-progress, energy-window / imaginary-frequency filtering (transform input
-ports carry structures only, so ``ewin``/``imag`` have no input data and
-are not applied — stated here, not silently), and MMFF optimization.
+progress, and MMFF optimization. Energy-window / imaginary-frequency
+filtering is ``filter``-only via the bound ``results`` port (N3, see
+:mod:`confflow.execution.energy_filter`); ``refine`` applies none.
 
 Kinds:
 
@@ -58,7 +58,8 @@ Kinds:
   topology is perceived from geometry as before.
   Optional ``max_structures`` truncates in id order.
 - ``filter``: explicit ``min_atoms`` / ``max_atoms`` / ``max_structures``
-  selection in canonical id order.  Unknown native keys fail closed.
+  selection in canonical id order, plus N3 energy selection from the
+  bound ``results`` port. Unknown native keys fail closed.
 
 All results bind output entities; no native syntax is interpreted beyond
 the documented transform-native vocabulary.  The executor never raises:
@@ -84,6 +85,12 @@ from ..domain.result import ResultSet
 from ..domain.structure import StructureRecord, StructureSet
 from ..domain.work_item import RecoveryInfo, Timing, WorkItem, WorkItemResult
 from ..science.topology import resolve_working_adjacency
+from .energy_filter import (
+    ENERGY_PARAM_KEYS,
+    parse_energy_params,
+    select_by_energy,
+    uses_energy_params,
+)
 from .work_item_executor import (
     ItemExecutionContext,
     pure_cancelled_result,
@@ -109,7 +116,11 @@ REFINE_DEFAULT_BOND_SCALE = 1.15
 REFINE_DEFAULT_MAPPING_BUDGET = 1000
 
 #: Allowed step-native keys per kind (unknown keys fail closed).
-FILTER_NATIVE_KEYS = frozenset({"max_structures", "min_atoms", "max_atoms"})
+#: Filter energy keys (N3) read energies/frequencies from the bound results
+#: port; atom-count keys keep their structure-only meaning.
+FILTER_NATIVE_KEYS = frozenset(
+    {"max_structures", "min_atoms", "max_atoms"} | set(ENERGY_PARAM_KEYS)
+)
 REFINE_NATIVE_KEYS = frozenset(
     {
         "rmsd_threshold_angstrom",
@@ -269,7 +280,8 @@ class TransformExecutor:
                 )
             out, notes = self._deduplicate(members)
         elif kind == "filter":
-            out, notes = self._filter(members, native)
+            results = work_item.named_inputs.results.get("results", ResultSet())
+            out, notes = self._filter(members, native, results)
         else:
             out, notes = self._refine(members, native)
         timing = Timing(
@@ -595,6 +607,7 @@ class TransformExecutor:
     def _filter(
         members: list[StructureRecord],
         native: Mapping[str, Any],
+        results: ResultSet | None = None,
     ) -> tuple[list[StructureRecord], list[str]]:
         unknown = sorted(set(native) - FILTER_NATIVE_KEYS)
         if unknown:
@@ -619,6 +632,12 @@ class TransformExecutor:
             before = len(kept)
             kept = [record for record in kept if len(record.atoms) <= max_atoms]
             notes.append(f"max_atoms dropped {before - len(kept)}")
+        if uses_energy_params(native):
+            params = parse_energy_params(native)
+            kept, energy_notes = select_by_energy(
+                kept, results if results is not None else ResultSet(), params
+            )
+            notes.extend(energy_notes)
         max_structures = native.get("max_structures")
         if max_structures is not None:
             if (

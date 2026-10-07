@@ -190,8 +190,10 @@ def test_b1_contract_boundary_bytes_unchanged() -> None:
     # J1 声明新增（叠加 E1 recipe 目录）：authoring request/response operation enum 增加
     # "structure_preview"（boundary + contract 派生 sha 随之更新）。
     # R2.2 声明重钉(叠加 R2.0-logic energies 白名单)：contract 随暴露面收缩与 energies 更新，boundary 不变。
+    # N3 声明新增：structure_transform 新增 results 输入端口 + filter 参数
+    # schema（旧条目保留，摘要更新；boundary 不变）。
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(env)).hexdigest() == (
-        "sha256:ba8b1f34dbb2df41dae2ac8493a606b587e258f130ed3b4b87f67074b0ce9091"
+        "sha256:17bcd9bb2c82bda068d7b0a242c19041810700d366700b0103de83c3abca694f"
     )
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(bdoc)).hexdigest() == (
         "sha256:d9b5282bb8d6d3b3694a76bea6931b3099902f36fc74e6fe0f46727a9905e0b2"
