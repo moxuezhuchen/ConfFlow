@@ -181,7 +181,6 @@ EXTENDED_FORBIDDEN_LEGACY_MODULES = [
 ]
 EXTENDED_V4_PRODUCTION_ROOTS = [
     "confflow/producer",
-    "confflow/analysis",
     "confflow/science/confgen",
 ]
 EXTENDED_V4_PRODUCTION_FILES = [
@@ -484,7 +483,6 @@ V46_STRICT_ROOT_CANDIDATES = [
     "domain",
     "workflow/v4",
     "execution",
-    "analysis",
     "producer",
     "persistence",
     "programs",
@@ -505,14 +503,6 @@ V46_MODULES = [
     "confflow.producer.manifest",
     "confflow.producer.recipes",
     "confflow.producer.validation",
-    "confflow.analysis.executor",
-    "confflow.analysis.grouping",
-    "confflow.analysis.models",
-    "confflow.analysis.pes",
-    "confflow.analysis.reaction",
-    "confflow.analysis.registry",
-    "confflow.analysis.thermochemistry",
-    "confflow.analysis.units",
 ]
 
 SCANNER_SCOPE = [
@@ -524,7 +514,6 @@ SCANNER_SCOPE = [
     "confflow/control.py",
     "confflow/producer",
     "confflow/remote",
-    "confflow/analysis",
 ]
 SCANNER_FORBIDDEN_IMPORT_PREFIXES = [
     "confflow.shared",

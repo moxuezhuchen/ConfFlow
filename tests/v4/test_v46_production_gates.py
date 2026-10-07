@@ -428,41 +428,8 @@ class TestIrcMultiOutput:
 # R2.2 (G18): TestAnalysisDurableReuse is retired with the analysis
 # implementation imports (orphaned for R2.3a).
 
-
-class TestEndpointAssignment:
-    """Endpoint chemistry assignment defaults open, conflicts fail closed."""
-
-    def test_endpoint_assignment(self) -> None:
-        from confflow.analysis.models import (
-            ASSIGNMENT_UNASSIGNED,
-            AnalysisDefinition,
-            AnalysisError,
-        )
-        from confflow.domain import FrozenDict as _Frozen
-
-        class _Model:
-            def compute(self, *args: Any, **kwargs: Any) -> Any:
-                raise AssertionError("not called")
-
-            def to_dict(self) -> dict[str, Any]:
-                return {"mode": "stub"}
-
-        definition = AnalysisDefinition(kind="reaction_profile", energy_model=_Model())
-        assert definition.endpoint_assignment["forward"] == ASSIGNMENT_UNASSIGNED
-        assert definition.endpoint_assignment["reverse"] == ASSIGNMENT_UNASSIGNED
-        with pytest.raises(AnalysisError) as excinfo:
-            AnalysisDefinition(
-                kind="reaction_profile",
-                energy_model=_Model(),
-                endpoint_assignment=_Frozen({"forward": "reactant", "reverse": "reactant"}),
-            )
-        assert excinfo.value.code == "analysis_assignment_conflict"
-        ok = AnalysisDefinition(
-            kind="reaction_profile",
-            energy_model=_Model(),
-            endpoint_assignment=_Frozen({"forward": "reactant", "reverse": "product"}),
-        )
-        assert ok.assignment == "explicit"
+# R2.3a (G18): TestEndpointAssignment retired with confflow.analysis.models
+# (endpoint-assignment semantics only served the deleted analysis).
 
 
 class TestResultOrderInvariant:

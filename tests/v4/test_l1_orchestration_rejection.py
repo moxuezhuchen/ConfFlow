@@ -444,14 +444,8 @@ def test_transform_survives_missing_native_table(monkeypatch) -> None:
     assert out["kind"] == "refine"
 
 
-def test_analysis_missing_runtime_fails_closed(monkeypatch) -> None:
-    import sys
-
-    from confflow.producer.intent.capabilities.analysis import _wire_analysis
-
-    monkeypatch.setitem(sys.modules, "confflow.analysis.item_adapter", None)
-    with pytest.raises(IntentCompilationError, match="runtime unavailable"):
-        _wire_analysis({"native": {"a": 1}}, {}, "s1")
+# R2.3a (G18): test_analysis_missing_runtime_fails_closed retired with
+# confflow/producer/intent/capabilities/analysis.py and confflow.analysis.
 
 
 def test_calculation_role_block_rejects_missing_native() -> None:

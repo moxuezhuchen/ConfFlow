@@ -112,15 +112,8 @@ class TestUnifiedResolution:
         assert callable(registry.adapter_implementation("standard"))
         assert registry.program_adapter("orca").program_name.value == "orca"
 
-    def test_orphaned_analysis_implementation_stays_importable(self) -> None:
-        # R2.2: the analysis executor is unregistered but its implementation
-        # is deleted only by R2.3a; the module keeps a plain-string
-        # capability so it stays importable (mypy-clean orphan).
-        from confflow.analysis.executor import AnalysisExecutor
-        from confflow.analysis.item_adapter import AnalysisItemAdapter
-
-        assert AnalysisExecutor.capability == "analysis"
-        assert AnalysisItemAdapter.capability == "analysis"
+    # R2.3a (G18): test_orphaned_analysis_implementation_stays_importable
+    # retired with confflow.analysis (R2.2 orphan, now deleted).
 
     def test_executor_implementations_resolve_from_same_entry(self) -> None:
         registry = default_registry()
