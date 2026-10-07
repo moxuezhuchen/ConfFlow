@@ -208,7 +208,7 @@
       "reason": "R1.1 生产→测试转移，合计不变，待用户确认：搬走 fixture_agent.py(77 行)，上限 14216-77=14139。"
     }
   ],
-  "tests_total_files": 245,
-  "tests_total_loc_limit": 108383,
-  "tests_total_reason": "N3 声明预算(生产≤350/测试≤500) + N1 已批准预算(测试≤400，增398)"
+  "tests_total_files": 246,
+  "tests_total_loc_limit": 108491,
+  "tests_total_reason": "N3 声明预算(生产≤350/测试≤500) + N1 已批准预算(测试≤400，增398) + T0 工具测试(≤150，增108)"
 }

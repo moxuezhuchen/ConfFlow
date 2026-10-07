@@ -1,0 +1,35 @@
+{
+ "HEAD": "7ee4394d4b1cada335aa1674d84f03d90c649ca4",
+ "system": "beta_d_glucopyranose",
+ "driving": "crest_conformers.xyz:frame0",
+ "ring_0based": [
+  1,
+  2,
+  3,
+  4,
+  5,
+  6
+ ],
+ "recall_calibre": "cp_distance(theta,phi) < 15deg, seeds=published leaves only (ring_benchmark.py same)",
+ "default_no_forms": {
+  "targets": 8,
+  "published": 8,
+  "families": [
+   "C",
+   "TB"
+  ],
+  "recall": "113/155"
+ },
+ "explicit_38": {
+  "targets": 38,
+  "published": 38,
+  "families": [
+   "B",
+   "C",
+   "E",
+   "H",
+   "TB"
+  ],
+  "recall": "127/155"
+ }
+}
