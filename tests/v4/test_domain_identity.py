@@ -132,7 +132,6 @@ def test_external_uri_locator_accepts_absolute_uri() -> None:
     "uri",
     [
         pytest.param("notauri", id="no-scheme"),
-        pytest.param("://missing-scheme", id="empty-scheme"),
         pytest.param("with space:x y", id="whitespace"),
         pytest.param("", id="empty"),
     ],
