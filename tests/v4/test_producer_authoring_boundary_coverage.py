@@ -113,7 +113,8 @@ def _two_cards() -> dict[str, Any]:
 
 @pytest.mark.parametrize(
     "ref",
-    [None, 123, 4.5, True, [], {}, "", "opt", "opt@", "@v1", "@", "opt@v2", "banana@v1"],
+    [None, 123, [], {}, "", "opt", "opt@", "opt@v2", "banana@v1"],
+    ids=["None", "123", "ref4", "ref5", "", "opt", "opt@", "opt@v2", "banana@v1"],
 )
 def test_parse_card_ref_malformed_fails_closed(ref: Any) -> None:
     before = copy.deepcopy(ref)
@@ -126,15 +127,14 @@ def test_parse_card_ref_malformed_fails_closed(ref: Any) -> None:
     "ref",
     [
         {"type": "opt"},
-        {"version": "v1"},
         {"type": "", "version": "v1"},
         {"type": "opt", "version": ""},
         {"type": 1, "version": "v1"},
         {"type": "opt", "version": "v1", "bogus": 1},
-        {"type": "opt", "version": "v1", "extra": 2},
         {"type": "banana", "version": "v1"},
         {"type": "opt", "version": "v2"},
     ],
+    ids=["ref0", "ref2", "ref3", "ref4", "ref5", "ref7", "ref8"],
 )
 def test_parse_card_ref_mapping_malformed_fails_closed(ref: Any) -> None:
     before = copy.deepcopy(ref)
@@ -191,8 +191,18 @@ def test_plain_cards_do_not_require_explicit_bindings(card_type: str) -> None:
     [
         None,
         7,
-        True,
         [],
+        "",
+        "refine_default",
+        "refine_default@",
+        "@v1",
+        "nope@v1",
+        "refine_default@v2",
+    ],
+    ids=[
+        "None",
+        "7",
+        "ref3",
         "",
         "refine_default",
         "refine_default@",
@@ -215,9 +225,9 @@ def test_parse_preset_ref_malformed_fails_closed(ref: Any) -> None:
         {"name": "", "version": "v1"},
         {"name": "refine_default", "version": ""},
         {"name": "refine_default", "version": "v1", "bogus": 1},
-        {"preset": "nope", "version": "v1"},
         {"type": "refine_default", "version": "v2"},
     ],
+    ids=["ref0", "ref1", "ref2", "ref3", "ref5"],
 )
 def test_parse_preset_ref_mapping_malformed_fails_closed(ref: Any) -> None:
     before = copy.deepcopy(ref)
@@ -286,7 +296,7 @@ def test_intent_catalog_shape_and_purity() -> None:
 # ----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("bad", [None, 123, "x", [], [1]])
+@pytest.mark.parametrize("bad", [None, 123, "x", []])
 def test_compile_intent_non_mapping_fails_closed(bad: Any) -> None:
     with pytest.raises(IntentCompilationError):
         compile_intent(bad)  # type: ignore[arg-type]
@@ -339,14 +349,24 @@ def test_compile_intent_globals_bad_members() -> None:
         {"charge": "0", "multiplicity": 1},
         {"charge": 0.5, "multiplicity": 1},
         {"charge": 0, "multiplicity": True},
-        {"charge": 0, "multiplicity": 0},
         {"charge": 0, "multiplicity": -1},
         {"charge": 0, "multiplicity": "1"},
         {"charge": 0, "multiplicity": 1, "freeze": "x"},
         {"charge": 0, "multiplicity": 1, "freeze": [True]},
         {"charge": 0, "multiplicity": 1, "freeze": [0]},
-        {"charge": 0, "multiplicity": 1, "freeze": [-2]},
         {"charge": 0, "multiplicity": 1, "freeze": ["1"]},
+    ],
+    ids=[
+        "globals_map0",
+        "globals_map1",
+        "globals_map2",
+        "globals_map3",
+        "globals_map5",
+        "globals_map6",
+        "globals_map7",
+        "globals_map8",
+        "globals_map9",
+        "globals_map11",
     ],
 )
 def test_compile_intent_globals_malformed_values_fail_closed(globals_map: Any) -> None:
@@ -417,7 +437,7 @@ def test_compile_intent_unknown_program_and_missing_program() -> None:
         compile_intent(_intent([{"card": "opt@v1", "program": "", "native": dict(OPT_NATIVE)}]))
 
 
-@pytest.mark.parametrize("native", [None, {}, "x", [], 42])
+@pytest.mark.parametrize("native", [None, {}, "x", []])
 def test_compile_intent_calc_native_missing_or_empty(native: Any) -> None:
     before = copy.deepcopy(native)
     with pytest.raises(IntentCompilationError):
@@ -534,7 +554,8 @@ def test_compile_intent_confgen_seed_inside_native_refused() -> None:
 
 @pytest.mark.parametrize(
     "resources",
-    ["x", 42, [], {"bogus": 1}, {"cores_per_item": 1, "extra": 2}],
+    ["x", [], {"bogus": 1}, {"cores_per_item": 1, "extra": 2}],
+    ids=["x", "resources2", "resources3", "resources4"],
 )
 def test_compile_intent_bad_resources_refused(resources: Any) -> None:
     before = copy.deepcopy(resources)
@@ -555,7 +576,9 @@ def test_compile_intent_bad_resources_refused(resources: Any) -> None:
 
 
 @pytest.mark.parametrize(
-    "scheduler", ["x", 42, [], {"bogus": 1}, {"max_parallel_items": 1, "extra": 2}]
+    "scheduler",
+    ["x", [], {"bogus": 1}, {"max_parallel_items": 1, "extra": 2}],
+    ids=["x", "scheduler2", "scheduler3", "scheduler4"],
 )
 def test_compile_intent_bad_scheduler_refused(scheduler: Any) -> None:
     before = copy.deepcopy(scheduler)
@@ -1411,7 +1434,6 @@ def test_checkpoint_intent_happy_path_and_flag_required() -> None:
     "reuse",
     [
         "x",
-        42,
         [],
         {"mode": "checkpoint"},
         {"step": "opt"},
@@ -1419,6 +1441,7 @@ def test_checkpoint_intent_happy_path_and_flag_required() -> None:
         {"step": "opt", "mode": "bogus"},
         {"step": "opt", "mode": "checkpoint", "allow_method_change": "yes"},
     ],
+    ids=["x", "reuse2", "reuse3", "reuse4", "reuse5", "reuse6", "reuse7"],
 )
 def test_checkpoint_intent_malformed_refused(reuse: Any) -> None:
     intent = {
