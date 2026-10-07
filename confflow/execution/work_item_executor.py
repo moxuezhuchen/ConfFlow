@@ -18,6 +18,7 @@ matching enum and never needs to parse messages.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import shutil
 import threading
@@ -56,6 +57,7 @@ from .native import (
     StagedArtifact,
 )
 from .profiles import ProfileContext, ProfileOutput, ResultProfile
+from .quota import QuotaCancelled, QuotaError, load_server_quota
 
 if TYPE_CHECKING:
     from ..workflow.v4.document import ScientificDefaults, ScientificDefinition
@@ -641,9 +643,28 @@ class WorkItemExecutor:
                 monotonic_start,
                 diagnostics=tuple(diagnostics),
             )
-        launched = self._launch_and_wait(
-            supervisor, request, context.poll_interval_seconds, should_cancel=should_cancel
-        )
+        try:
+            launched = self._launch_and_wait(
+                supervisor,
+                request,
+                context.poll_interval_seconds,
+                should_cancel=should_cancel,
+                quota=(work_item.resources, context.run_root, work_item.id),
+            )
+        except QuotaError as exc:
+            if isinstance(exc, QuotaCancelled):
+                return self._finish_cancelled(
+                    work_item, context, wall_start, monotonic_start, confirmed=True
+                )
+            return self._finish_error(
+                work_item,
+                context,
+                "quota_exceeded",
+                str(exc),
+                wall_start,
+                monotonic_start,
+                diagnostics=tuple(diagnostics),
+            )
         if launched is None:
             cancelled = should_cancel is not None and should_cancel()
             if cancelled:
@@ -992,6 +1013,7 @@ class WorkItemExecutor:
         poll_interval: float,
         *,
         should_cancel: Callable[[], bool] | None,
+        quota: tuple[Any, str, str] | None = None,
     ) -> tuple[NativeExecutionResult, CancelOutcome | None] | None:
         """Submit *request* and wait for a terminal outcome.
 
@@ -999,10 +1021,31 @@ class WorkItemExecutor:
         handle was lost.  Cancellation and walltime are converted into
         explicit outcomes, never exceptions.
         """
+        resources, run_id, work_item_id = quota if quota is not None else (None, "", "")
+        cores = getattr(resources, "cores_per_item", None)
+        memory = getattr(resources, "memory_per_item_bytes", None)
+        manager = load_server_quota()
+        lease: str | None = None
+        if manager is not None:
+            lease = manager.acquire(cores, memory, run_id, work_item_id, should_cancel)
+
+        def _release_quota() -> None:
+            if lease is not None and manager is not None:
+                try:
+                    manager.release(lease)
+                except Exception:
+                    logging.debug("server quota release failed", exc_info=True)
+
         try:
             handle = supervisor.submit(request)
         except Exception:
+            _release_quota()
             return None
+        if lease is not None and manager is not None:
+            try:
+                manager.mark_running(lease, handle.process_group_id, handle.pid, handle.create_time)
+            except Exception:
+                logging.debug("server quota mark_running failed", exc_info=True)
         walltime = request.walltime_seconds
         monotonic_start = time.monotonic()
         cancel_outcome: CancelOutcome | None = None
@@ -1054,6 +1097,8 @@ class WorkItemExecutor:
                     ),
                     None,
                 )
+            if cancel_outcome is not None and cancel_outcome.confirmed:
+                _release_quota()
             if cancel_outcome is not None:
                 return (
                     NativeExecutionResult(
@@ -1064,10 +1109,12 @@ class WorkItemExecutor:
                     ),
                     cancel_outcome,
                 )
+            _release_quota()
             try:
                 collected = supervisor.collect(handle)
             except Exception:
                 return None
+            _release_quota()
             return (
                 NativeExecutionResult(
                     exit_code=collected.exit_code,

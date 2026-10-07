@@ -157,9 +157,9 @@
         "confflow/execution/"
       ],
       "prod_files": 24,
-      "prod_loc_limit": 12158,
+      "prod_loc_limit": 12455,
       "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
-      "reason": "N3 声明预算(生产≤350/测试≤500)"
+      "reason": "N3 声明预算(生产≤350/测试≤500) + N1 已批准预算(生产≤300，净增297)"
     },
     {
       "id": "domain",
@@ -209,6 +209,6 @@
     }
   ],
   "tests_total_files": 245,
-  "tests_total_loc_limit": 107985,
-  "tests_total_reason": "N3 声明预算(生产≤350/测试≤500)"
+  "tests_total_loc_limit": 108383,
+  "tests_total_reason": "N3 声明预算(生产≤350/测试≤500) + N1 已批准预算(测试≤400，增398)"
 }
