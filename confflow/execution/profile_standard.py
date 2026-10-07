@@ -22,7 +22,6 @@ import math
 from typing import Any
 
 from ..domain._immutable import FrozenDict
-from ..domain.artifact import ArtifactSet
 from ..domain.diagnostics import Diagnostic, DiagnosticSeverity
 from ..domain.result import Provenance, ResultSet, ScientificResult, make_result_id
 from ..domain.structure import StructureRecord, StructureSet
@@ -398,11 +397,7 @@ class StandardResultProfile:
         )
         diagnostics = (termination, *tuple(native_result.parser_diagnostics))
 
-        artifacts = (
-            context.discovered_artifacts
-            if isinstance(context.discovered_artifacts, ArtifactSet)
-            else ArtifactSet(tuple(context.discovered_artifacts))
-        )
+        artifacts = context.discovered_artifacts
         return ProfileOutput(
             structures=StructureSet((structure,)),
             results=ResultSet(tuple(results)),

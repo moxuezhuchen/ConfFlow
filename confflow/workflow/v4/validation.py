@@ -26,6 +26,7 @@ from ...execution.contracts import (
     ExecutorContract,
     PortSpec,
     ResultProfileSpec,
+    port_by_name,
 )
 from ...execution.energy_filter import (
     ENERGY_PARAM_KEYS,
@@ -89,17 +90,11 @@ class ValidatedStep:
 
     def input_port(self, name: str) -> PortSpec | None:
         """Return the declared input port *name*, or ``None``."""
-        for port in self.input_ports:
-            if port.name == name:
-                return port
-        return None
+        return port_by_name(self.input_ports, name)
 
     def output_port(self, name: str) -> PortSpec | None:
         """Return the declared output port *name*, or ``None``."""
-        for port in self.output_ports:
-            if port.name == name:
-                return port
-        return None
+        return port_by_name(self.output_ports, name)
 
 
 @dataclass(frozen=True, slots=True)
