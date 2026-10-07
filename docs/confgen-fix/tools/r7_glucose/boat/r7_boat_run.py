@@ -297,9 +297,9 @@ def run_one(form, expect_seed):
         "form": form,
         "expect_seed": expect_seed,
         "active": list(active),
-        "declared_torsion_exact": int(est.declared_count)
-        if hasattr(est, "declared_count")
-        else None,
+        "declared_torsion_exact": (
+            int(est.declared_count) if hasattr(est, "declared_count") else None
+        ),
         "estimate_exact": bool(getattr(est, "exact", None)),
         "targets": n_targets,
         "published": n_pub,

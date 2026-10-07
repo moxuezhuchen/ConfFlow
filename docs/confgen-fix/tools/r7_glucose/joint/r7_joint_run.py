@@ -314,9 +314,9 @@ def main():
         "ring_spec": "C_1 precise (anchor 1 as_given; equals explicit-38 run seed_1; this run leaf ordinal 0)",
         "torsion_spec": "torsion_draft.json 6x absolute_dihedral_grid enumerate [60,180,-60], omega=right else left; converted 1-based->0-based, semantics identical",
         "active_components": list(active),
-        "declared_torsion_exact": int(est.declared_count)
-        if hasattr(est, "declared_count")
-        else None,
+        "declared_torsion_exact": (
+            int(est.declared_count) if hasattr(est, "declared_count") else None
+        ),
         "estimate_exact": bool(getattr(est, "exact", None)),
         "targets": n_targets,
         "published": n_pub,
