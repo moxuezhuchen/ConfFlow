@@ -394,48 +394,6 @@ def test_validate_step_seed_typed():
         validate_step_seed("7")
 
 
-def test_goat_seed_boundary_explicit():
-    from confflow.domain.resources import ResourceRequest as RR
-    from confflow.execution.native import ResolvedCalculationInputs as RCI
-    from confflow.programs.orca.adapter import OrcaProgramAdapter
-
-    def _resolve(native: dict, seed: Any) -> RCI:
-        return RCI(
-            structure=_water("s-goat"),
-            charge=0,
-            multiplicity=1,
-            freeze=None,
-            resources=RR(cores_per_item=2, memory_per_item_bytes=2**30),
-            native=FrozenDict(native),
-            seed=seed,
-        )
-
-    # Invented integer Seed key is rejected as unknown vocabulary.
-    with pytest.raises(ValueError, match="unknown.*[Ss]eed|'Seed'"):
-        OrcaProgramAdapter().materialize_native_input(
-            _resolve({"keyword": "GOAT", "goat": {"MaxIter": 5, "Seed": 7}}, 7)
-        )
-    # GOAT without the typed step seed fails closed (single authority).
-    with pytest.raises(ValueError, match="[Ss]eed"):
-        OrcaProgramAdapter().materialize_native_input(
-            _resolve({"keyword": "GOAT", "goat": {"MaxIter": 5}}, None)
-        )
-    # GOAT with a typed seed renders the deterministic native RANDOMSEED
-    # flag (official ORCA 6.1 manual: boolean switch, false requests a
-    # deterministic run; the integer step seed is workflow identity and
-    # is never rendered as a native stream selector).
-    materialized = OrcaProgramAdapter().materialize_native_input(
-        _resolve({"keyword": "GOAT", "goat": {"MaxIter": 5}}, 7)
-    )
-    assert any("RANDOMSEED false" in item.content for item in materialized.files)
-    assert not any("RANDOMSEED 7" in item.content for item in materialized.files)
-    # A user-supplied native RANDOMSEED is a second authority and refused.
-    with pytest.raises(ValueError, match="[Ss]eed"):
-        OrcaProgramAdapter().materialize_native_input(
-            _resolve({"keyword": "GOAT", "goat": {"MaxIter": 5, "RANDOMSEED": 7}}, 7)
-        )
-
-
 def test_strict_staging_rejects_weak_artifacts(tmp_path):
     from confflow.programs.registry import get_program_adapter
 
@@ -544,7 +502,9 @@ def test_gaussian_qst_rejects_checkpoints():
             }
         ),
     )
-    with pytest.raises(ValueError, match="artifact_unsupported"):
+    # R2.3d (G18): QST slots are retired, so the retired-slots gate fires
+    # before the old checkpoint-vocabulary gate; still fail-closed.
+    with pytest.raises(ValueError, match="retired"):
         GaussianProgramAdapter().materialize_native_input(resolved)
 
 

@@ -112,7 +112,6 @@ def test_fifteen_patterns_byte_identical() -> None:
         "confflow.workflow.v4",
         "confflow.persistence",
         "confflow.programs",
-        "confflow.remote",
     ]
     exempt = rule["exempt_imports"]
     assert set(exempt) == {

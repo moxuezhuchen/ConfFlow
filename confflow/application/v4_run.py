@@ -409,22 +409,6 @@ def _stamp_each_entity_grouping(name: str, structures: Any) -> StructureSet:
     return StructureSet.of(*stamped)
 
 
-def _is_reaction_grouping_step(planned: Any) -> bool:
-    """Return whether *planned* is a reaction-grouping analysis step."""
-    from collections.abc import Mapping
-
-    executor = getattr(planned, "executor", None)
-    capability = getattr(executor, "value", str(executor)) if executor is not None else ""
-    if capability != "analysis":
-        return False
-    scientific = getattr(planned, "scientific", None)
-    native = getattr(scientific, "native", None)
-    method = None
-    if isinstance(native, Mapping):
-        method = native.get("method") or native.get("analysis_kind")
-    return (method or "reaction_profile") == "reaction_profile"
-
-
 def _save_run_state_fenced(run_root: str, state: RunState, generation_id: str) -> None:
     """Write the step lifecycle state under the generation publication fence.
 
@@ -533,7 +517,6 @@ class V4RunApplication:
                 else {}
             ),
         )
-        self._preflight_grouping(plan, run_inputs)
         materialized = MaterializedOutputs.empty()
         step_results: list[Any] = []
         cancelled_steps: list[str] = []
@@ -719,7 +702,6 @@ class V4RunApplication:
                     plan=context.plan,
                     run_root=context.run_root,
                     generation_id=context.generation_id,
-                    include_planned_analyses=False,
                     run_inputs=request.run_inputs,
                     cancel_probe=request.should_cancel,
                     terminal_failure=dict(failure),
@@ -744,53 +726,6 @@ class V4RunApplication:
     # ------------------------------------------------------------------
     # Run-state and import persistence
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _preflight_grouping(plan: Any, run_inputs: RunInputs) -> None:
-        """Fail closed before any launch when grouping identity is missing.
-
-        A reaction-profile analysis needs reaction-group identity on the
-        structures it consumes, and that identity must originate on the run
-        inputs (or explicit user group keys) — never from a filename or list
-        position.  Walking the binding graph backwards from every
-        grouping-based analysis step finds the run-input structure ports it
-        (transitively) depends on; any structure without ``group_key`` on
-        those ports fails the run before the first native launch, instead of
-        running the whole chain and failing at analysis assembly.
-        """
-        from ..domain.binding import PortKind
-
-        frontier = [
-            planned.step_id for planned in plan.steps if _is_reaction_grouping_step(planned)
-        ]
-        if not frontier:
-            return
-        visited: set[str] = set()
-        input_names: set[str] = set()
-        while frontier:
-            step_id = frontier.pop()
-            if step_id in visited:
-                continue
-            visited.add(step_id)
-            for edge in plan.graph.incoming(step_id):
-                if edge.target_port.kind is not PortKind.STRUCTURE:
-                    continue
-                if edge.is_run_input:
-                    input_names.add(str(edge.source.port))
-                elif edge.source_step_id is not None:
-                    frontier.append(edge.source_step_id)
-        for name in sorted(input_names):
-            collection = run_inputs.structures.get(name) if run_inputs.structures else None
-            if collection is None:
-                continue
-            for record in collection:
-                if getattr(record, "group_key", None) is None:
-                    raise DomainError(
-                        f"workflow requires reaction grouping but input {name!r} "
-                        f"structure {record.id!r} has no group identity; declare "
-                        "grouping 'each_entity' on the input or supply explicit "
-                        "group keys — refusing to launch native work (0 native launches)"
-                    )
 
     @staticmethod
     def _load_or_init_run_state(*, run_root: str, run_id: str, definition_digest: str) -> RunState:
@@ -1070,7 +1005,6 @@ class V4RunApplication:
         plan: Any,
         run_root: str,
         generation_id: str,
-        include_planned_analyses: bool = True,
         run_inputs: Any = None,
         cancel_probe: Any = None,
         terminal_failure: dict[str, Any] | None = None,
@@ -1107,7 +1041,6 @@ class V4RunApplication:
                 plan=plan,
                 run_root=run_root,
                 generation_id=generation_id,
-                include_planned_analyses=include_planned_analyses,
                 run_inputs=run_inputs,
             )
             scope.confirm(
@@ -1128,7 +1061,6 @@ class V4RunApplication:
         plan: Any,
         run_root: str,
         generation_id: str,
-        include_planned_analyses: bool = True,
         run_inputs: Any = None,
     ) -> FrozenDict:
         """Build, validate, and atomically write one run-result manifest.
@@ -1140,15 +1072,9 @@ class V4RunApplication:
         checksums and portable run-relative locators.  Top-level ``results``
         carries the authoritative ResultRef universe: one entry per real
         emitted scientific result of the current generation plus one entry
-        per run-input reference an analysis may cite.  Analysis steps keep
-        their minimal ``{capability, step_id}`` ref AND project rich
-        reaction-group entries from the actual analysis
-        ``StepResult``/``ScientificResult`` objects (group_key, TS,
-        forward/reverse endpoints, E/G entries, barriers, verbatim
-        assignment, validated source ``ResultRef`` ids) via the
-        producer-owned projector, so the durable manifest is readable as
-        reaction groups by the JobDesk consumer and every citation resolves
-        against the published universe.  The manifest is validated against
+        per run-input reference.  R2.3a: ``analyses`` is always empty (the
+        ``analysis`` executor and its reaction-profile grouping are
+        retired).  The manifest is validated against
         the actual producer schema and atomically written to
         ``run_root/run_result.json`` (directory fsynced); the in-memory
         report mirrors the durable bytes.
@@ -1170,17 +1096,11 @@ class V4RunApplication:
         from ..producer.contract import build_run_result_manifest, run_result_json_schema
         from ..producer.run_result import (
             artifact_entry,
-            build_lineage_roots,
-            build_result_reference_index,
-            project_analysis_groups,
             result_ref_entries,
             step_entry,
         )
 
         run_input_results = getattr(run_inputs, "results", ()) if run_inputs is not None else ()
-        run_input_structures = (
-            getattr(run_inputs, "structures", ()) if run_inputs is not None else ()
-        )
 
         semantic = {
             planned.step_id: planned.step_semantic_digest
@@ -1206,38 +1126,16 @@ class V4RunApplication:
             for artifact in result.artifacts:
                 artifacts.append(artifact_entry(artifact))
         # Authoritative ResultRef universe: the current generation's actually
-        # published results plus legitimate run-input references.  Analysis
-        # citations are validated against exactly this index, and the run-input
-        # refs are published so a consumer can resolve every citation.
+        # published results plus legitimate run-input references.
+        # R2.3a: no analysis citations remain; the index still guards
+        # duplicate result ids fail-closed for retained steps.
         try:
-            references = build_result_reference_index(
-                tuple(step_results), run_input_results=run_input_results
-            )
             results = result_ref_entries(tuple(step_results), run_input_results=run_input_results)
-            lineage_roots = build_lineage_roots(
-                tuple(step_results), extra_structures=run_input_structures
-            )
         except ValueError as exc:
             raise DomainError(
                 f"run-result manifest cannot build its reference index: {exc}"
             ) from exc
         analyses: list[dict[str, Any]] = []
-        if include_planned_analyses:
-            for planned in plan.steps:
-                if planned.executor.value == "analysis":
-                    analyses.append(
-                        {"capability": planned.executor.value, "step_id": planned.step_id}
-                    )
-        try:
-            analyses.extend(
-                project_analysis_groups(
-                    tuple(step_results),
-                    references=references,
-                    lineage_roots=lineage_roots,
-                )
-            )
-        except ValueError as exc:
-            raise DomainError(f"run-result manifest cannot project analysis groups: {exc}") from exc
         manifest = build_run_result_manifest(
             run_id=run_id,
             status=status,

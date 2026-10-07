@@ -61,7 +61,6 @@ from ..domain.structure import StructureRecord, StructureSet
 from ..domain.units import Unit
 from .native import GeometryOutput, NativeResult, ParsedGeometry, ResolvedCalculationInputs
 from .profile_ensemble import EnsembleProfile
-from .profile_path_endpoints import PathEndpointsProfile
 from .profiles import (
     GeometrySemantics,
     ProfileContext,
@@ -505,12 +504,11 @@ class StandardResultProfile:
 
 
 #: Profile instances keyed by name, for the executor to consume and wire
-#: into the capability registry.  ``path_endpoints`` normalizes bidirectional
-#: reaction-path output (IRC/NEB) into forward/reverse endpoint structures;
-#: ``ensemble`` normalizes conformer-ensemble output (GOAT) into member
-#: structures.  Both are full runtime implementations, not registry names.
+#: into the capability registry.  ``ensemble`` normalizes conformer-ensemble
+#: output (retained: NEB images plus the ConfGen result-profile binding)
+#: into member structures.  It is a full runtime implementation, not a
+#: registry name.
 PROFILES: dict[str, ResultProfile] = {
     "standard": StandardResultProfile(),
-    "path_endpoints": PathEndpointsProfile(),
     "ensemble": EnsembleProfile(),
 }

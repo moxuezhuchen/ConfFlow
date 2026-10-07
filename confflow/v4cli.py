@@ -111,9 +111,8 @@ def _contract(args: argparse.Namespace) -> int:
     """Print the V4 producer contract bytes.
 
     Machine-readable stdout is the only output on purpose: building the
-    envelope imports the producer's remote capability authority for the first
-    time on this route, and importing it defines pydantic models whose
-    field-shadowing warnings are not part of the contract.
+    envelope defines pydantic models whose field-shadowing warnings are
+    not part of the contract.
     """
     import warnings
 

@@ -17,7 +17,9 @@ consistency between the validator and ``materialize_native_input``.
 
 from __future__ import annotations
 
+import dataclasses
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -78,25 +80,6 @@ def _assert_native_rejection(report: Any, message_fragment: str) -> None:
     assert diagnostic["reason"] == "invalid_value"
     assert diagnostic["severity"] == "error"
     assert diagnostic["step_id"] == "step_1"
-
-
-def _assert_native_rejection_present(report: Any, message_fragment: str) -> None:
-    """Assert the adapter's native refusal is present (R2.2 variant).
-
-    IRC-native documents can no longer name a registered result profile
-    (``path_endpoints`` is retired), so the profile-mismatch diagnostic
-    rides along; the adapter's own refusal must still appear exactly once.
-    """
-    assert report.ok is False
-    matches = [
-        item
-        for item in report.errors()
-        if item["code"] == "scientific_parameter_conflict"
-        and item["reason"] == "invalid_value"
-        and message_fragment in item["message"]
-    ]
-    assert len(matches) == 1, report.errors()
-    assert matches[0]["field_path"] == "steps.step_1.calculation.native"
 
 
 def _gaussian_inputs(native: dict[str, Any]) -> ResolvedCalculationInputs:
@@ -286,47 +269,6 @@ def test_orca_blank_maxcore_still_derives_from_resources() -> None:
     assert report.ok is True, report.diagnostics
 
 
-def test_orca_irc_unknown_key_is_rejected_by_validation() -> None:
-    report = validate_workflow_bytes(
-        _document_bytes(
-            _calculation_document(
-                {"keyword": "IRC", "irc": {"bogus": 1}}, program="orca", profile="standard"
-            )
-        )
-    )
-    _assert_native_rejection_present(report, "unsupported native keys")
-
-
-def test_orca_irc_unsupported_direction_is_rejected_by_validation() -> None:
-    report = validate_workflow_bytes(
-        _document_bytes(
-            _calculation_document(
-                {"keyword": "IRC", "irc": {"direction": "forward"}},
-                program="orca",
-                profile="standard",
-            )
-        )
-    )
-    _assert_native_rejection_present(report, "direction")
-
-
-def test_orca_goat_unknown_option_is_rejected_by_validation() -> None:
-    report = validate_workflow_bytes(
-        _document_bytes(
-            _calculation_document(
-                {"keyword": "GOAT", "goat": {"Seed": 1}},
-                program="orca",
-                profile="ensemble",
-            )
-        )
-    )
-    assert report.ok is False
-    assert any(
-        item["code"] == "scientific_parameter_conflict" and "%goat" in item["message"]
-        for item in report.errors()
-    )
-
-
 def test_orca_neb_option_is_rejected_by_validation() -> None:
     report = validate_workflow_bytes(
         _document_bytes(
@@ -336,87 +278,6 @@ def test_orca_neb_option_is_rejected_by_validation() -> None:
         )
     )
     _assert_native_rejection(report, "n_images")
-
-
-def test_orca_irc_max_iter_out_of_range_is_rejected() -> None:
-    report = validate_workflow_bytes(
-        _document_bytes(
-            _calculation_document(
-                {"keyword": "IRC", "irc": {"max_iter": 0}},
-                program="orca",
-                profile="standard",
-            )
-        )
-    )
-    _assert_native_rejection_present(report, "max_iter")
-
-
-def test_orca_goat_max_iter_out_of_range_is_rejected() -> None:
-    report = validate_workflow_bytes(
-        _document_bytes(
-            _calculation_document(
-                {"keyword": "GOAT", "goat": {"MaxIter": 0}},
-                program="orca",
-                profile="ensemble",
-                seed=11,
-            )
-        )
-    )
-    _assert_native_rejection(report, "MaxIter")
-
-
-def test_orca_goat_randomseed_is_rejected_exactly_once() -> None:
-    # The second-seed-authority rule lives in the adapter's definition
-    # validator (shared with the renderer); semantic validation must not
-    # re-state it.
-    report = validate_workflow_bytes(
-        _document_bytes(
-            _calculation_document(
-                {"keyword": "GOAT", "goat": {"RANDOMSEED": 11}},
-                program="orca",
-                profile="ensemble",
-                seed=11,
-            )
-        )
-    )
-    assert report.ok is False
-    errors = report.errors()
-    assert len(errors) == 1, errors
-    assert "RANDOMSEED" in errors[0]["message"]
-
-
-def test_orca_mode_keyword_mismatch_is_rejected_once() -> None:
-    # The mode/keyword rule lives in the adapter's definition validator now;
-    # semantic validation must not re-state it (no duplicate rule table, no
-    # duplicate diagnostic).  R2.2: the IRC vehicle rides the standard
-    # profile (path_endpoints retired); the mismatch rule is unchanged.
-    report = validate_workflow_bytes(
-        _document_bytes(
-            _calculation_document(
-                {"keyword": "B3LYP Opt", "irc": {"direction": "both"}},
-                program="orca",
-                profile="standard",
-            )
-        )
-    )
-    _assert_native_rejection_present(report, "mode requires keyword IRC")
-
-
-def test_orca_mode_with_matching_keyword_is_valid() -> None:
-    # R2.2: the matching-keyword vehicle is the retained GOAT mode on the
-    # retained ensemble profile (no registered profile can carry IRC
-    # native anymore).
-    report = validate_workflow_bytes(
-        _document_bytes(
-            _calculation_document(
-                {"keyword": "GOAT", "goat": {"MaxIter": 5}},
-                program="orca",
-                profile="ensemble",
-                seed=11,
-            )
-        )
-    )
-    assert report.ok is True, report.diagnostics
 
 
 # -- runtime-rule consistency ------------------------------------------------
@@ -465,15 +326,6 @@ def test_gaussian_renderer_refuses_section_conflict_identically() -> None:
     assert str(excinfo.value) == message
 
 
-def test_orca_renderer_refuses_irc_unknown_option_identically() -> None:
-    adapter = OrcaProgramAdapter()
-    native = {"keyword": "IRC", "irc": {"bogus": 1}}
-    message = adapter.validate_native_definition(FrozenDict(native))[0]
-    with pytest.raises(ValueError) as excinfo:
-        adapter.materialize_native_input(_orca_inputs(native))
-    assert str(excinfo.value) == message
-
-
 def test_adapters_expose_the_requirement_path_on_the_protocol() -> None:
     from confflow.execution.native import ProgramAdapter
 
@@ -484,11 +336,18 @@ def test_adapters_expose_the_requirement_path_on_the_protocol() -> None:
 # -- P3: one defect, one diagnostic -------------------------------------------
 
 
-def test_orca_non_mapping_mode_section_yields_one_diagnostic() -> None:
+def test_orca_two_retired_modes_yield_one_diagnostic() -> None:
+    # R2.3b/e + R2.3c/d: retired ``irc``/``goat``/``neb`` keys are unknown
+    # native keys; the defect still reports exactly once (P3 dedup unchanged).
     report = validate_workflow_bytes(
         _document_bytes(
             _calculation_document(
-                {"keyword": "GOAT", "goat": "not-a-mapping"},
+                {
+                    "keyword": "GOAT",
+                    "goat": {"MaxIter": 5},
+                    "irc": {"direction": "both"},
+                    "neb": {"n_images": 5},
+                },
                 program="orca",
                 profile="ensemble",
                 seed=11,
@@ -498,40 +357,119 @@ def test_orca_non_mapping_mode_section_yields_one_diagnostic() -> None:
     assert report.ok is False
     errors = report.errors()
     assert len(errors) == 1, errors
-    assert errors[0]["code"] == "scientific_parameter_conflict"
-    assert "must be a mapping" in errors[0]["message"]
+    assert "unknown native keys" in errors[0]["message"]
 
 
-def test_orca_two_modes_yield_one_diagnostic() -> None:
-    report = validate_workflow_bytes(
-        _document_bytes(
-            _calculation_document(
-                {"keyword": "GOAT", "goat": {"MaxIter": 5}, "irc": {"direction": "both"}},
-                program="orca",
-                profile="ensemble",
-                seed=11,
-            )
-        )
+# -- R2.3 retired-mode fail-closed branches ------------------------------------
+
+
+class _FaultySlots(FrozenDict):
+    """Extra-structures map whose ``reactant`` lookup always fails.
+
+    Test-only input double exercising the defensive ``slots.get`` failure
+    branch in ``GaussianProgramAdapter._execution_mode``; the adapter logic
+    itself is never mocked.
+    """
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key == "reactant":
+            raise RuntimeError("synthetic slots lookup failure")
+        return super().get(key, default)
+
+
+class _FaultyNative(FrozenDict):
+    """Native map whose ``irc`` lookup always fails.
+
+    Test-only input double exercising the defensive ``native.get`` failure
+    branch in ``OrcaProgramAdapter._resolve_path_mode``; the adapter logic
+    itself is never mocked.
+    """
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key == "irc":
+            raise RuntimeError("synthetic native lookup failure")
+        return super().get(key, default)
+
+
+def test_gaussian_qst_rejection_survives_faulty_slots_lookup() -> None:
+    # R2.3d: the ``reactant`` lookup fails (defensive ``except`` branch) but
+    # the bound ``product`` slot must still fail closed with retired semantics.
+    from confflow.programs.gaussian.adapter import GaussianProgramAdapter
+
+    base = _gaussian_inputs({"keyword": "B3LYP/6-31G* Opt"})
+    inputs = dataclasses.replace(
+        base, extra_structures=_FaultySlots({"product": (structure("s1"),)})
     )
-    assert report.ok is False
-    errors = report.errors()
-    assert len(errors) == 1, errors
-    assert "at most one path/ensemble mode" in errors[0]["message"]
+    with pytest.raises(ValueError) as excinfo:
+        GaussianProgramAdapter().materialize_native_input(inputs)
+    message = str(excinfo.value)
+    assert "native_input_error" in message
+    assert "retired" in message
+    assert "product" in message
 
 
-def test_orca_profile_mismatch_still_reports_its_own_rule() -> None:
-    report = validate_workflow_bytes(
-        _document_bytes(
-            _calculation_document(
-                {"keyword": "GOAT", "goat": {"MaxIter": 5}},
-                program="orca",
-                profile="standard",
-                seed=11,
-            )
-        )
+@pytest.mark.parametrize("mode", ["irc", "neb", "goat"])
+def test_orca_retired_path_mode_rejected(mode: str) -> None:
+    # R2.3b/e + R2.3c/d: retired path/ensemble native keys fail closed here
+    # (definition validation already rejects them as unknown keys).
+    from confflow.programs.orca.adapter import OrcaProgramAdapter
+
+    inputs = _orca_inputs({"keyword": "B3LYP Opt", mode: {"n_images": 5}})
+    with pytest.raises(ValueError) as excinfo:
+        OrcaProgramAdapter._resolve_path_mode(inputs, job="job")
+    message = str(excinfo.value)
+    assert "native_input_error" in message
+    assert "retired" in message
+    assert mode in message
+
+
+def test_orca_path_mode_survives_faulty_native_lookup() -> None:
+    # R2.3b/e + R2.3c/d: the ``irc`` lookup fails (defensive ``except``
+    # branch) but the declared ``neb`` mode must still fail closed.
+    from confflow.programs.orca.adapter import OrcaProgramAdapter
+
+    base = _orca_inputs({"keyword": "B3LYP Opt"})
+    inputs = dataclasses.replace(
+        base, native=_FaultyNative({"keyword": "B3LYP Opt", "neb": {"n_images": 5}})
     )
-    assert report.ok is False
-    errors = report.errors()
-    assert len(errors) == 1, errors
-    assert errors[0]["code"] == "capability_error"
-    assert "requires result profile" in errors[0]["message"]
+    with pytest.raises(ValueError) as excinfo:
+        OrcaProgramAdapter._resolve_path_mode(inputs, job="job")
+    message = str(excinfo.value)
+    assert "native_input_error" in message
+    assert "retired" in message
+    assert "neb" in message
+
+
+@pytest.mark.parametrize("mode", ["irc", "neb", "goat"])
+def test_path_mode_option_errors_is_retired_noop(mode: str) -> None:
+    # R2.3b/e + R2.3c/d: all path/ensemble modes are retired, so per-mode
+    # option validation is a no-op retained for call-site stability.
+    from confflow.programs.orca.adapter import _path_mode_option_errors
+
+    assert _path_mode_option_errors(mode, FrozenDict({"n_images": 5})) == ()
+
+
+@pytest.mark.parametrize("mode", ["irc", "neb", "neb_ts", "goat"])
+def test_orca_retired_materialized_mode_refuses_parsing(tmp_path: Path, mode: str) -> None:
+    # R2.3b/e + R2.3c/d: a materialized result carrying a retired
+    # path/ensemble mode must refuse parsing instead of publishing facts.
+    from confflow.programs.orca.adapter import OrcaProgramAdapter
+
+    adapter = OrcaProgramAdapter()
+    materialized = adapter.materialize_native_input(_orca_inputs({"keyword": "B3LYP Opt"}))
+    retired = dataclasses.replace(
+        materialized, metadata=FrozenDict({**dict(materialized.metadata), "mode": mode})
+    )
+    log_name = "s_opt_item0.out"
+    (tmp_path / log_name).write_text(
+        "****ORCA TERMINATED NORMALLY****\nFINAL SINGLE POINT ENERGY -76.0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError) as excinfo:
+        adapter.parse_native_result(
+            work_dir=str(tmp_path), log_file_name=log_name, materialized=retired
+        )
+    message = str(excinfo.value)
+    assert "native_parse_error" in message
+    assert "retired" in message
+    assert mode in message

@@ -11,7 +11,6 @@ combinations fail closed at compile time with structured diagnostics.
 from __future__ import annotations
 
 import sys
-from typing import Any
 
 import pytest
 
@@ -28,19 +27,6 @@ from confflow.execution.registry import (  # noqa: E402
 from confflow.producer.contract import build_configuration_contract_v4  # noqa: E402
 
 STRUCTURE_INPUTS = {"structures": {"kind": "structure", "cardinality": "many"}}
-
-
-def _goat_doc(**overrides: Any) -> dict[str, Any]:
-    native: dict[str, Any] = {"keyword": "B3LYP D3BJ GOAT", "goat": {"MaxIter": 50}}
-    params: dict[str, Any] = {
-        "program": "orca",
-        "bindings": {"structure": {"source": {"run": "structures"}}},
-        "native": native,
-        "profile": "ensemble",
-        "checks": ["normal_termination"],
-    }
-    params.update(overrides)
-    return v4_doc([calc_step("s_goat", **params)], inputs=STRUCTURE_INPUTS)
 
 
 class TestUnifiedResolution:
@@ -112,15 +98,8 @@ class TestUnifiedResolution:
         assert callable(registry.adapter_implementation("standard"))
         assert registry.program_adapter("orca").program_name.value == "orca"
 
-    def test_orphaned_analysis_implementation_stays_importable(self) -> None:
-        # R2.2: the analysis executor is unregistered but its implementation
-        # is deleted only by R2.3a; the module keeps a plain-string
-        # capability so it stays importable (mypy-clean orphan).
-        from confflow.analysis.executor import AnalysisExecutor
-        from confflow.analysis.item_adapter import AnalysisItemAdapter
-
-        assert AnalysisExecutor.capability == "analysis"
-        assert AnalysisItemAdapter.capability == "analysis"
+    # R2.3a (G18): test_orphaned_analysis_implementation_stays_importable
+    # retired with confflow.analysis (R2.2 orphan, now deleted).
 
     def test_executor_implementations_resolve_from_same_entry(self) -> None:
         registry = default_registry()
@@ -250,35 +229,7 @@ class TestCompileRejections:
         assert compile_doc(doc).ok
 
 
-class TestGoatSeedValidation:
-    def test_goat_without_seed_rejected(self) -> None:
-        result = compile_doc(_goat_doc())
-        assert not result.ok
-        assert "seed_required" in reasons(result.errors)
-
-    def test_goat_with_seed_compiles(self) -> None:
-        assert compile_doc(_goat_doc(seed=11)).ok
-
-    def test_goat_native_seed_conflict_rejected(self) -> None:
-        # Any user-supplied native RANDOMSEED is a second seed authority
-        # and fails closed — set the step seed instead (the adapter
-        # renders the deterministic boolean flag itself).  The refusal is
-        # the adapter-owned native-definition requirement (one rule, one
-        # diagnostic).
-        doc = _goat_doc(seed=11)
-        doc["steps"][0]["calculation"]["native"]["goat"]["RANDOMSEED"] = 99
-        result = compile_doc(doc)
-        assert not result.ok
-        errors = result.errors
-        assert any("RANDOMSEED" in item.message for item in errors), errors
-
-    def test_goat_matching_native_seed_compiles(self) -> None:
-        # Even a matching native RANDOMSEED is a second authority: the
-        # adapter renders the step seed, never user native keys.
-        doc = _goat_doc(seed=11)
-        doc["steps"][0]["calculation"]["native"]["goat"]["RANDOMSEED"] = 11
-        assert not compile_doc(doc).ok
-
+class TestSeedValidation:
     def test_plain_calculation_seed_allowed(self) -> None:
         doc = v4_doc(
             [
@@ -311,20 +262,16 @@ class TestGoatSeedValidation:
 
 
 class TestNativeModeProfileCombinations:
-    def test_goat_requires_ensemble_profile(self) -> None:
-        doc = _goat_doc(seed=11, profile="standard")
-        result = compile_doc(doc)
-        assert not result.ok
-        assert "incompatible_capability_combination" in reasons(result.errors)
-
-    def test_irc_requires_path_endpoints_profile(self) -> None:
+    def test_neb_requires_ensemble_profile(self) -> None:
+        # R2.3b/e (G18): NEB is the retained ensemble consumer; a
+        # non-ensemble profile still fails the combination rule.
         doc = v4_doc(
             [
                 calc_step(
-                    "s_irc",
+                    "s_neb",
                     program="orca",
                     bindings={"structure": {"source": {"run": "structures"}}},
-                    native={"keyword": "B3LYP IRC", "irc": {"direction": "both"}},
+                    native={"keyword": "B3LYP NEB", "neb": {"n_images": 5}},
                     profile="standard",
                     checks=["normal_termination"],
                 )
@@ -334,10 +281,6 @@ class TestNativeModeProfileCombinations:
         result = compile_doc(doc)
         assert not result.ok
         assert "incompatible_capability_combination" in reasons(result.errors)
-
-    # R2.2 (G18): test_irc_with_path_endpoints_compiles and
-    # test_neb_with_ensemble_compiles are retired with the
-    # path_endpoints profile and the named_structures adapter.
 
     def test_multiple_native_modes_rejected(self) -> None:
         doc = v4_doc(
@@ -360,10 +303,11 @@ class TestNativeModeProfileCombinations:
         )
         result = compile_doc(doc)
         assert not result.ok
-        # The adapter-owned native-definition requirement is the single
-        # report for this defect (P3 dedup); the outcome is unchanged.
+        # R2.3b/e: retired ``irc``/``goat`` keys are unknown native keys.
+        # The adapter-owned native-definition requirement is still the
+        # single report for this defect (P3 dedup); the outcome is unchanged.
         assert "invalid_value" in reasons(result.errors)
-        assert any("at most one path/ensemble mode" in item.message for item in result.errors)
+        assert any("unknown native keys" in item.message for item in result.errors)
 
     def test_non_mapping_mode_section_rejected(self) -> None:
         doc = v4_doc(
@@ -382,7 +326,12 @@ class TestNativeModeProfileCombinations:
         result = compile_doc(doc)
         assert not result.ok
         assert "invalid_value" in reasons(result.errors)
-        assert any("must be a mapping" in item.message for item in result.errors)
+        # R2.3d (G18): NEB is retired and `neb` left the native vocabulary,
+        # so a stale NEB section fails closed as an unknown key.
+        assert any(
+            "unknown native keys" in item.message and "neb" in item.message
+            for item in result.errors
+        )
 
 
 class TestCustomRegistryResolution:

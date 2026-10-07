@@ -11,7 +11,6 @@ Everything is matched by stable identity:
 - structure fan-out uses one item per structure entity;
 - checkpoint-like artifacts are matched to structures by
   ``subject_structure_id``;
-- named multi-structure inputs pair by explicit producer group key;
 - ambiguity is a diagnostic, never a positional guess.
 """
 
@@ -44,13 +43,6 @@ from ...domain.work_item import (
     WorkItemInputs,
     make_work_item_id,
     work_item_semantic_digest,
-)
-from ...execution.atom_mapping import (
-    ATOM_MAPPING_REQUIRED,
-    AtomMapping,
-    AtomMappingError,
-    parse_atom_mapping,
-    validate_mapping_for_slots,
 )
 from .diagnostics import DiagnosticCode, DiagnosticReason, error, warning
 from .graph import ResolvedEdge
@@ -508,150 +500,6 @@ def _structure_payload(
     return structure.reuse_payload(effective)
 
 
-def _parse_step_atom_mapping(step: PlannedStep) -> tuple[AtomMapping, Diagnostic | None]:
-    """Parse the step's native atom mapping, defaulting to identity."""
-    raw: Any = None
-    try:
-        native = step.scientific.native
-        raw = native.get("atom_mapping") if native is not None else None
-    except Exception:
-        raw = None
-    try:
-        return parse_atom_mapping(raw), None
-    except AtomMappingError as exc:
-        return AtomMapping(kind="identity"), error(
-            DiagnosticCode.SCIENTIFIC_PARAMETER_CONFLICT,
-            DiagnosticReason.SCIENTIFIC_VALUE_MISMATCH,
-            f"step {step.step_id!r} declares an invalid atom mapping: {exc}",
-            step_id=step.step_id,
-            logical_key=f"{step.step_id}:*",
-            field_path=f"steps.{step.step_id}.scientific.native.atom_mapping",
-            details={"code": exc.code, "message": str(exc)},
-        )
-
-
-def _check_paired_structures(
-    step_id: str,
-    logical_key: str,
-    by_port: tuple[tuple[str, StructureRecord], ...],
-    effective_by_id: dict[str, EffectiveScientificParameters],
-    mapping: AtomMapping | None = None,
-) -> list[Diagnostic]:
-    """Validate paired named structures after applying the atom mapping.
-
-    The explicit mapping is validated *first* via the shared
-    :func:`validate_mapping_for_slots` helper (the same helper the executor
-    uses); only element compatibility that survives the mapping is checked
-    afterwards.  Per-slot permutations let QST3 product and guess use
-    independent reorderings; a uniform ``permutation`` is the shorthand for
-    every non-reference slot.
-    """
-    diagnostics: list[Diagnostic] = []
-    if len(by_port) < 2:
-        return diagnostics
-    slot_atoms = {port: tuple(struct.atoms) for port, struct in by_port}
-    active = mapping if mapping is not None else AtomMapping(kind="identity")
-    try:
-        validate_mapping_for_slots(active, slot_atoms)
-    except AtomMappingError as exc:
-        if exc.code == ATOM_MAPPING_REQUIRED:
-            # Distinguish atom-count mismatch (unfixable) from order
-            # disagreement (needs an explicit mapping) for stable reasons.
-            counts = {len(atoms) for atoms in slot_atoms.values()}
-            reason = (
-                DiagnosticReason.ATOM_COUNT_MISMATCH
-                if len(counts) != 1
-                else DiagnosticReason.ELEMENT_MISMATCH
-            )
-            ordered = sorted(slot_atoms)
-            diagnostics.append(
-                error(
-                    DiagnosticCode.SCIENTIFIC_PARAMETER_CONFLICT,
-                    reason,
-                    f"paired structures on ports {ordered[0]!r} and {ordered[1]!r} "
-                    f"need an explicit atom mapping: {exc}",
-                    step_id=step_id,
-                    logical_key=logical_key,
-                    details={
-                        "ports": ordered,
-                        "mapping_code": exc.code,
-                        "message": str(exc),
-                    },
-                )
-            )
-        else:
-            diagnostics.append(
-                error(
-                    DiagnosticCode.SCIENTIFIC_PARAMETER_CONFLICT,
-                    DiagnosticReason.ELEMENT_MISMATCH,
-                    f"paired structures on step {step_id!r} carry an invalid atom mapping: {exc}",
-                    step_id=step_id,
-                    logical_key=logical_key,
-                    details={"mapping_code": exc.code, "message": str(exc)},
-                )
-            )
-        return diagnostics
-    # Mapping is valid: element order is already proven compatible slot by
-    # slot, so only atom counts (unfixable) and charge/multiplicity remain.
-    reference_port, reference = by_port[0]
-    reference_effective = effective_by_id[reference.id]
-    for port_name, structure in by_port[1:]:
-        if len(structure.atoms) != len(reference.atoms):
-            diagnostics.append(
-                error(
-                    DiagnosticCode.SCIENTIFIC_PARAMETER_CONFLICT,
-                    DiagnosticReason.ATOM_COUNT_MISMATCH,
-                    f"paired structures on ports {reference_port!r} and {port_name!r} "
-                    "have different atom counts",
-                    step_id=step_id,
-                    logical_key=logical_key,
-                    details={
-                        "left": {
-                            "port": reference_port,
-                            "id": reference.id,
-                            "atoms": len(reference.atoms),
-                        },
-                        "right": {
-                            "port": port_name,
-                            "id": structure.id,
-                            "atoms": len(structure.atoms),
-                        },
-                    },
-                )
-            )
-            continue
-        current_effective = effective_by_id[structure.id]
-        if (
-            reference_effective.charge != current_effective.charge
-            or reference_effective.multiplicity != current_effective.multiplicity
-        ):
-            diagnostics.append(
-                error(
-                    DiagnosticCode.SCIENTIFIC_PARAMETER_CONFLICT,
-                    DiagnosticReason.SCIENTIFIC_VALUE_MISMATCH,
-                    f"paired structures on ports {reference_port!r} and {port_name!r} "
-                    "have different charge/multiplicity",
-                    step_id=step_id,
-                    logical_key=logical_key,
-                    details={
-                        "left": {
-                            "port": reference_port,
-                            "id": structure.id,
-                            "charge": reference_effective.charge,
-                            "multiplicity": reference_effective.multiplicity,
-                        },
-                        "right": {
-                            "port": port_name,
-                            "id": structure.id,
-                            "charge": current_effective.charge,
-                            "multiplicity": current_effective.multiplicity,
-                        },
-                    },
-                )
-            )
-    return diagnostics
-
-
 def _determine_domain(
     plan: ExecutionPlan,
     step: PlannedStep,
@@ -901,11 +749,6 @@ def assemble_work_items(
         if any(item.is_error for item in domain_diagnostics):
             diagnostics.extend(domain_diagnostics)
             continue
-        mapping, mapping_error = _parse_step_atom_mapping(step)
-        if mapping_error is not None:
-            diagnostics.append(mapping_error)
-            continue
-
         effective_cache: dict[str, EffectiveScientificParameters] = {}
         effective_failed = False
         step_items: list[WorkItem] = []
@@ -916,7 +759,6 @@ def assemble_work_items(
             structures_inputs: dict[str, StructureSet] = {}
             artifacts_inputs: dict[str, ArtifactSet] = {}
             results_inputs: dict[str, ResultSet] = {}
-            paired_representatives: list[tuple[str, StructureRecord]] = []
             item_errors: list[Diagnostic] = []
             for resolved in sorted(resolved_sources, key=lambda item: item.edge.target_port.name):
                 port = resolved.edge.target_port
@@ -970,10 +812,6 @@ def assemble_work_items(
                                 step_diagnostics.append(scoped)
                         effective = effective_cache[structure.id]
                         payload_structures.append(_structure_payload(structure, effective))
-                    if edge.pairing is Pairing.BY_GROUP_KEY and len(structure_value) == 1:
-                        paired_representatives.append((port.name, structure_value[0]))
-                    if edge.pairing is Pairing.PER_STRUCTURE and structure_value:
-                        paired_representatives.append((port.name, structure_value[0]))
                     inputs_payload[port.name] = {
                         "source": resolved.source_payload,
                         "structures": payload_structures,
@@ -1064,14 +902,6 @@ def assemble_work_items(
             if item_errors:
                 step_item_errors.extend(item_errors)
                 continue
-            paired_sorted = tuple(sorted(paired_representatives, key=lambda item: item[0]))
-            paired_diagnostics = _check_paired_structures(
-                step.step_id, logical_key, paired_sorted, effective_cache, mapping
-            )
-            if any(item.is_error for item in paired_diagnostics):
-                step_item_errors.extend(paired_diagnostics)
-                continue
-            step_diagnostics.extend([d for d in paired_diagnostics if not d.is_error])
             structure_sets = FrozenDict(structures_inputs)
             artifact_sets = FrozenDict(artifacts_inputs)
             result_sets = FrozenDict(results_inputs)

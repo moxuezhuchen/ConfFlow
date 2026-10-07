@@ -131,71 +131,8 @@ class TestRedTeamCancellation:
 
 
 class TestRedTeamReferences:
-    def test_cross_generation_citation_is_refused(self, tmp_path: Path) -> None:
-        """A citation that only existed in a prior generation must not resolve."""
-        from confflow.domain import ResultSet, ScientificResult
-        from confflow.producer.run_result import (
-            build_result_reference_index,
-            project_analysis_groups,
-        )
-
-        # R2.2: the live tspes run is gone with the recipe; the prior
-        # generation's citations come from a retained single-step run.
-        script = _redteam_native(tmp_path)
-        run_root = tmp_path / "run"
-        first = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
-            V4RunRequest(
-                workflow_document=_single_step_doc(script),
-                run_inputs=RunInputs(structures=FrozenDict({"structures": import_xyz(WATER_XYZ)})),
-                run_root=str(run_root),
-                import_sources=FrozenDict({"structures": WATER_XYZ}),
-            )
-        )
-        assert first.status == "completed"
-        old_ids = {
-            item.result_id for step in first.step_results for item in step.results if item.result_id
-        }
-        assert old_ids
-        # A fresh generation's step set (the same step, no results) must not
-        # resolve any prior-generation citation.
-        (only_step,) = first.step_results
-        empty_step = type(
-            "StepStub",
-            (),
-            {"step_id": only_step.step_id, "results": ResultSet(), "structures": ()},
-        )()
-        index = build_result_reference_index((empty_step,))
-        profile = ScientificResult(
-            kind="reaction_profile",
-            value=FrozenDict(
-                {
-                    "group_key": "g",
-                    "nodes": {"ts": "T"},
-                    "electronic_energy": {"T": -5.0},
-                    "gibbs_energy": {"T": -4.9},
-                    "barriers": {"forward_endpoint": {"value": 1.0}},
-                    "source_result_ids": [sorted(old_ids)[0]],
-                }
-            ),
-            subject_structure_id="T",
-            result_id="profile-g",
-        )
-        with pytest.raises(ValueError) as error:
-            project_analysis_groups(
-                (
-                    type(
-                        "StepStub",
-                        (),
-                        {
-                            "step_id": only_step.step_id,
-                            "results": ResultSet((profile,)),
-                            "structures": (),
-                        },
-                    )(),
-                ),
-                references=index,
-            )
-        assert "unresolved" in str(error.value)
+    # R2.3a (G18): test_cross_generation_citation_is_refused retired with
+    # the reaction-profile projector and confflow.analysis.
 
     def test_duplicate_produced_and_input_citation_combo(self) -> None:
         from dataclasses import replace

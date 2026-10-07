@@ -4,8 +4,8 @@
 
 Covers the wired edge shape (``artifacts``/``checkpoint`` role selector,
 cardinality ``one``, ``by_subject`` pairing), the explicit source
-``write_chk`` record, the ``readfc``/``rcfc`` route edits (including
-idempotent accepts and ``CalcFC``/``CalcAll`` opposition), the
+``write_chk`` record, the ``readfc`` route edit (including
+idempotent accept and ``CalcFC``/``CalcAll`` opposition), the
 charge/spin/method compatibility refusals with the ``allow_method_change``
 override, compiler rejection of the wired document (cycles and all other
 semantic rules), native rendering of ``%Chk``/``%OldChk`` through the
@@ -142,7 +142,7 @@ class TestWiredEdge:
 
 
 class TestRouteModes:
-    """``readfc`` edits Opt routes; ``rcfc`` edits IRC routes; nothing else."""
+    """``readfc`` edits Opt routes; nothing else."""
 
     def test_readfc_appends_into_opt_group(self) -> None:
         wired = wire_checkpoint_reuse(
@@ -176,75 +176,6 @@ class TestRouteModes:
         with pytest.raises(DomainError, match="no Opt route item"):
             wire_checkpoint_reuse(
                 _doc(target_keyword="B3LYP/6-31G*"), "s_opt", "s_freq", mode="readfc"
-            )
-
-    def test_rcfc_votes_both_directions(self) -> None:
-        wired = wire_checkpoint_reuse(
-            _doc(
-                source_keyword="B3LYP/6-31G* IRC",
-                target_keyword="B3LYP/6-31G* IRC(MaxPoints=20)",
-            ),
-            "s_opt",
-            "s_freq",
-            mode="rcfc",
-        )
-        assert wired["steps"][1]["calculation"]["native"]["keyword"] == (
-            "B3LYP/6-31G* IRC(MaxPoints=20,RCFC)"
-        )
-
-    def test_rcfc_bare_irc(self) -> None:
-        wired = wire_checkpoint_reuse(
-            _doc(
-                source_keyword="B3LYP/6-31G* IRC",
-                target_keyword="B3LYP/6-31G* IRC",
-            ),
-            "s_opt",
-            "s_freq",
-            mode="rcfc",
-        )
-        assert wired["steps"][1]["calculation"]["native"]["keyword"] == ("B3LYP/6-31G* IRC(RCFC)")
-
-    def test_rcfc_accepts_existing_vote_idempotently(self) -> None:
-        keyword = "B3LYP/6-31G* IRC(RCFC,MaxPoints=20)"
-        wired = wire_checkpoint_reuse(
-            _doc(source_keyword="B3LYP/6-31G* IRC", target_keyword=keyword),
-            "s_opt",
-            "s_freq",
-            mode="rcfc",
-        )
-        assert wired["steps"][1]["calculation"]["native"]["keyword"] == keyword
-
-    def test_rcfc_rejects_explicit_direction_votes(self) -> None:
-        with pytest.raises(DomainError, match="explicit IRC direction"):
-            wire_checkpoint_reuse(
-                _doc(
-                    source_keyword="B3LYP/6-31G* IRC",
-                    target_keyword="B3LYP/6-31G* IRC(Forward)",
-                ),
-                "s_opt",
-                "s_freq",
-                mode="rcfc",
-            )
-
-    def test_rcfc_rejects_opposed_force_constant_options(self) -> None:
-        with pytest.raises(DomainError, match="opposed"):
-            wire_checkpoint_reuse(
-                _doc(
-                    source_keyword="B3LYP/6-31G* IRC",
-                    target_keyword="B3LYP/6-31G* IRC(CalcFC)",
-                ),
-                "s_opt",
-                "s_freq",
-                mode="rcfc",
-            )
-
-    def test_rcfc_needs_an_irc_route(self) -> None:
-        with pytest.raises(DomainError, match="invalid IRC route"):
-            wire_checkpoint_reuse(
-                _doc(target_keyword="B3LYP/6-31G* opt"),
-                "s_opt",
-                "s_freq",
-                mode="rcfc",
             )
 
     def test_unknown_mode_rejected(self) -> None:
@@ -503,7 +434,9 @@ class TestNativeRendering:
 
         members = StructureSet.of(structure("s0"), structure("s1"))
         staged = StagedArtifact(local_name="staged/input-checkpoint-0.chk", role="checkpoint")
-        with pytest.raises(ValueError, match="checkpoint input vocabulary"):
+        # R2.3d (G18): QST slots are retired, so the retired-slots gate fires
+        # before the old checkpoint-vocabulary gate; still fail-closed.
+        with pytest.raises(ValueError, match="retired"):
             GaussianProgramAdapter().materialize_native_input(
                 ResolvedCalculationInputs(
                     structure=members[0],

@@ -14,8 +14,9 @@ Post-cutover scope (V4 Core Closure, ``44b478d``):
   ``confflow/application/v4_run.py``, ``confflow/application/v4_entry.py``,
   ``confflow/application/execution`` (durable control-service adapter),
   ``confflow/producer`` (contract, manifest, recipes, validation, run
-  result), ``confflow/analysis``, and the control-protocol entries
-  ``confflow/control.py`` / ``confflow/remote``.
+  result), ``confflow/analysis``, and the control-protocol entry
+  ``confflow/control.py``.  (R2.3f: ``confflow/remote`` was deleted and left
+  the scan scope; its regrowth is guarded by ``RETIRED_RUNTIME_MODULES``.)
 - NOT YET SCANNED (known legacy-helper debt, tracked for the architecture
   diet follow-ups; these are formal entries now, not legacy shims):
   ``confflow/cli.py`` (path helpers still come from the legacy line) and
@@ -32,7 +33,8 @@ Post-cutover scope (V4 Core Closure, ``44b478d``):
   below).  Any retired runtime module reappearing on disk is flagged by
   ``RETIRED_RUNTIME_MODULES``, which PR-6 extended with the dead remote
   duplicates (``remote.lease`` / ``remote.supervision`` /
-  ``remote.schema``).
+  ``remote.schema``) and R2.3f extended with the deleted remote package
+  itself (``remote`` / ``remote.envelope``).
 
 Contract-source imports (``confflow.config.canonical.contract`` / editor
 manifest / recipes) are the producer's recorded PR-2 decoupling debt and are

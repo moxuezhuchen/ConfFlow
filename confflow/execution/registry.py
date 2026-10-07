@@ -763,8 +763,9 @@ def build_default_registry() -> ExecutionRegistry:
     loud :exc:`KeyError` here -- never a published-but-unexecutable
     capability downstream.
 
-    R2.2: the ``analysis`` executor (``AnalysisItemAdapter``) is no longer
-    registered; its implementation module is orphaned and deleted by R2.3a.
+    R2.3a: the ``analysis`` executor (``AnalysisItemAdapter``) stays
+    unregistered and its implementation package ``confflow.analysis``
+    is deleted.
     """
     from . import execution_adapters as adapter_resolvers
     from .checks_standard import CHECKS
