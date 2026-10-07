@@ -76,11 +76,7 @@ class PlannedStep:
         )
 
     def to_payload(self) -> dict[str, Any]:
-        """Return the canonical semantic payload of this step.
-
-        Presentation fields (label) and machine execution bindings are
-        excluded by design.
-        """
+        """Return the canonical semantic payload of this step."""
         return {
             "step_id": self.step_id,
             "executor": self.executor.value,

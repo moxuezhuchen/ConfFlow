@@ -141,12 +141,7 @@ class StepOutputs:
 
     @property
     def has_known_status(self) -> bool:
-        """Return whether this record carries an explicit producer status.
-
-        ``None`` is a read-only legacy marker: such records deserialize but
-        must never participate in production binding silently (assembly
-        rejects them fail-closed).
-        """
+        """Return whether this record carries an explicit producer status."""
         return self.status is not None
 
 
@@ -398,12 +393,7 @@ def _resolve_source(
 
 
 def _port_value_count(resolved: _ResolvedSource) -> int:
-    """Count the resolved values that can actually fill the target port.
-
-    A producer publishes structures, artifacts and results side by side; a
-    structure port is filled by structures only (an ensemble report must not
-    satisfy it), an artifact port by artifacts, a result port by results.
-    """
+    """Count the resolved values that can actually fill the target port."""
     kind = resolved.edge.target_port.kind
     if kind is PortKind.STRUCTURE:
         return len(resolved.structures)
@@ -491,12 +481,7 @@ def _cardinality_diagnostic(
 def _structure_payload(
     structure: StructureRecord, effective: EffectiveScientificParameters
 ) -> dict[str, Any]:
-    """Return the provenance-aware digest payload of one structure input.
-
-    Pins entity id, geometry content, effective charge/multiplicity/freeze,
-    group key, role, parent ids, and lineage root.  Locator, scheduler, and
-    presentation metadata stay excluded.
-    """
+    """Return the provenance-aware digest payload of one structure input."""
     return structure.reuse_payload(effective)
 
 

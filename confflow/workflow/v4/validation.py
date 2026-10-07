@@ -149,15 +149,7 @@ def run_input_port_spec(declaration: RunInputDeclaration) -> PortSpec:
 def resolve_executor_contract(
     step: StepDefinition, registry: ExecutionRegistry
 ) -> tuple[ExecutorCapability | None, ExecutorContract | None, list[Diagnostic]]:
-    """Resolve one step's executor capability and registry contract.
-
-    This is the single authority for "which executor contract does this step
-    have": the capability vocabulary and the registry lookup live exactly here,
-    shared by semantic validation and the producer authoring seam.  Returns
-    ``(None, None, diagnostics)`` when the step names an unsupported
-    capability (or ``(capability, None, diagnostics)`` when the registry
-    cannot resolve it); callers decide how to surface the diagnostics.
-    """
+    """Resolve one step's executor capability and registry contract."""
     diagnostics: list[Diagnostic] = []
     field_path = f"steps.{step.id}"
     try:
@@ -197,15 +189,7 @@ def resolve_step_input_ports(
     contract: ExecutorContract,
     registry: ExecutionRegistry,
 ) -> tuple[ExecutionAdapterSpec | None, tuple[PortSpec, ...] | None, list[Diagnostic]]:
-    """Resolve the effective input ports of one step.
-
-    An adapter supplies the input contract exactly when the executor contract
-    declares ``requires_adapter``; otherwise the executor contract's own input
-    ports are the authority.  Returns ``(adapter, input_ports, diagnostics)``
-    with ``input_ports=None`` when the adapter cannot be resolved.  Shared by
-    semantic validation and the producer authoring seam so neither can drift
-    into a private port selection rule.
-    """
+    """Resolve the effective input ports of one step."""
     diagnostics: list[Diagnostic] = []
     field_path = f"steps.{step.id}"
     if not contract.requires_adapter:
@@ -269,13 +253,7 @@ def resolve_step_input_ports(
 
 
 def _confgen_seed_requirement(native: Any) -> str | None:
-    """Return why a confgen step needs a seed, or ``None`` when deterministic.
-
-    The legacy ``native.chains`` path keeps its explicitly versioned
-    stochastic semantics (seed always required). The typed v3 scope is
-    deterministic by default; a seed is required only when ``sampling``
-    requests a capped subset (the sole stochastic authority).
-    """
+    """Return why a confgen step needs a seed, or ``None`` when deterministic."""
     if isinstance(native, Mapping) and native.get("schema_version") == 3:
         sampling = native.get("sampling") or {}
         if isinstance(sampling, Mapping) and sampling.get("cap") is not None:
@@ -342,11 +320,7 @@ _NATIVE_MODES = ("neb",)
 
 
 def _active_native_modes(native: Any) -> list[str]:
-    """Return the native NEB mode declared by *native*.
-
-    Mirrors the program-adapter rule: the mode is active exactly when its
-    sub-mapping is present (not ``None``).
-    """
+    """Return the native NEB mode declared by *native*."""
     return [mode for mode in _NATIVE_MODES if _native_option(native, mode) is not None]
 
 
@@ -396,12 +370,7 @@ def _structure_target_ports(
     contract: ExecutorContract | None,
     registry: ExecutionRegistry,
 ) -> set[str]:
-    """Return the structure-kind input port names bound on *step*.
-
-    Calculation input ports are adapter-resolved (standard), so the same
-    resolver the step validation uses supplies the port facts here; no
-    port rule is re-implemented.
-    """
+    """Return the structure-kind input port names bound on *step*."""
     if contract is None:
         return set()
     try:

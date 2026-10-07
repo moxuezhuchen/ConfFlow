@@ -2,26 +2,17 @@
 
 """Typed cross-step artifact flow for ConfFlow Workflow V4 (V4-4).
 
-This module freezes the small, total vocabulary that moves restart-like
-artifacts across step boundaries:
+Frozen restart vocabulary: :data:`RESTART_ROLES` pins the single
+restart role; :func:`resolve_restart_subject` re-subjects outputs;
+:func:`select_restart_artifact` binds one artifact by exact subject
+and role, never by order, filename, or recency; :func:`filter_by_role`
+narrows by exact role; :func:`verify_binding_cardinality` enforces
+per-port cardinality; :func:`subject_for_output` applies the no-guessing
+rule for passthrough chains.
 
-- :data:`RESTART_ROLES` pins the single restart semantic role;
-- :func:`resolve_restart_subject` freezes the re-subjecting rule applied by
-  the executor when a profile mints a new output structure;
-- :func:`select_restart_artifact` binds one artifact by exact subject and
-  role, never by order, filename, or recency;
-- :func:`filter_by_role` narrows a set by exact role membership;
-- :func:`verify_binding_cardinality` enforces per-port cardinality on an
-  already subject-selected set;
-- :func:`subject_for_output` documents the no-guessing rule for
-  passthrough chains.
-
-The assembly layer (:mod:`confflow.workflow.v4.assembly`) already matches
-``BY_SUBJECT`` artifacts, excludes locators from digests, and reports
-cardinality diagnostics; this module extends those semantics for the
-executor-owned restart path without duplicating them.  Wiring into the
-executor is owned by the main agent; this module only defines the frozen
-functions plus their tests.
+Assembly (:mod:`confflow.workflow.v4.assembly`) matches ``BY_SUBJECT``,
+excludes locators from digests, and reports cardinality diagnostics;
+this module extends that for the executor-owned restart path.
 """
 
 from __future__ import annotations
@@ -65,22 +56,7 @@ RESTART_ROLES: Final = frozenset({"checkpoint"})
 
 
 class ArtifactFlowError(DomainError):
-    """Typed failure of cross-step artifact flow.
-
-    Parameters
-    ----------
-    code : str
-        Machine-readable reason (``artifact_subject_missing``,
-        ``artifact_subject_ambiguous``, or ``artifact_cardinality_invalid``).
-    message : str
-        Human-readable explanation; step context is appended automatically.
-    step_id : str
-        Step being bound when the failure occurred.
-    logical_key : str
-        Work-item logical key being bound when the failure occurred.
-    port : str
-        Target port being bound when the failure occurred.
-    """
+    """Typed failure of cross-step artifact flow."""
 
     def __init__(
         self,
@@ -109,36 +85,7 @@ def resolve_restart_subject(
     output_structure_id: str,
     geometry_semantics: str,
 ) -> str:
-    """Return the subject id restart artifacts bind to after a profile step.
-
-    Parameters
-    ----------
-    native_subject : str | None
-        Subject the native program saw (the input structure id), if known.
-    output_structure_id : str
-        Id of the structure the result profile emitted for this item, or
-        ``""`` when the profile emitted no new structure (defensive path).
-    geometry_semantics : str
-        Profile geometry semantics (``"produced"`` or ``"passthrough"``).
-        Accepted for call-site clarity; both values mint a new
-        ``StructureRecord`` per the V4-2 selection-B rule, so both take the
-        same branch here.
-
-    Returns
-    -------
-    str
-        ``output_structure_id`` whenever it is non-empty; otherwise the
-        native subject (or ``""`` when that is also unknown).
-
-    Notes
-    -----
-    When the profile produced a new output structure — semantics
-    ``"produced"`` *or* ``"passthrough"``, which both mint a new
-    ``StructureRecord`` with the input as parent — restart artifacts
-    re-subject to the output id.  The native subject is kept only when the
-    output id is empty, which can only happen on the defensive path where
-    no new structure was emitted.
-    """
+    """Return the subject id restart artifacts bind to after a profile step."""
     del geometry_semantics
     if output_structure_id:
         return output_structure_id
@@ -211,22 +158,7 @@ def select_restart_artifact(
 
 
 def filter_by_role(artifacts: ArtifactSet, roles: frozenset[str]) -> ArtifactSet:
-    """Return the sub-set of *artifacts* whose role is a member of *roles*.
-
-    Parameters
-    ----------
-    artifacts : ArtifactSet
-        Candidate artifacts.
-    roles : frozenset[str]
-        Allowed roles; membership is exact — no extension-alias guessing
-        and no basename logic (a raw ``"checkpoint_wavefunction"`` role does
-        not match ``"checkpoint"``; adapters normalize before this point).
-
-    Returns
-    -------
-    ArtifactSet
-        Matching artifacts in their original set order.
-    """
+    """Return the sub-set of *artifacts* whose role is a member of *roles*."""
     wanted = frozenset(roles)
     return ArtifactSet(tuple(record for record in artifacts if record.role in wanted))
 
@@ -330,27 +262,7 @@ def subject_for_output(
     input_structure_id: str,
     output_structure_id: str | None,
 ) -> str:
-    """Return the subject id downstream bindings must use for an output.
-
-    Parameters
-    ----------
-    input_structure_id : str
-        Id of the structure consumed by the producing item.
-    output_structure_id : str | None
-        Id of the structure the producer emitted, if it minted one.
-
-    Returns
-    -------
-    str
-        ``output_structure_id`` when non-empty, else ``input_structure_id``.
-
-    Notes
-    -----
-    The no-guessing rule for passthrough chains: a minted output (both
-    ``"produced"`` and ``"passthrough"`` semantics mint a new record)
-    always becomes the new subject; the input id survives only when no
-    output was minted.
-    """
+    """Return the subject id downstream bindings must use for an output."""
     if output_structure_id:
         return output_structure_id
     return input_structure_id
