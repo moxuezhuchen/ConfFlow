@@ -42,11 +42,7 @@ from ..domain.work_item import (
 )
 from .checks import CHECK_DEFAULTS, CheckContext, ScientificCheck
 from .contracts import ExecutionBinding
-from .execution_adapters import (
-    DRIVING_STRUCTURE_PORT,
-    NAMED_STRUCTURES_ADAPTER,
-    resolve_named_slot_sets,
-)
+from .execution_adapters import DRIVING_STRUCTURE_PORT
 from .native import (
     CancelOutcome,
     MaterializedNativeInput,
@@ -132,22 +128,6 @@ def select_driving_structure(work_item: WorkItem) -> StructureRecord:
     from .execution_adapters import resolve_standard_structure
 
     return resolve_standard_structure(work_item)
-
-
-def _is_named_execution(context: ItemExecutionContext) -> bool:
-    """Return whether *context* runs through the named-structures adapter."""
-    scientific = context.scientific
-    return scientific is not None and scientific.execution_adapter == NAMED_STRUCTURES_ADAPTER
-
-
-@dataclass(frozen=True, slots=True)
-class _NamedExecution:
-    """Validated named-slot execution inputs for one work item."""
-
-    reference: StructureRecord
-    slots: FrozenDict
-    mapping: Any
-    named: Any
 
 
 def error_result(
@@ -485,32 +465,17 @@ class WorkItemExecutor:
                 ),
                 timing=Timing(finished_at=wall_start, duration_seconds=0.0),
             )
-        named_execution: _NamedExecution | None = None
-        if _is_named_execution(context):
-            try:
-                named_execution = self._resolve_named_execution(work_item, context)
-                driving = named_execution.reference
-            except DomainError as exc:
-                return self._finish_error(
-                    work_item,
-                    context,
-                    NativeErrorCode.NATIVE_INPUT_ERROR,
-                    str(exc),
-                    wall_start,
-                    monotonic_start,
-                )
-        else:
-            try:
-                driving = select_driving_structure(work_item)
-            except DomainError as exc:
-                return self._finish_error(
-                    work_item,
-                    context,
-                    NativeErrorCode.NATIVE_INPUT_ERROR,
-                    str(exc),
-                    wall_start,
-                    monotonic_start,
-                )
+        try:
+            driving = select_driving_structure(work_item)
+        except DomainError as exc:
+            return self._finish_error(
+                work_item,
+                context,
+                NativeErrorCode.NATIVE_INPUT_ERROR,
+                str(exc),
+                wall_start,
+                monotonic_start,
+            )
         from ..workflow.v4.scientific import resolve_scientific_parameters
 
         effective, scientific_diagnostics = resolve_scientific_parameters(
@@ -541,22 +506,6 @@ class WorkItemExecutor:
                 monotonic_start,
                 diagnostics=tuple(diagnostics),
             )
-        if named_execution is not None:
-            # Named slots already agreed on (charge, multiplicity) inside
-            # _resolve_named_execution; the agreement must match the
-            # single-precedence effective values, never override them.
-            try:
-                self._check_named_effective(named_execution, effective)
-            except DomainError as exc:
-                return self._finish_error(
-                    work_item,
-                    context,
-                    NativeErrorCode.NATIVE_INPUT_ERROR,
-                    str(exc),
-                    wall_start,
-                    monotonic_start,
-                    diagnostics=tuple(diagnostics),
-                )
         try:
             item_dir = context.attempt_dir(work_item)
         except Exception:
@@ -574,16 +523,13 @@ class WorkItemExecutor:
                 monotonic_start,
                 diagnostics=tuple(diagnostics),
             )
-        if named_execution is not None:
-            extra_structures = named_execution.slots
-        else:
-            extra_structures = FrozenDict(
-                {
-                    port: value
-                    for port, value in work_item.named_inputs.structures.items()
-                    if port != DRIVING_STRUCTURE_PORT
-                }
-            )
+        extra_structures = FrozenDict(
+            {
+                port: value
+                for port, value in work_item.named_inputs.structures.items()
+                if port != DRIVING_STRUCTURE_PORT
+            }
+        )
         try:
             from .binding_resolution import validate_step_seed
 
@@ -1563,66 +1509,19 @@ class WorkItemExecutor:
             metadata=recovered.metadata,
         )
 
-    def _resolve_named_execution(
-        self, work_item: WorkItem, context: ItemExecutionContext
-    ) -> _NamedExecution:
-        """Validate named-slot inputs plus atom mapping before any launch.
-
-        Structural slots resolve first; semantic cardinality/group rules
-        come from :mod:`confflow.execution.named_structures`; atom
-        correspondence comes from :mod:`confflow.execution.atom_mapping`.
-        Every failure raises a :class:`DomainError` so callers report a
-        typed ``native_input_error`` with zero native invocations.  The
-        executor never understands QST2/QST3/NEB — only slots, mapping,
-        and compatibility.
-        """
-        from .atom_mapping import parse_atom_mapping, validate_atom_mapping
-        from .execution_adapters import GUESS_SLOT
-        from .named_structures import resolve_named_inputs, validate_named_compatibility
-
-        slots = resolve_named_slot_sets(work_item)
-        guess_sets = slots.get(GUESS_SLOT)
-        require_guess = guess_sets is not None and len(guess_sets) > 0
-        named = resolve_named_inputs(work_item, require_guess=require_guess)
-        validate_named_compatibility(named)
-        mapping = parse_atom_mapping(context.scientific.native.get("atom_mapping"))
-        slot_atoms = {
-            port: tuple(value[0].atoms) for port, value in slots.items() if len(value) > 0
-        }
-        validate_atom_mapping(mapping, slot_atoms)
-        return _NamedExecution(reference=named.reactant, slots=slots, mapping=mapping, named=named)
-
-    @staticmethod
-    def _check_named_effective(named_execution: _NamedExecution, effective: Any) -> None:
-        """Require slot-agreed charge/mult to match the effective values."""
-        from .named_structures import validate_named_compatibility
-
-        charge, multiplicity = validate_named_compatibility(named_execution.named)
-        if charge != effective.charge or multiplicity != effective.multiplicity:
-            raise DomainError(
-                "named-slot charge/multiplicity "
-                f"({charge!r}, {multiplicity!r}) disagree with the resolved "
-                f"effective values ({effective.charge!r}, {effective.multiplicity!r})"
-            )
-
     def _resolved_inputs(
         self, work_item: WorkItem, context: ItemExecutionContext
     ) -> ResolvedCalculationInputs:
         from ..workflow.v4.scientific import resolve_scientific_parameters
 
-        if _is_named_execution(context):
-            named_execution = self._resolve_named_execution(work_item, context)
-            driving = named_execution.reference
-            extra = named_execution.slots
-        else:
-            driving = select_driving_structure(work_item)
-            extra = FrozenDict(
-                {
-                    port: value
-                    for port, value in work_item.named_inputs.structures.items()
-                    if port != DRIVING_STRUCTURE_PORT
-                }
-            )
+        driving = select_driving_structure(work_item)
+        extra = FrozenDict(
+            {
+                port: value
+                for port, value in work_item.named_inputs.structures.items()
+                if port != DRIVING_STRUCTURE_PORT
+            }
+        )
         effective, _ = resolve_scientific_parameters(
             structure=driving,
             overrides=context.scientific.overrides,
@@ -1649,14 +1548,9 @@ class WorkItemExecutor:
     def _allowed_artifact_subjects(work_item: WorkItem, context: ItemExecutionContext) -> set[str]:
         """Return the input structure ids artifacts may be bound to.
 
-        Standard items allow exactly the driving structure; named items
-        allow every named slot structure.  Anything else fails closed at
-        staging, before any native launch.
+        Standard items allow exactly the driving structure.  Anything
+        else fails closed at staging, before any native launch.
         """
-        if _is_named_execution(context):
-            return {
-                record.id for sets in work_item.named_inputs.structures.values() for record in sets
-            }
         return {select_driving_structure(work_item).id}
 
     @staticmethod
@@ -1664,9 +1558,4 @@ class WorkItemExecutor:
         try:
             return select_driving_structure(work_item).id
         except DomainError:
-            pass
-        reactant = work_item.named_inputs.structures.get("reactant")
-        if reactant is not None and len(reactant) == 1:
-            record = reactant[0]
-            return str(record.id) if isinstance(record, StructureRecord) else None
-        return None
+            return None

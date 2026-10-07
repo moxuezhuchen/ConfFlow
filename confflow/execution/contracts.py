@@ -246,8 +246,7 @@ class ExecutionAdapterSpec:
     """Input-port contract of an execution adapter.
 
     Adapters describe *how* a step's inputs are supplied to a native program:
-    a single structure (``standard``), named structures for multi-reference
-    calculations (``named_structures``), or a native input template
+    a single structure (``standard``) or a native input template
     (``native_template``).
     """
 

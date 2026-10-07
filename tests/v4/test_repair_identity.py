@@ -9,8 +9,6 @@ coverage (D owns those) and no registry/profile edits (A/C own those):
 - provenance-aware digests (entity/group/role/lineage + ResultRef/provenance);
 - status/cardinality gating with per-step scoped diagnostics;
 - IDS result filtering per requested id (MANY may select several distinct ids);
-- per-slot atom mapping applied before compatibility (uniform shorthand +
-  independent product/guess permutations, shared assembly/executor helper).
 """
 
 from __future__ import annotations
@@ -24,17 +22,6 @@ from confflow.domain import (
     make_result_id,
 )
 from confflow.domain.errors import InvalidResultError
-from confflow.execution.atom_mapping import (
-    AtomMapping,
-    normalize_to_per_slot,
-    parse_atom_mapping,
-    validate_mapping_for_slots,
-)
-from confflow.execution.named_structures import (
-    resolve_named_inputs,
-    validate_named_compatibility,
-    validate_slots_with_mapping,
-)
 
 
 def _energy(
@@ -242,87 +229,6 @@ class TestProvenanceAwareDigests:
         from confflow.domain import WORK_ITEM_DIGEST_KIND
 
         assert WORK_ITEM_DIGEST_KIND == "confflow.work_item.v2"
-
-
-class TestPerSlotAtomMapping:
-    REFERENCE = ("O", "H", "C")
-    PRODUCT = ("H", "C", "O")
-    GUESS = ("C", "O", "H")
-
-    def test_uniform_shorthand_normalizes_to_every_non_reference_slot(self) -> None:
-        mapping = parse_atom_mapping({"kind": "explicit_permutation", "permutation": [2, 0, 1]})
-        per_slot = normalize_to_per_slot(mapping, ("reactant", "product", "guess"))
-        assert per_slot == {"product": (2, 0, 1), "guess": (2, 0, 1)}
-
-    def test_independent_product_guess_permutations_validate(self) -> None:
-        mapping = parse_atom_mapping(
-            {
-                "kind": "explicit_permutation",
-                "permutations": {"product": [2, 0, 1], "guess": [1, 2, 0]},
-            }
-        )
-        per_slot = validate_mapping_for_slots(
-            mapping,
-            {"reactant": self.REFERENCE, "product": self.PRODUCT, "guess": self.GUESS},
-        )
-        assert per_slot == {"product": (2, 0, 1), "guess": (1, 2, 0)}
-
-    def test_dual_authority_is_rejected(self) -> None:
-        try:
-            parse_atom_mapping(
-                {
-                    "kind": "explicit_permutation",
-                    "permutation": [0, 1, 2],
-                    "permutations": {"product": [0, 1, 2]},
-                }
-            )
-        except Exception as exc:
-            assert getattr(exc, "code", "") == "atom_mapping_invalid"
-        else:  # pragma: no cover
-            raise AssertionError("dual authority must fail")
-
-    def test_shared_helper_orders_mapping_before_compatibility(self) -> None:
-        from confflow.domain import ResourceRequest, StructureRecord
-        from confflow.domain.work_item import WorkItem, WorkItemInputs, make_work_item_id
-
-        def record(rid: str, atoms: tuple[str, ...]) -> StructureRecord:
-            coords = tuple((float(i), 0.0, 0.0) for i in range(len(atoms)))
-            return StructureRecord(
-                id=rid,
-                atoms=atoms,
-                coordinates=coords,
-                charge=0,
-                multiplicity=1,
-                group_key="g1",
-            )
-
-        item = WorkItem(
-            id=make_work_item_id("qst:g1"),
-            logical_key="qst:g1",
-            step_id="qst",
-            named_inputs=WorkItemInputs(
-                structures=FrozenDict(
-                    {
-                        "reactant": StructureSet.of(record("r1", self.REFERENCE)),
-                        "product": StructureSet.of(record("p1", self.PRODUCT)),
-                    }
-                )
-            ),
-            resources=ResourceRequest(cores_per_item=2, memory_per_item_bytes=1024**3),
-            semantic_digest="sha256:" + "a" * 64,
-        )
-        resolved = resolve_named_inputs(item, require_guess=False)
-        mapping = parse_atom_mapping({"kind": "explicit_permutation", "permutation": [2, 0, 1]})
-        per_slot = validate_slots_with_mapping(resolved, mapping)
-        assert per_slot == {"product": (2, 0, 1)}
-        assert validate_named_compatibility(resolved) == (0, 1)
-        # Identity must still demand an explicit mapping for reordered slots.
-        try:
-            validate_slots_with_mapping(resolved, AtomMapping(kind="identity"))
-        except Exception as exc:
-            assert getattr(exc, "code", "") == "atom_mapping_required"
-        else:  # pragma: no cover
-            raise AssertionError("identity over reordered slots must fail")
 
 
 class TestAssemblyGating:

@@ -95,10 +95,6 @@ class TestMissingRequiredInput:
         from confflow.domain import ResourceRequest
         from confflow.domain.errors import DomainError
         from confflow.domain.work_item import WorkItem, WorkItemInputs, make_work_item_id
-        from confflow.execution.named_structures import (
-            NamedStructureError,
-            resolve_named_inputs,
-        )
         from confflow.execution.work_item_executor import select_driving_structure
 
         empty = WorkItem(
@@ -111,10 +107,6 @@ class TestMissingRequiredInput:
         )
         with pytest.raises(DomainError):
             select_driving_structure(empty)
-        named = _named_item({"product": StructureSet.of(_named_record("p1"))})
-        with pytest.raises(NamedStructureError) as excinfo:
-            resolve_named_inputs(named, require_guess=False)
-        assert excinfo.value.code == "named_structure_missing"
 
 
 class TestChangedDefinition:
@@ -175,19 +167,8 @@ class TestChangedGroupLineage:
     """Group/lineage disagreement fails closed at pairing time."""
 
     def test_changed_group_lineage(self) -> None:
-        from confflow.execution.named_structures import (
-            NamedStructureError,
-            resolve_named_inputs,
-        )
         from confflow.execution.output_identity import endpoint_lineage
 
-        ports = {
-            "reactant": StructureSet.of(_named_record("r1", group_key="g1")),
-            "product": StructureSet.of(_named_record("p1", group_key="g2")),
-        }
-        with pytest.raises(NamedStructureError) as excinfo:
-            resolve_named_inputs(_named_item(ports), require_guess=False)
-        assert excinfo.value.code == "named_group_mismatch"
         driving = _named_record("ts00", group_key="rxn-00")
         lineage = endpoint_lineage(driving)
         assert lineage[0] == ("ts00",)
@@ -328,48 +309,6 @@ class TestWorkdirCollision:
         assert ctx0.attempt_dir(_Item()) != ctx1.attempt_dir(_Item())
         assert ctx0.attempt_dir(_Item()).endswith("attempt_0000")
         assert ctx1.attempt_dir(_Item()).endswith("attempt_0001")
-
-
-class TestMappedNamedStructures:
-    """Atom mapping validates before charge/multiplicity compatibility."""
-
-    def test_mapped_named_structures(self) -> None:
-        from confflow.execution.atom_mapping import (
-            ATOM_MAPPING_REQUIRED,
-            AtomMapping,
-            AtomMappingError,
-        )
-        from confflow.execution.named_structures import (
-            validate_named_compatibility,
-            validate_slots_with_mapping,
-        )
-
-        ports = {
-            "reactant": StructureSet.of(_named_record("r1")),
-            "product": StructureSet.of(_named_record("p1")),
-        }
-        resolved_ok = _named_item(ports)
-        from confflow.execution.named_structures import resolve_named_inputs
-
-        resolved = resolve_named_inputs(resolved_ok, require_guess=False)
-        identity = AtomMapping(kind="identity", reference_slot="reactant")
-        assert validate_slots_with_mapping(resolved, identity) == {}
-        assert validate_named_compatibility(resolved) == (0, 1)
-
-        shuffled = {
-            "reactant": StructureSet.of(_named_record("r1", atoms=("O", "H", "H"))),
-            "product": StructureSet.of(_named_record("p1", atoms=("H", "O", "H"))),
-        }
-        resolved_shuffled = resolve_named_inputs(_named_item(shuffled), require_guess=False)
-        with pytest.raises(AtomMappingError) as excinfo:
-            validate_slots_with_mapping(resolved_shuffled, identity)
-        assert excinfo.value.code == ATOM_MAPPING_REQUIRED
-        explicit = AtomMapping(
-            kind="explicit_permutation",
-            permutation=(1, 0, 2),
-            reference_slot="reactant",
-        )
-        assert validate_slots_with_mapping(resolved_shuffled, explicit) is not None
 
 
 class TestIrcMultiOutput:
@@ -543,10 +482,6 @@ class TestAmbiguousResultFail:
             make_result_id,
         )
         from confflow.domain.units import Unit
-        from confflow.execution.named_structures import (
-            NamedStructureError,
-            resolve_named_inputs,
-        )
 
         digest = "sha256:" + hashlib.sha256(b"amb").hexdigest()
 
@@ -591,13 +526,6 @@ class TestAmbiguousResultFail:
         )
         _, _, ambiguous = dup_pool.select_ids((dup_id,))
         assert ambiguous == (dup_id,)
-        ports = {
-            "reactant": StructureSet.of(_named_record("r1"), _named_record("r2")),
-            "product": StructureSet.of(_named_record("p1")),
-        }
-        with pytest.raises(NamedStructureError) as excinfo:
-            resolve_named_inputs(_named_item(ports), require_guess=False)
-        assert excinfo.value.code == "named_structure_ambiguous"
 
 
 class TestGoatSeed:

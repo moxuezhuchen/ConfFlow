@@ -396,9 +396,9 @@ def _structure_target_ports(
 ) -> set[str]:
     """Return the structure-kind input port names bound on *step*.
 
-    Calculation input ports are adapter-resolved (standard vs
-    named_structures), so the same resolver the step validation uses
-    supplies the port facts here; no port rule is re-implemented.
+    Calculation input ports are adapter-resolved (standard), so the same
+    resolver the step validation uses supplies the port facts here; no
+    port rule is re-implemented.
     """
     if contract is None:
         return set()

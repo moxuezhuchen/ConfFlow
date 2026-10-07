@@ -382,7 +382,12 @@ class TestNativeModeProfileCombinations:
         result = compile_doc(doc)
         assert not result.ok
         assert "invalid_value" in reasons(result.errors)
-        assert any("must be a mapping" in item.message for item in result.errors)
+        # R2.3d (G18): NEB is retired and `neb` left the native vocabulary,
+        # so a stale NEB section fails closed as an unknown key.
+        assert any(
+            "unknown native keys" in item.message and "neb" in item.message
+            for item in result.errors
+        )
 
 
 class TestCustomRegistryResolution:
