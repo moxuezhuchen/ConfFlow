@@ -190,6 +190,9 @@ IMPORT_ONLY_V4_PRODUCTION_ROOTS = ["confflow/application/execution"]
 IMPORT_ONLY_V4_PRODUCTION_FILES = ["confflow/control_worker.py"]
 PRODUCER_CONFIG_AUTHORITY_IMPORTS = ["confflow.config.contract_schemas"]
 EXTENDED_LEGACY_TOKEN_EXEMPTIONS = {"confflow/application/v4_entry.py": ["input_xyz"]}
+# DIET-2 N1: the server.toml capacity key is mandated by the approved plan
+# (Q4). quota.py is the single authority that may spell it in V42 roots.
+N1_SERVER_QUOTA_VOCAB_EXEMPTIONS = {"confflow/execution/quota.py": ["total_memory"]}
 KNOWN_PRODUCER_LEGACY_IMPORTS = []
 REMOVED_LEGACY_MODULES = [
     "confflow.blocks",
@@ -1427,6 +1430,7 @@ R.append(
         "source": "#67",
         "scope": V42_ROOTS,
         "tokens": FORBIDDEN_V42_TOKENS,
+        "exempt_symbols": N1_SERVER_QUOTA_VOCAB_EXEMPTIONS,
     }
 )
 R.append(
