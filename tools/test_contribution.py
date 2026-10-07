@@ -260,6 +260,33 @@ def format_table(report: dict, data_file: str) -> str:
     return "\n".join(out) + "\n"
 
 
+def simulate_delete(data: CoverageData, deleted: set[str], root: str) -> dict:
+    """Report lines/arcs covered only by tests in ``deleted`` (set-wise loss)."""
+    nodes = collect_nodes(data)
+    files = sorted(data.measured_files())
+    lines = line_cover(data, files)
+    arcs = arc_cover(data, nodes, files)
+    lost_lines: dict[str, list[int]] = {}
+    lost_arcs: dict[str, list[list[int]]] = {}
+    for filename in files:
+        rel = _relpath(filename, root)
+        gone = sorted(n for n, owners in lines[filename].items() if owners <= deleted)
+        if gone:
+            lost_lines[rel] = gone
+        gone_arcs = sorted(a for a, owners in arcs[filename].items() if owners <= deleted)
+        if gone_arcs:
+            lost_arcs[rel] = [list(a) for a in gone_arcs]
+    unknown = sorted(deleted - set(nodes))
+    return {
+        "deleted_tests": len(deleted),
+        "unknown_nodes": unknown,
+        "lost_line_count": sum(len(v) for v in lost_lines.values()),
+        "lost_arc_count": sum(len(v) for v in lost_arcs.values()),
+        "lost_lines": lost_lines,
+        "lost_arcs": lost_arcs,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point: build the report from a coverage data file."""
     parser = argparse.ArgumentParser(
@@ -286,9 +313,27 @@ def main(argv: list[str] | None = None) -> int:
         + ",".join(DEFAULT_PROTECT_KEYWORDS)
         + ")",
     )
+    parser.add_argument(
+        "--simulate-delete",
+        default=None,
+        help="文件(每行一个测试 node id)：模拟删除这组测试，报告只被这组测试覆盖的行/分支(集合级损失)",
+    )
     args = parser.parse_args(argv)
     data_file = resolve_data_file(args.data_file)
     data = load_data(data_file)
+    if args.simulate_delete:
+        ids = {
+            ln.strip()
+            for ln in Path(args.simulate_delete).read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.startswith("#")
+        }
+        result = simulate_delete(data, ids, os.path.abspath(args.root))
+        text = json.dumps(result, indent=2) + "\n"
+        if args.output:
+            Path(args.output).write_text(text, encoding="utf-8")
+        else:
+            print(text, end="")
+        return 0
     keywords = parse_protect_args(args.protect)
     report = build_report(data, keywords, os.path.abspath(args.root))
     if args.format == "json":

@@ -106,3 +106,22 @@ def test_header_notes_and_formats(tmp_path):
     assert tc.USAGE_NOTE in table and tc.ZERO_NOTE in table
     assert tc.FULL_RUN_COMMAND in table
     assert "--cov-context=test" in table
+
+
+def test_simulate_delete_counts_only_set_wise_exclusive_lines(tmp_path):
+    """Deleting two tests that share a line loses it only when both are deleted."""
+    from coverage import CoverageData
+
+    from tools.test_contribution import simulate_delete
+
+    src = str(tmp_path / "mod.py")
+    data = CoverageData(basename=str(tmp_path / ".cov"))
+    for ctx, lines in (("t::a|run", [1, 2]), ("t::b|run", [2, 3]), ("t::c|run", [3])):
+        data.set_context(ctx)
+        data.add_lines({src: lines})
+    data.write()
+    assert simulate_delete(data, {"t::a"}, str(tmp_path))["lost_line_count"] == 1
+    both = simulate_delete(data, {"t::a", "t::b"}, str(tmp_path))
+    assert both["lost_line_count"] == 2
+    assert both["lost_lines"] == {"mod.py": [1, 2]}
+    assert simulate_delete(data, {"t::zzz"}, str(tmp_path))["unknown_nodes"] == ["t::zzz"]
