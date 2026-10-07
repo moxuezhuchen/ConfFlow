@@ -897,6 +897,7 @@ export BASE=$CKPT/<里程碑>/baseline
   - **2026-10-06 修订（用户决定）**：葡萄糖不要求 strict CP recall 达到 100%。`< 15°` 的 strict CP 召回保留为严格诊断指标，并列输出 basin recall（参考构象归属的最近正则形式是否有已发布种子）与 miss 分类；记录值：strict 127/155、basin 155/155。是否需要新增 ring seed，由 published 种子优化后的 CP 召回（D 诊断）决定；含氧六元环默认形式集加 B（A）另开卡评估、本缺口不以其关闭；畸变椅种子（C）在缺少稳定畸变盆能量证据前冻结。这些并列指标只进入 benchmark 工具输出，不进入 engine 报告，不改 golden。
 - 允许修改：`docs/confgen-fix/tools/**`、`tests/v4/test_confgen_ring_benchmark.py`（新）
 - 验收：rpdd、环己烷、甲基环己烷的环层面召回 100%；其余体系按 Q9 数据到位情况补充（葡萄糖按上方 2026-10-06 修订：strict 与 basin 并列报告，不要求 strict 100%）。
+- 沉淀：β-D-吡喃葡萄糖缺口诊断见 `docs/confgen-fix/R7-GLUCOSE-RECALL.md`，脚本归档于 `docs/confgen-fix/tools/r7_glucose/`。
 
 ---
 

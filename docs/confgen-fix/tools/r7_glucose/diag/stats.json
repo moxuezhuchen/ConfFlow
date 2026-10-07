@@ -1,0 +1,75 @@
+{
+ "n_miss": 28,
+ "n_hit": 127,
+ "n_boat_zone_theta90_120": 7,
+ "n_flat_theta150_170": 21,
+ "recompute_max_absdiff_deg": 0.0,
+ "boat_refs": [
+  48,
+  69,
+  76,
+  110,
+  112,
+  123,
+  148
+ ],
+ "flat_refs": [
+  0,
+  1,
+  2,
+  3,
+  4,
+  10,
+  13,
+  15,
+  25,
+  27,
+  30,
+  35,
+  41,
+  55,
+  56,
+  78,
+  90,
+  106,
+  115,
+  122,
+  135
+ ],
+ "pearson_flat_dev_vs_hbond_count": 0.432,
+ "pearson_flat_dideal_vs_hbond_count": 0.521,
+ "pearson_flat_dev_vs_minHO": -0.251,
+ "pearson_flat_dideal_vs_minHO": -0.265,
+ "miss_rotamer_frac": {
+  "gg": 0.714,
+  "gt": 0.0,
+  "tg": 0.286
+ },
+ "hit_rotamer_frac": {
+  "gg": 0.307,
+  "gt": 0.197,
+  "tg": 0.496
+ },
+ "miss_hb_mean": 3.714,
+ "hit_hb_mean": 3.213,
+ "miss_hb_dist": {
+  "0": 0,
+  "1": 0,
+  "2": 0,
+  "3": 10,
+  "4": 16,
+  "5": 2
+ },
+ "hit_hb_dist": {
+  "0": 0,
+  "1": 0,
+  "2": 23,
+  "3": 57,
+  "4": 44,
+  "5": 3
+ },
+ "n_hitchair_C1": 73,
+ "recall_lt15": "127/155",
+ "recall_basin_same_form": "155/155",
+ "recall_family_same_family": "155/155"
+}
