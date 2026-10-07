@@ -2,20 +2,15 @@
 
 """Simplified producer intent (Phases 2-4 + 7).
 
-:func:`compile_intent` turns the documented ``confflow.intent.v1`` mapping
-into a strict V4 wire document and verifies it through the REAL strict V4
-parser and compiler.  There is no second runtime: cards supply
-``CalculationModel`` defaults resolved against the real execution registry
-and program registry, bindings obey the real port contracts, seeds fill the
-strict ``calculation.seed``/``confgen.seed`` fields, presets fill the strict
-transform native vocabulary, and every failure raises
-:class:`IntentCompilationError` (a ``ValueError`` so root dispatch can catch
-``ValueError``/``DomainError``).
-
-Module-load imports stay light (cards/presets constants only) so
-:func:`intent_catalog` is pure and safe to call from
-``build_configuration_contract_v4`` without compiler/contract recursion.
-Everything heavy is imported lazily inside :func:`compile_intent`.
+:func:`compile_intent` turns the documented ``confflow.intent.v1`` mapping into a strict V4 wire
+document and verifies it through the REAL strict V4 parser and compiler. No second runtime: cards
+supply ``CalculationModel`` defaults resolved against real execution/program registries, bindings
+obey real port contracts, seeds fill strict ``calculation.seed``/``confgen.seed`` fields, presets
+fill strict transform native vocabulary; every failure raises ``IntentCompilationError`` (a
+``ValueError`` so root dispatch can catch ``ValueError``/``DomainError``). Module-load imports stay
+light (cards/presets constants only) so :func:`intent_catalog` is pure and safe to call from
+``build_configuration_contract_v4`` without compiler/contract recursion; everything heavy is
+imported lazily inside :func:`compile_intent`.
 """
 
 from __future__ import annotations
@@ -314,12 +309,7 @@ def _normalize_globals(raw: Any) -> dict[str, Any]:
 
 
 def _extract_card_type_for_alloc(card_ref: Any, intent_registry: Any | None) -> str | None:
-    """Extract a card type for id allocation via the explicit registry first.
-
-    Returns the registry-hit key, or ``None`` when no custom hit applies so
-    the caller falls back to the legacy ``parse_card_ref`` failure path
-    (preserving old messages when no custom key exists).
-    """
+    """Extract a card type for id allocation via the explicit registry first."""
     if intent_registry is None:
         return None
     try:
@@ -531,13 +521,7 @@ def _apply_role_cards(
 def _parse_card_ref_with_registry(
     ref: object, intent_registry: object | None, step_id: str
 ) -> tuple[str, str]:
-    """Parse a card ref, consulting the explicit registry before rejection.
-
-    Custom keys hit the registry and return immediately; otherwise the
-    legacy ``parse_card_ref`` path runs unchanged so default failures keep
-    their old messages.  ``step_id`` is only used for error context by the
-    caller (this helper raises raw ``ValueError`` like the legacy parser).
-    """
+    """Parse a card ref, consulting the explicit registry before rejection."""
     if intent_registry is not None:
         try:
             resolve = intent_registry.resolve  # type: ignore[attr-defined]
@@ -579,13 +563,7 @@ def _parse_card_ref_with_registry(
 def _resolve_card_and_entry(
     ref: object, intent_registry: object, step_id: str
 ) -> tuple[str, str, dict[str, object], object]:
-    """Resolve ``(card_type, version, card_dict, entry)`` via the registry.
-
-    Custom keys return the descriptor-owned thawed card; default keys return
-    thawed copies equal to ``get_card`` (lists stay lists).  Unknown keys
-    fall through to the legacy ``parse_card_ref``/``get_card`` failure path
-    so default errors are byte-identical.
-    """
+    """Resolve ``(card_type, version, card_dict, entry)`` via the registry."""
     card_type, card_version = _parse_card_ref_with_registry(ref, intent_registry, step_id)
     try:
         resolve = intent_registry.resolve  # type: ignore[attr-defined]
@@ -666,11 +644,7 @@ _RESERVED_FRAGMENT_KEYS = frozenset(
 
 
 def _effective_wire_block_key(entry: Any) -> str | None:
-    """Return the descriptor effective wire-block key (total, never raises).
-
-    Explicit non-empty ``wire_block_key`` wins; empty derives from
-    ``fragment_keys[0]`` (C2 compat).  No executor hardcoding here.
-    """
+    """Return the descriptor effective wire-block key (total, never raises)."""
     try:
         explicit = getattr(entry, "wire_block_key", "")
     except Exception:
@@ -701,14 +675,7 @@ def _adapter_from_wire(step: Mapping[str, Any], block_key: Any) -> str | None:
 
 
 def _wire_block_key_for_executor(intent_registry: Any, executor: str) -> str | None:
-    """Resolve the wire-block key by executor via the assembly point.
-
-    The compiler never hardcodes executor->block names; the mapping lives in
-    ``capabilities/registry.py`` (builtin defaults + per-executor consistency).
-    Unknown executors yield ``None`` (old unknown-executor empty set
-    analogue for adapters). Same-executor conflicts raise fail-closed
-    (never silent ``sorted-first``); assembly import failures also raise.
-    """
+    """Resolve the wire-block key by executor via the assembly point."""
     from .capabilities.registry import wire_block_key_for_executor as _helper
 
     return _helper(intent_registry, executor)
@@ -1344,19 +1311,7 @@ def compile_intent(
 def _require_recipe_assignment(
     user: Mapping[str, Any], base: Mapping[str, Any], step_id: str
 ) -> None:
-    """Require explicit science for a recipe assignment (L1-A2b1 compat wrapper).
-
-    Same 3-param signature and same error order/text as before; behavior is
-    identical on all real wires.  Delegates to the generic hook from the
-    default registry by wire ``executor`` (never by guessed card type, no
-    component literal here): legal ``None`` hooks skip (old non-block early
-    analogue); unknown/no-executor wires skip (old baseline: reviewed bases
-    without hooks carry no assignment blocks).  Real ``compile_intent`` uses
-    the same custom registry explicitly (no default construction inside the
-    lane).  The wrapper is not the same object as the capability
-    implementation (no ``is`` promise); exceptions propagate unwrapped so the
-    five-tuple is byte-identical.
-    """
+    """Require explicit science for a recipe assignment (L1-A2b1 compat wrapper)."""
     try:
         executor = base.get("executor") if isinstance(base, Mapping) else None
     except Exception:
@@ -1376,16 +1331,7 @@ def _require_recipe_assignment(
 
 
 def _patch_recipe_step(patched: dict[str, Any], user: Mapping[str, Any], step_id: str) -> None:
-    """Apply user assignments onto one recipe step (L1-A2b1 compat wrapper).
-
-    Same 3-param signature, same in-place ``None`` return, same error
-    order/text.  Delegates to the generic orchestrator
-    ``intent/recipes.py::apply_recipe_assignment`` with the block hook from
-    the default registry by wire ``executor`` (no component literal here).
-    Legal ``None`` hooks mark only ``_expanded`` (old early analogue).
-    Real ``compile_intent`` passes the same custom registry explicitly.
-    Not the same object as the new implementation (no ``is`` promise).
-    """
+    """Apply user assignments onto one recipe step (L1-A2b1 compat wrapper)."""
     try:
         executor = patched.get("executor") if isinstance(patched, Mapping) else None
     except Exception:

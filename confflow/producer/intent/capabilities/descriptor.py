@@ -69,20 +69,7 @@ def _thaw_value(value: Any) -> Any:
 
 @dataclass(frozen=True, slots=True)
 class CapabilityDescriptor:
-    """One card key's intent capability (deeply immutable).
-
-    ``key`` is the card type string (e.g. ``"sp"`` or a test-local custom
-    key); ``executor`` reuses an existing runtime executor name
-    (``"calculation"``/``"confgen"``/``"structure_transform"``, no new enum);
-    ``intent_handler`` is ``(user, card, step_id) -> dict`` returning the
-    complete capability-owned wire fragment (e.g. ``{"calculation": ...}``)
-    or ``None`` (``None`` means unservable; the default builder rejects
-    ``None`` so no fake analysis handler is registered); ``card`` is the
-    deeply frozen card shape owned by this descriptor; ``fragment_keys``
-    declares the exact fragment keys this handler may return (compiler
-    validates the returned mapping against it and never lets it overwrite
-    generic ``id``/``executor``/``label`` etc.).
-    """
+    """One card key's intent capability (deeply immutable)."""
 
     key: str
     executor: str
@@ -202,25 +189,14 @@ class CapabilityDescriptor:
 
     @property
     def effective_wire_block_key(self) -> str:
-        """Return the wire block key (explicit or derived default).
-
-        Empty ``wire_block_key`` derives from ``fragment_keys[0]`` so C2-era
-        descriptors stay compilable without hardcoding an executor mapping
-        in the compiler.
-        """
+        """Return the wire block key (explicit or derived default)."""
         if isinstance(self.wire_block_key, str) and self.wire_block_key:
             return self.wire_block_key
         return tuple(self.fragment_keys)[0]
 
     @property
     def effective_seed_block_keys(self) -> tuple[str, ...]:
-        """Return the seed-bearing wire blocks (explicit or derived default).
-
-        Empty ``seed_block_keys`` derives the builtin default for the
-        executor: calculation/confgen derive ``(fragment_keys[0],)``,
-        any other executor derives ``()`` (no seed slot, e.g. transform).
-        Explicit non-empty values are returned verbatim.
-        """
+        """Return the seed-bearing wire blocks (explicit or derived default)."""
         try:
             explicit = tuple(self.seed_block_keys or ())
         except Exception:

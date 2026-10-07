@@ -2,36 +2,16 @@
 
 """Producer machine-capacity resolver (Phase 5 input simplification).
 
-:func:`resolve_machine_resources` turns a per-item scientific request plus a
-machine capacity profile into strict V4 ``resources``/``scheduler`` wire
-mappings.  It is a pure authoring helper: every rule it applies comes from an
-existing authority, and it creates no second runtime.
-
-Authorities consulted (imported, never copied):
-
-- :func:`confflow.domain.resources.parse_memory_bytes` -- the single memory
-  text authority for capacities and requests;
-- :class:`confflow.domain.resources.ResourceRequest` /
-  :class:`confflow.domain.resources.SchedulerPolicy` -- range rules
-  (cores ``>= 1``, memory ``> 0``, width ``>= 1``) and the
-  scientific-vs-operational split;
-- :class:`confflow.domain.resources.OnFailure` -- the closed scheduler
-  failure vocabulary;
-- :mod:`confflow.workflow.v4.schema` -- the strict V4 wire shapes the
-  returned mappings must satisfy (``cores_per_item``/``memory_per_item``,
-  ``max_parallel_items``/``on_failure``).
-
-Digest contract (from :mod:`confflow.workflow.v4.fingerprint`):
-
-- the returned ``resources`` are scientific: they move step and definition
-  digests;
-- the returned ``scheduler`` width, ``on_failure``, and every operational
-  profile field (executable, env, remote/target locators) are digest-inert
-  provenance: they travel in ``provenance`` only.
-
-The request is never silently defaulted: both resource dimensions are
-required, an oversized request fails instead of clamping, and an explicit
-scheduler override must fit the capacity it claims.
+:func:`resolve_machine_resources` turns per-item scientific request plus machine capacity profile
+into strict V4 ``resources``/``scheduler`` wire mappings; pure authoring helper applying existing
+authorities only (memory via ``parse_memory_bytes``; ranges cores >=1, memory >0, width >=1; closed
+``OnFailure`` vocabulary; V4 wire shapes), creating no second runtime. Digest contract: returned
+``resources`` are scientific and move step/definition digests; scheduler width/``on_failure`` and
+every operational profile field (executable, env, remote/target locators) are digest-inert
+provenance only. Request never silently defaulted: both resource dimensions required, oversized
+request fails instead of clamping, explicit scheduler override must fit capacity. Raises
+``InvalidResourceError`` on unknown fields, booleans, non-finite numbers, non-positive capacities,
+unresolved/oversized requests, or out-of-capacity overrides.
 """
 
 from __future__ import annotations

@@ -30,17 +30,7 @@ def apply_recipe_assignment(
     patch_block_fn: Callable[[Any, Mapping[str, Any], str], Any] | None,
     wire_block_key: str | None,
 ) -> None:
-    """Apply user assignments onto one reviewed recipe step in place (generic).
-
-    Sets ``_expanded`` first (verbatim old timing), then patches the wire
-    block named by ``wire_block_key`` via ``patch_block_fn`` (capability hook,
-    e.g. calculation block mapping).  ``patch_block_fn`` receives the block
-    mapping and returns the new block mapping (or mutates in place and returns
-    ``None``); ``None`` hook means "no block patch" (legal no-hook skip).
-    Resources/scheduler/annotations outer merge is verbatim old order.
-    No executor/program/native literals here: block name and science arrive
-    via parameters.
-    """
+    """Apply user assignments onto one reviewed recipe step in place (generic)."""
     patched_step["_expanded"] = True
     block: Any = None
     has_block = False
@@ -79,17 +69,7 @@ def missing_recipe_assignments(
     *,
     hooks_of: Callable[[str], tuple[Any, Any] | None],
 ) -> list[str]:
-    """Return sorted ids needing explicit assignments (generic missing gate).
-
-    Derived from descriptor hook presence (``hooks_of(executor) is not None``),
-    not from a wire-block literal: steps whose executor declares recipe hooks
-    and are unmatched are missing.  Message/sorting/timing preserved by the
-    caller (old text: "recipe requires explicit program/native assignments
-    for every calculation step (no demo science); missing: ...").
-    Unknown executors (``hooks_of`` returns ``None``) are excluded (old
-    non-block early analogue); lookup/conflict failures raise fail-closed via
-    ``hooks_of`` and never collapse into silent skip.
-    """
+    """Return sorted ids needing explicit assignments (generic missing gate)."""
     missing: list[str] = []
     for step in base_wire_steps:
         if not isinstance(step, dict):
@@ -118,17 +98,7 @@ def run_recipe_lane(
     wire_key_of: Callable[[str], str | None],
     select_family_native_fn: Callable[..., dict[str, Any] | None],
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], set[str], list[dict[str, Any]]]:
-    """Run the b1 recipe assignment lane generically (assignment channel only).
-
-    ``hooks_of(executor)`` returns ``(require_fn, patch_fn) | None``;
-    ``wire_key_of(executor)`` returns the wire block key (generic descriptor
-    metadata); ``select_family_native_fn(template, role, *, context=...)`` is
-    the family selector (b1 still delegates to the compiler original; b2 moves
-    the body).  Role extraction reads ``base[wire_key].role`` generically via
-    ``wire_key_of`` -- no executor literal branch here.  Error order preserved:
-    family selection, then require gate, then patch mapping.  Returns
-    ``(wire_steps, base_by_id, matched, appended)``.
-    """
+    """Run the b1 recipe assignment lane generically (assignment channel only)."""
     wire_steps: list[dict[str, Any]] = [copy.deepcopy(step) for step in base_wire_steps]
     base_by_id = {str(step.get("id")): step for step in wire_steps if isinstance(step, dict)}
     appended: list[dict[str, Any]] = []

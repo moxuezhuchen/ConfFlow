@@ -2,26 +2,16 @@
 
 """Producer-owned runtime run-result projection (V4 repair, worker J).
 
-Builds the :data:`confflow.producer.contract.RESULT_MANIFEST_SCHEMA`
-manifest from the REAL runtime objects only -- :class:`StepResult` /
-``ArtifactSet`` outputs -- never from hand-built shapes:
-
-* per-step ``id``/``status``/published ``digest`` plus the compiler
-  ``semantic_digest``; counts and diagnostics come from the real
-  ``StepResult`` (never ``"completed"``-as-digest, never filename-as-truth);
-* top-level ``results`` with ``ResultRef`` identity (``result_id``/``kind``/
-  ``subject``/``source`` provenance plus ``value_digest``/``identity_digest``);
-* artifacts with ``role``/``subject``/``checksum``/safe run-relative
-  ``locator`` plus a ``fetch`` handle (``run-relative:<locator>``).
-
-R2.3a: the reaction-profile group projection (``confflow.analysis``
-consumer) is retired with the analysis package; ``analyses`` is always
-empty for retained steps.
-
-Publication is atomic and durable: canonical JSON bytes are written to a
-temp file, fsynced, ``os.replace``-d onto ``run_result.json``, the directory
-is fsynced, and the bytes are re-read from disk and verified (schema +
-digest equality) before returning.
+Builds ``RESULT_MANIFEST_SCHEMA`` manifest from REAL runtime objects only
+(``StepResult``/``ArtifactSet`` outputs, never hand-built shapes): per-step id/status/published
+digest plus compiler ``semantic_digest`` with counts/diagnostics from the real ``StepResult`` (never
+status-as-digest, never filename-as-truth); top-level ``results`` with ``ResultRef`` identity
+(result_id/kind/subject/source plus value/identity digests); artifacts with
+role/subject/checksum/safe run-relative locator plus ``fetch`` handle (``run-relative:<locator>``).
+R2.3a: reaction-profile grouping retired, ``analyses`` always empty. Publication is atomic and
+durable: canonical JSON bytes written to temp file, fsynced, ``os.replace``-d onto
+``run_result.json``, directory fsynced, bytes re-read from disk and verified (schema plus digest
+equality) before returning.
 """
 
 from __future__ import annotations
@@ -54,12 +44,7 @@ _ENERGY_KIND_TO_KEY: dict[str, str] = {
 
 
 def _provenance_source(provenance: Any) -> dict[str, Any] | None:
-    """Return the wire ``source`` triple from a result provenance.
-
-    Only the provenance triple (program/method/adapter) is used; parser
-    fine-grained markers are never threaded here.  Missing members are
-    omitted; ``None`` is returned when no program is known.
-    """
+    """Return the wire ``source`` triple from a result provenance."""
     if provenance is None:
         return None
     program = getattr(provenance, "program", None)
@@ -78,15 +63,7 @@ def _provenance_source(provenance: Any) -> dict[str, Any] | None:
 def _energies_by_subject(
     records: Any,
 ) -> dict[tuple[Any, Any], dict[str, Any]]:
-    """Group Hartree energies by ``(source_step_id, subject_structure_id)``.
-
-    Values are verbatim copies of the sibling ``ScientificResult`` values
-    (Hartree, no conversion, no differencing).  ``gibbs_correction`` may be
-    the ``g - e`` derived value published by the standard profile; this
-    projection does not distinguish derived from parsed corrections.
-    Every entry sharing one subject key receives the same ``energies``
-    object so consumers need no secondary join.
-    """
+    """Group Hartree energies by ``(source_step_id, subject_structure_id)``."""
     by_key: dict[tuple[Any, Any], dict[str, Any]] = {}
     preferred: dict[tuple[Any, Any], Any] = {}
     order = ("energy", "gibbs_energy", "gibbs_correction")
@@ -213,13 +190,7 @@ def result_ref_entries(
     *,
     run_input_results: Any = (),
 ) -> list[dict[str, Any]]:
-    """Ordered ResultRef wire entries: produced results, then run-input refs.
-
-    The ordering is deterministic (step order, then result order, then the
-    named run-input collections' own order), so manifest bytes never depend
-    on dict iteration order.  Produced entries carry the optional R2.0
-    inline ``energies`` grouped per ``StepResult``; run-input refs never do.
-    """
+    """Ordered ResultRef wire entries: produced results, then run-input refs."""
     entries: list[dict[str, Any]] = []
     for step_result in step_results:
         energies_map = _energies_by_subject(step_result.results)

@@ -2,21 +2,14 @@
 
 """Producer-owned V4 editor manifest: which workflow fields a GUI may edit.
 
-The manifest follows the historical structural pattern (field entries with
-``field_id``/``context``/``json_pointer``/``label``/``value_type``/``editor``,
-step fields addressed at ``/steps/{id}`` with an explicit
-``step_selector: "id"`` plus ``relative_pointer``), but every pointer targets
-the V4 workflow schema and every choice list is read from the live V4
-registries.
-
-Only user-editable scientific, scheduler, resource, completion, and execution
-settings are published. Digests, owner tokens, sqlite paths, and work-item
-internals never appear as fields.
-
-Every field pointer is verified against the workflow JSON schema at build
-time; :func:`build_editor_manifest_v4` raises :class:`ValueError` when a
-pointer does not resolve, so a schema change without a manifest update fails
-closed instead of publishing a dangling editor.
+Follows historical structural pattern (field entries with
+field_id/context/json_pointer/label/value_type/editor, step fields at ``/steps/{id}`` with
+``step_selector: id`` plus ``relative_pointer``), every pointer targeting V4 schema and every choice
+list read from live V4 registries. Only user-editable scientific, scheduler, resource, completion,
+and execution settings published; digests, owner tokens, sqlite paths, work-item internals never
+appear as fields. Every field pointer verified against workflow JSON schema at build time;
+:func:`build_editor_manifest_v4` raises ``ValueError`` when a pointer does not resolve, so a schema
+change without manifest update fails closed instead of publishing a dangling editor.
 """
 
 from __future__ import annotations
@@ -59,11 +52,7 @@ def _resolve_ref(node: Any, defs: dict[str, Any]) -> Any:
 
 
 def _descend(node: Any, part: str, defs: dict[str, Any]) -> Any | None:
-    """Descend one pointer part; return the child node or ``None``.
-
-    Free-form mappings (``native``, ``overrides``, ``env``, ``annotations``)
-    accept any remaining part without further descent.
-    """
+    """Descend one pointer part; return the child node or ``None``."""
     node = _resolve_ref(node, defs)
     if not isinstance(node, dict):
         return None
@@ -91,17 +80,7 @@ def _descend(node: Any, part: str, defs: dict[str, Any]) -> Any | None:
 
 
 def pointer_resolves(schema: dict[str, Any], pointer: str) -> bool:
-    """Return whether *pointer* resolves against the workflow JSON *schema*.
-
-    Parameters
-    ----------
-    schema :
-        Workflow JSON Schema mapping as produced by
-        :func:`confflow.workflow.v4.schema.build_workflow_json_schema`.
-    pointer :
-        JSON pointer such as ``/global/resources/cores_per_item`` or the
-        step template ``/steps/{id}/calculation/program``.
-    """
+    """Return whether *pointer* resolves against the workflow JSON *schema*."""
     if not pointer.startswith("/"):
         return False
     node: Any = schema

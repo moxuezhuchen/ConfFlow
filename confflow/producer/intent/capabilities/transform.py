@@ -106,15 +106,7 @@ REJECTED_STEP_KEYS: frozenset = frozenset(
 def transform_fragment(
     step: Mapping[str, Any], card: dict[str, Any] | Mapping[str, Any], step_id: str
 ) -> dict[str, Any]:
-    """Complete capability-owned fragment for transform cards (NEW adapter).
-
-    Calls :func:`_wire_transform` verbatim (which returns
-    ``{"kind", "native", "_preset"}``), then owns the ``_preset`` ->
-    ``_preset_ref`` translation internally and returns
-    ``{"transform": {"kind", "native"}, "_preset_ref": preset}``.
-    The compiler merges both keys generically without interpreting
-    ``_preset``.  Declared fragment keys: ``("transform", "_preset_ref")``.
-    """
+    """Complete capability-owned fragment for transform cards (NEW adapter)."""
     raw = _wire_transform(step, card, step_id)
     preset_name = str(raw.pop("_preset"))
     return {

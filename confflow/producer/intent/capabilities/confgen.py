@@ -34,21 +34,7 @@ _LEGACY_DEFAULT_PATH_STEP = 120
 
 
 def _legacy_paths_to_v3(native: Mapping[str, Any], step_id: str) -> dict[str, Any] | None:
-    """Express a legacy paths scope as a typed ``schema_version: 3`` block.
-
-    The mapping is the one recorded by the IS.1 equivalence golden
-    (``tests/fixtures/paths_equivalence/run_equivalence.py::map_native``): a bare
-    declaration gets ``step`` from ``angle_step`` or the legacy default 120,
-    ``bond_scale`` becomes ``tolerances.bond_scale`` and
-    ``strict_path_bond_check`` becomes the v3 top-level flag.  (Step-level
-    ``paths`` / ``strict_path_bond_check`` are not intent step members, so they
-    never reach this function.)
-
-    Returns ``None`` when the native carries anything outside the paths scope
-    (for example ``chains``); such a scope has no v3 form.  No endpoint is
-    inspected or rewritten: a terminal-atom endpoint is compiled as written
-    and refused at run time by v3.
-    """
+    """Express a legacy paths scope as a typed ``schema_version: 3`` block."""
     scope = dict(native)
     if not set(scope) <= _LEGACY_PATH_SCOPE_KEYS or "paths" not in scope:
         return None
@@ -158,11 +144,6 @@ REJECTED_STEP_KEYS: frozenset = frozenset(
 def confgen_fragment(
     step: Mapping[str, Any], card: Mapping[str, Any] | dict[str, Any], step_id: str
 ) -> dict[str, Any]:
-    """Complete capability-owned fragment for confgen cards (NEW adapter).
-
-    Wraps :func:`_wire_confgen` as ``{"confgen": payload}``; the card shape
-    is accepted for signature uniformity and ignored.  Declared fragment
-    keys: ``("confgen",)``.
-    """
+    """Complete capability-owned fragment for confgen cards (NEW adapter)."""
     _ = card
     return {"confgen": _wire_confgen(step, step_id)}
