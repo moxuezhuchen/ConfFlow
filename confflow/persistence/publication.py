@@ -2,29 +2,15 @@
 
 """Crash-consistent step-result publication for ConfFlow Workflow V4 (V4-3).
 
-This module owns publication stages 5-6 of the frozen eight-stage protocol in
-:mod:`confflow.domain.publication` (accepted results are assembled, then the
-step result is atomically published; stage 7, the run-state transition, lives
-in :mod:`confflow.persistence.run_state`).  It never invents its own commit
-order and never imports the executor side: persistence depends only on
-``confflow.domain`` plus the standard library.
-
-Authority hierarchy (frozen)::
-
-    WorkItemStore  = per-item execution truth (owned elsewhere)
-    StepResult     = published semantic output truth (this module)
-    RunState       = workflow / step lifecycle truth (``run_state.py``)
-
-Durability contract
--------------------
-Publishing serializes ``StepResult.to_dict()`` through canonical JSON bytes,
-writes a temp file ``step_result.json.tmp.<pid>.<counter>`` in the same
-directory, fsyncs the file and (where practical) the directory, then
-``os.replace`` renames it over ``step_result.json``.  Loading is strict: any
-unreadable or misshapen payload raises :class:`CorruptStateError` and never
-yields a partial object.  ``*.tmp.*`` leftovers are listed and explicitly
-skipped, never loaded.  Result-file exports (XYZ/CSV/JSON reports) are
-projections and are never written here.
+Owns stages 5-6 of frozen eight-stage protocol (assemble accepted results, then
+atomically publish; stage 7 lives in ``run_state``); never invents commit order,
+never imports executor (depends only on ``confflow.domain`` + stdlib).
+Authority hierarchy (frozen): WorkItemStore > StepResult (this module) > RunState.
+Durability: canonical JSON bytes via temp ``step_result.json.tmp.<pid>.<counter>``
+in same directory, fsync file and directory where practical, then ``os.replace``.
+Loading is strict: unreadable/misshapen raises ``CorruptStateError``, never partial;
+``*.tmp.*`` leftovers listed and skipped, never loaded. Report exports (XYZ/CSV/JSON)
+are projections, never written here.
 """
 
 from __future__ import annotations
@@ -152,12 +138,7 @@ def publish_step_result(
 
 
 def _require_persisted_result_identity(step_result: StepResult, *, error: Any) -> None:
-    """Reject missing or duplicate production result ids at the boundary.
-
-    Stamping is the emitters' job; this runtime gate runs on both publish
-    and load so identity-less results can neither be written nor read back
-    as production truth.
-    """
+    """Reject missing or duplicate production result ids at the boundary."""
     from ..domain.errors import InvalidResultError
 
     try:

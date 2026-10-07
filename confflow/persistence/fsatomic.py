@@ -2,23 +2,12 @@
 
 """Durable single-file publication primitive for the V4 persistence layer.
 
-One authority for the frozen write protocol every durable publication in the
-V4 core used to copy locally:
-
-1. create the destination directory when missing;
-2. write the exact payload to a unique temp file in the destination
-   directory (``<target>.tmp.<pid>.<counter>``), so the final
-   ``os.replace`` always stays inside one filesystem;
-3. flush and fsync the file *before* the replace, so a truncated payload can
-   never become visible under the final name;
-4. ``os.replace`` the temp file onto the target (atomic replace semantics
-   for readers: they see the old bytes or the new bytes, never a mix);
-5. drop the temp file on every failure path, best effort;
-6. fsync the destination directory, best effort, so the new name survives a
-   crash after the replace committed.
-
-Like the rest of the persistence layer this module imports the standard
-library only.
+Single authority for frozen write protocol: create destination directory if missing;
+write payload to unique temp ``<target>.tmp.<pid>.<counter>`` in destination directory
+(same filesystem for ``os.replace``); flush + fsync file before replace so truncated
+payload never becomes visible; ``os.replace`` temp onto target (readers see old or new,
+never mix); drop temp on every failure path (best effort); fsync destination directory
+(best effort) so new name survives crash after commit. Standard library only.
 """
 
 from __future__ import annotations
@@ -34,12 +23,7 @@ _TMP_COUNTER: Final = itertools.count()
 
 
 def fsync_directory(directory: str) -> None:
-    """Fsync *directory* so a new publication survives a crash.
-
-    Best effort by contract: a directory that cannot be opened or synced is
-    skipped, because durable-name preservation must never turn an already
-    committed publication into a caller-visible error.
-    """
+    """Fsync *directory* so a new publication survives a crash."""
     try:
         dir_fd = os.open(directory, os.O_RDONLY)
     except OSError:
@@ -53,15 +37,7 @@ def fsync_directory(directory: str) -> None:
 
 
 def publish_bytes(target_path: str, payload: bytes) -> None:
-    """Durably publish *payload* at *target_path* via temp file + rename.
-
-    Parameters
-    ----------
-    target_path : str
-        Final destination path; the temp file lives in the same directory.
-    payload : bytes
-        Exact bytes to durably persist.
-    """
+    """Durably publish *payload* at *target_path* via temp file + rename."""
     directory = os.path.dirname(target_path)
     os.makedirs(directory, exist_ok=True)
     tmp_path = f"{target_path}.tmp.{os.getpid()}.{next(_TMP_COUNTER)}"

@@ -2,25 +2,14 @@
 
 """V4 durable persistence contracts (V4-3, frozen shared authority).
 
-This module is owned by the main agent and is **frozen**: subagents must read
-it but never edit it.  It defines every cross-module type of the durable
-execution layer so the store, reuse, publication, recovery, artifact, and test
-workstreams can proceed in parallel without interface drift:
-
-- run layout constants and path joiners (the only authority hierarchy is
-  WorkItemStore > StepResult > RunState > artifacts; filenames are never
-  semantic truth);
-- the work-item state machine and its legal transitions;
-- :class:`ReuseDecision` with machine-readable reason codes;
-- owner identity and liveness verdicts for abandoned ``RUNNING`` recovery;
-- the run-state record shape (load/save lives in ``run_state.py``);
-- the GC entry shape (retained contract type; planning/execution removed in R1.4).
-
-Dependency rule: this package imports only ``confflow.domain`` plus the
-standard library (``sqlite3`` in implementation modules only).  It never
-imports ``confflow.execution``, ``confflow.workflow``, ``confflow.calc``,
-``confflow.core``, or any legacy runtime.  The executor side depends on this
-package, never the reverse.
+Frozen: subagents must read but never edit. Defines cross-module types for store,
+reuse, publication, recovery, artifact, and test workstreams without interface drift.
+Only authority hierarchy is WorkItemStore > StepResult > RunState > artifacts;
+filenames are never semantic truth. Covers layout constants/path joiners, state machine
++ legal transitions, ``ReuseDecision`` codes, owner identity/verdicts, run-state shape,
+and ``GCEntry`` shape.
+Dependency rule: imports only ``confflow.domain`` + stdlib (``sqlite3`` in impl only);
+never imports execution/workflow/calc/core/legacy; executor depends here, never reverse.
 """
 
 from __future__ import annotations

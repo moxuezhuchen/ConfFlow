@@ -2,57 +2,17 @@
 
 """Abandoned-``RUNNING`` owner reconciliation for V4 durable execution (V4-3).
 
-When a controller claims a work item it records an
-:class:`~confflow.persistence.contracts.OwnerIdentity` (owner token, pid,
-process-group id, session id, creation time, wall stamp).  If that controller
-vanishes, a later controller must decide whether the recorded owner boundary
-is still alive before it may recover the abandoned ``RUNNING`` claim: a wrong
-"dead" verdict launches a duplicate native boundary, while a wrong "alive"
-verdict stalls recovery forever.
-
-This module judges liveness of the recorded triple only, using read-only
-inspection (``os.getpgid``/``os.getsid`` plus the optional ``psutil``
-dependency).  It never signals, terminates, or reaps any process, performs no
-SQLite or filesystem access, and never imports the executor
-(``confflow.execution``) or any legacy runtime: the small helpers it needs
-are vendored here.
-
-Verdict rules (all fail closed — ``UNCERTAIN`` blocks duplicate launch):
-
-1. ``pid`` is ``None`` → ``UNCERTAIN``.  Without a pid there is no identity
-   token to prove anything about, so recovery must block.
-2. No such pid **and** no process-group/session survivors in the recorded
-   ``pgid``/``sid`` → ``DEFINITELY_DEAD``.  An empty pid slot proves the
-   original process is gone (a dead process can never come back under the
-   same pid without reuse, which rule 4 handles); the group scan additionally
-   proves no orphaned descendant still holds the claim boundary.
-3. A live process matches ``pid`` **and** its creation time matches the
-   recorded ``create_time`` (when recorded) **and** it sits in the recorded
-   ``pgid``/``sid`` (when recorded) → ``DEFINITELY_ALIVE``.  Every recorded
-   axis agrees, so the original owner boundary is observably alive.  Any
-   recorded axis that disagrees (or cannot be read) drops to ``UNCERTAIN``
-   instead of guessing alive.
-4. The pid slot holds a live process whose creation time mismatches the
-   recorded one (pid reuse!) → the original owner is dead **only if** the
-   recorded ``pgid``/``sid`` also show no live member, else ``UNCERTAIN``.
-   The pid number was recycled by an unrelated process, so the slot tells
-   nothing about the original; a surviving same-group member may still be a
-   descendant holding the claim, and a reused group id is possible too, so
-   any survivor forces ``UNCERTAIN``.
-5. ``psutil`` missing or unusable → ``UNCERTAIN``.  Without creation times
-   pid reuse cannot be detected and ``DEFINITELY_DEAD`` can never be proven,
-   so every verdict degrades to ``UNCERTAIN`` rather than crashing.
-6. ``owner_token`` mismatch is the caller's concern.  The token binds a claim
-   to one controller; this function judges liveness of the recorded process
-   triple only and never compares tokens.
-
-Group-scan semantics: ``pgid``/``sid`` are matched with OR (a survivor in
-either recorded group counts), zombies never count as survivors, the
-reconciling process itself is never counted, and a candidate whose liveness
-cannot be determined counts as a survivor (fail closed toward blocking).
-When neither ``pgid`` nor ``sid`` was recorded there is no group to scan, so
-a missing pid alone proves ``DEFINITELY_DEAD``; callers should therefore
-always record the full triple on POSIX (see :func:`owner_identity_current`).
+Read-only judge of recorded triple; never signals, terminates, or reaps,
+no SQLite/filesystem access, never imports executor or legacy runtime.
+All verdicts fail closed — ``UNCERTAIN`` blocks duplicate launch:
+1. pid None → ``UNCERTAIN``. 2. pid gone + no pgid/sid survivors → ``DEFINITELY_DEAD``.
+3. live pid with create_time and pgid/sid match → ``DEFINITELY_ALIVE``; else ``UNCERTAIN``.
+4. pid reuse (create_time mismatch) → ``DEFINITELY_DEAD`` if no group survivors, else ``UNCERTAIN``.
+5. psutil missing/unusable → ``UNCERTAIN``; death never proven without it.
+6. ``owner_token`` mismatch is caller's concern; triple only, never compares tokens.
+Group scan is OR over pgid/sid; zombies and self never count; unreadable
+counts as survivor (fail closed). With no recorded pgid/sid, missing pid
+alone proves ``DEFINITELY_DEAD``; always record full triple on POSIX.
 """
 
 from __future__ import annotations
@@ -82,13 +42,7 @@ _AUTO_PSUTIL: Final[Any] = object()
 
 
 def _maybe_import_psutil() -> Any:
-    """Import ``psutil`` when available, otherwise return ``None``.
-
-    Returns
-    -------
-    Any
-        The imported ``psutil`` module, or ``None`` when it is not installed.
-    """
+    """Import ``psutil`` when available, otherwise return ``None``."""
     try:
         import psutil
     except ImportError:
@@ -101,40 +55,14 @@ _PSUTIL: Final[Any] = _maybe_import_psutil()
 
 
 def _resolve_psutil(psutil_module: Any) -> Any:
-    """Resolve the effective ``psutil`` module for one call.
-
-    Parameters
-    ----------
-    psutil_module : Any
-        Either the :data:`_AUTO_PSUTIL` sentinel (use the process-wide
-        import), an explicit module-like object (tests), or ``None`` to
-        simulate an absent dependency.
-
-    Returns
-    -------
-    Any
-        The module to inspect processes with, or ``None`` when unavailable.
-    """
+    """Resolve the effective ``psutil`` module for one call."""
     if psutil_module is _AUTO_PSUTIL:
         return _PSUTIL
     return psutil_module
 
 
 def _gone_error_types(psutil_mod: Any) -> tuple[type[BaseException], ...]:
-    """Return exception types proving a process slot is gone.
-
-    Parameters
-    ----------
-    psutil_mod : Any
-        The ``psutil`` module (or test double) in use for this call.
-
-    Returns
-    -------
-    tuple[type[BaseException], ...]
-        ``psutil`` disappearance markers plus builtin ``ProcessLookupError``
-        (``psutil.NoSuchProcess`` does not subclass ``OSError``, so both
-        families are needed), deduplicated.
-    """
+    """Return exception types proving a process slot is gone."""
     collected: list[type[BaseException]] = [ProcessLookupError]
     for name in ("NoSuchProcess", "ZombieProcess"):
         marker = getattr(psutil_mod, name, None)
@@ -145,21 +73,7 @@ def _gone_error_types(psutil_mod: Any) -> tuple[type[BaseException], ...]:
 
 
 def _inspection_error_types(psutil_mod: Any) -> tuple[type[BaseException], ...]:
-    """Return exception types meaning liveness could not be determined.
-
-    Parameters
-    ----------
-    psutil_mod : Any
-        The ``psutil`` module (or test double) in use for this call.
-
-    Returns
-    -------
-    tuple[type[BaseException], ...]
-        ``psutil.Error`` (covers ``AccessDenied``, which is not an
-        ``OSError``) plus ``OSError``, ``RuntimeError``, and
-        ``AttributeError``.  Any of these collapses the verdict to
-        ``UNCERTAIN``; none of them ever proves death.
-    """
+    """Return exception types meaning liveness could not be determined."""
     collected: list[type[BaseException]] = [OSError, RuntimeError, AttributeError]
     marker = getattr(psutil_mod, "Error", None)
     if isinstance(marker, type) and issubclass(marker, BaseException):
@@ -169,37 +83,14 @@ def _inspection_error_types(psutil_mod: Any) -> tuple[type[BaseException], ...]:
 
 
 def _positive_int(value: object) -> int | None:
-    """Return *value* when it is a positive int, otherwise ``None``.
-
-    Parameters
-    ----------
-    value : object
-        Candidate pid-like value (bools are rejected explicitly).
-
-    Returns
-    -------
-    int | None
-        The value itself when it is a positive int, else ``None``.
-    """
+    """Return *value* when it is a positive int, otherwise ``None``."""
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         return None
     return value
 
 
 def _safe_process_group_id(pid: int | None) -> int | None:
-    """Return the process-group id for *pid*, or ``None`` when unavailable.
-
-    Parameters
-    ----------
-    pid : int | None
-        Process id to inspect (read-only; nothing is signalled).
-
-    Returns
-    -------
-    int | None
-        Positive group id, or ``None`` on non-POSIX platforms, unknown pids,
-        or exits racing the lookup.
-    """
+    """Return the process-group id for *pid*, or ``None`` when unavailable."""
     if pid is None or not hasattr(os, "getpgid"):
         return None
     try:
@@ -209,19 +100,7 @@ def _safe_process_group_id(pid: int | None) -> int | None:
 
 
 def _safe_session_id(pid: int | None) -> int | None:
-    """Return the session id for *pid*, or ``None`` when unavailable.
-
-    Parameters
-    ----------
-    pid : int | None
-        Process id to inspect (read-only; nothing is signalled).
-
-    Returns
-    -------
-    int | None
-        Positive session id, or ``None`` on non-POSIX platforms, unknown
-        pids, or exits racing the lookup.
-    """
+    """Return the session id for *pid*, or ``None`` when unavailable."""
     if pid is None or not hasattr(os, "getsid"):
         return None
     try:
@@ -231,21 +110,7 @@ def _safe_session_id(pid: int | None) -> int | None:
 
 
 def _safe_create_time(pid: int | None, psutil_mod: Any) -> float | None:
-    """Return the ``psutil`` creation time for *pid*, or ``None``.
-
-    Parameters
-    ----------
-    pid : int | None
-        Process id to inspect (read-only; nothing is signalled).
-    psutil_mod : Any
-        The ``psutil`` module (or test double) in use, or ``None``.
-
-    Returns
-    -------
-    float | None
-        Creation time in seconds, or ``None`` when ``psutil`` is absent or
-        the pid cannot be inspected.
-    """
+    """Return the ``psutil`` creation time for *pid*, or ``None``."""
     if pid is None or psutil_mod is None:
         return None
     try:
@@ -264,27 +129,7 @@ class _PidProbe(NamedTuple):
 
 
 def _probe_pid(*, pid: int, psutil_mod: Any) -> _PidProbe:
-    """Probe whether *pid* currently holds a live process, without signalling.
-
-    A zombie still occupies its pid slot but counts as not live: the original
-    process has terminated and only descendants (checked separately) may
-    still hold the boundary.  Any inspection failure that proves neither
-    life nor death yields ``live=None`` so the caller degrades to
-    ``UNCERTAIN``.
-
-    Parameters
-    ----------
-    pid : int
-        Recorded owner pid to probe.
-    psutil_mod : Any
-        The ``psutil`` module (or test double) in use for this call.
-
-    Returns
-    -------
-    _PidProbe
-        Liveness flag (``None`` when unknowable) plus the slot occupant's
-        creation time (meaningful only when live).
-    """
+    """Probe whether *pid* currently holds a live process, without signalling."""
     gone = _gone_error_types(psutil_mod)
     errors = _inspection_error_types(psutil_mod)
     try:
@@ -322,23 +167,7 @@ def _probe_pid(*, pid: int, psutil_mod: Any) -> _PidProbe:
 
 
 def _recorded_group_holds(*, pid: int, owner: OwnerIdentity) -> bool:
-    """Check the live pid slot still sits in every recorded group.
-
-    Parameters
-    ----------
-    pid : int
-        Currently live pid whose membership is checked (read-only).
-    owner : OwnerIdentity
-        Recorded owner triple carrying the expected group ids.
-
-    Returns
-    -------
-    bool
-        True only when each recorded (non-``None``) group id matches the
-        current lookup.  A moved group, an unreadable group, or an exit
-        racing the lookup all return False so the caller refuses to guess
-        alive.
-    """
+    """Check the live pid slot still sits in every recorded group."""
     if owner.process_group_id is not None:
         if _safe_process_group_id(pid) != owner.process_group_id:
             return False
@@ -349,23 +178,7 @@ def _recorded_group_holds(*, pid: int, owner: OwnerIdentity) -> bool:
 
 
 def _candidate_is_live(*, candidate: Any, psutil_mod: Any) -> bool | None:
-    """Judge one group-matching scan candidate without signalling it.
-
-    Parameters
-    ----------
-    candidate : Any
-        One ``psutil`` process object from the group scan.
-    psutil_mod : Any
-        The ``psutil`` module (or test double) in use for this call.
-
-    Returns
-    -------
-    bool | None
-        True for an observably live member, False for a zombie, an exited
-        pid, or a process that is no longer running, and ``None`` when
-        liveness cannot be determined (the caller then counts it as a
-        survivor, failing closed toward blocking recovery).
-    """
+    """Judge one group-matching scan candidate without signalling it."""
     gone = _gone_error_types(psutil_mod)
     errors = _inspection_error_types(psutil_mod)
     status: Any = None
@@ -392,23 +205,7 @@ def _candidate_is_live(*, candidate: Any, psutil_mod: Any) -> bool | None:
 
 
 def _boundary_has_survivor(*, owner: OwnerIdentity, psutil_mod: Any) -> bool | None:
-    """Scan the recorded groups for any live member, without signalling.
-
-    Parameters
-    ----------
-    owner : OwnerIdentity
-        Recorded owner triple carrying the group ids to scan.
-    psutil_mod : Any
-        The ``psutil`` module (or test double) in use for this call.
-
-    Returns
-    -------
-    bool | None
-        True when a live same-group member exists (an orphaned descendant
-        still holding the claim boundary), False when the recorded groups
-        provably hold no live member (or no group was ever recorded), and
-        ``None`` when the scan itself failed so survival is unproven.
-    """
+    """Scan the recorded groups for any live member, without signalling."""
     pgid = owner.process_group_id
     sid = owner.session_id
     if pgid is None and sid is None:

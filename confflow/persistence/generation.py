@@ -2,30 +2,15 @@
 
 """Durable current-generation identity for formal V4 runs.
 
-A run root may hold several formal executions over its lifetime (initial
-run plus explicit resumes).  ``run_result.json`` alone cannot tell a
-consumer whether its ``completed`` status belongs to the invocation that
-is running now or to a superseded generation: when a new generation fails
-during assembly before the manifest is rewritten, the old completed
-manifest would otherwise masquerade as current truth.
-
-``run_generation.json`` is the durable lifecycle record that closes this
-hole:
-
-- Written ``running`` before any step executes (before compile even), so a
-  consumer can distinguish "old completed generation" from "current
-  running generation".
-- Rewritten terminal (``completed``/``partial``/``failed``/``cancelled``)
-  after the generation's manifest is published, carrying the manifest's
-  generation id, the failure location, and the completed step ids.
-- Written terminal even when the invocation raises (assembly error,
-  blocked downstream step, persistence failure, compile failure), before
-  the exception is re-raised, so a failed current generation is never
-  invisible.
-
-The record is operational lifecycle truth, not scientific identity: it
-never enters definition/step/work-item/environment digests.  It is
-published atomically with file and directory fsync.
+``run_generation.json`` distinguishes current ``running`` generation from superseded
+completed manifests; ``run_result.json`` alone cannot.
+Written ``running`` before any step executes (before compile); rewritten terminal
+(``completed``/``partial``/``failed``/``cancelled``) after manifest, carrying manifest
+generation id, failure location, completed step ids; written terminal even when
+invocation raises (assembly/blocked-downstream/persistence/compile), before re-raise,
+so failed generations are never invisible.
+Lifecycle truth only, never enters definition/step/work-item/environment digests.
+Published atomically with file and directory fsync.
 """
 
 from __future__ import annotations
@@ -171,12 +156,7 @@ def save_run_generation(run_root: str, record: RunGeneration) -> None:
 
 
 def load_run_generation(run_root: str) -> RunGeneration | None:
-    """Load the durable generation record, or ``None`` when absent.
-
-    Unreadable or invalid payloads raise :class:`CorruptStateError`; a
-    consumer must never silently treat a corrupt current-generation record
-    as "no record" and fall back to a stale manifest.
-    """
+    """Load the durable generation record, or ``None`` when absent."""
     root = validate_run_root(run_root)
     path = os.path.join(root, RUN_GENERATION_FILENAME)
     if not os.path.isfile(path):
