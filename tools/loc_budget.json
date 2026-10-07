@@ -1,6 +1,6 @@
 {
   "_header": {
-    "basis_commit": "cc16e8f + J1 CF (integration/p0-j1)",
+    "basis_commit": "5ca27fa (DIET-2 ratchet)",
     "coverage": "confflow/ 下全部 .py（含 __init__.py），tests/ 下全部 .py",
     "generated": "P0.2 执行时实测值即初始上限（Q2 已确认）",
     "method": "物理行（wc -l 口径：空行、注释、docstring、import 全部计入；__pycache__ 排除；无 trailing newline 的末行计 1 行）。子系统按附录 A 顺序首匹配归属：patterns 含 glob（fnmatch 全路径匹配）、以 / 结尾表目录前缀、其余为文件/模块前缀（精确文件 rel==pat、或 rel==pat+'.py'、或 rel 以 pat+'/' 开头）。附录 A 正则中的 worker_*.py 记为 confflow/worker_*.py；不带扩展名的条目（如 v4cli、install_provenance、__build__、orca_blocks、confgen_executor）按模块前缀匹配其 .py 文件。",
@@ -85,9 +85,9 @@
         "confflow/science/torsion.py"
       ],
       "prod_files": 49,
-      "prod_loc_limit": 26159,
-      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
-      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+      "prod_loc_limit": 26041,
+      "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
+      "reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。"
     },
     {
       "id": "jobdesk_control",
@@ -101,9 +101,9 @@
         "confflow/worker_*.py"
       ],
       "prod_files": 23,
-      "prod_loc_limit": 5482,
-      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
-      "reason": "L2-CF 两卡后实测 5465(基线 5657-192：delete 卡删旧投影链约 170、contract 卡删旧常量约 22)。第一张卡临时例外 +402 已撤销(删 temporary_until)。5276 未达成：现 main 下域内可删旧链仅约 192 行(非 402)，差 189 行无更多域内旧链可删，见 L2CF 报告；后续卡补足后再降。 + N2 已批准预算(用户批准生产≤1120/测试≤1000，本子系统增 17)"
+      "prod_loc_limit": 5232,
+      "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
+      "reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。"
     },
     {
       "id": "producer",
@@ -112,9 +112,9 @@
         "confflow/producer/"
       ],
       "prod_files": 26,
-      "prod_loc_limit": 12114,
-      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
-      "reason": "N3 声明预算(生产≤350/测试≤500) + N4 已批准预算(生产≤150，实际净增101：recipes.py +101) + N2 已批准预算(用户批准生产≤1120/测试≤1000，本子系统增 31)"
+      "prod_loc_limit": 10486,
+      "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
+      "reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。"
     },
     {
       "id": "persistence",
@@ -123,9 +123,9 @@
         "confflow/persistence/"
       ],
       "prod_files": 12,
-      "prod_loc_limit": 6368,
-      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
-      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+      "prod_loc_limit": 5571,
+      "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
+      "reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。"
     },
     {
       "id": "programs",
@@ -135,9 +135,9 @@
         "confflow/shared/orca_blocks"
       ],
       "prod_files": 20,
-      "prod_loc_limit": 7715,
-      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
-      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+      "prod_loc_limit": 4490,
+      "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
+      "reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。"
     },
     {
       "id": "workflow",
@@ -146,9 +146,9 @@
         "confflow/workflow/"
       ],
       "prod_files": 14,
-      "prod_loc_limit": 6320,
-      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
-      "reason": "N3 声明预算(生产≤350/测试≤500) + N2 已批准预算(用户批准生产≤1120/测试≤1000，本子系统增 303)"
+      "prod_loc_limit": 5933,
+      "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
+      "reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。"
     },
     {
       "id": "execution",
@@ -157,9 +157,9 @@
         "confflow/execution/"
       ],
       "prod_files": 24,
-      "prod_loc_limit": 13194,
-      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
-      "reason": "N3 声明预算(生产≤350/测试≤500) + N1 已批准预算(生产≤300，净增297) + N2 已批准预算(用户批准生产≤1120/测试≤1000，本子系统增 739)"
+      "prod_loc_limit": 10679,
+      "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
+      "reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。"
     },
     {
       "id": "domain",
@@ -168,9 +168,9 @@
         "confflow/domain/"
       ],
       "prod_files": 19,
-      "prod_loc_limit": 4500,
-      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
-      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+      "prod_loc_limit": 4400,
+      "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
+      "reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。"
     },
     {
       "id": "entry_cli",
@@ -182,9 +182,9 @@
         "confflow/main.py"
       ],
       "prod_files": 6,
-      "prod_loc_limit": 2920,
-      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
-      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+      "prod_loc_limit": 2474,
+      "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
+      "reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。"
     },
     {
       "id": "release_prov",
@@ -194,21 +194,21 @@
         "confflow/__build__"
       ],
       "prod_files": 2,
-      "prod_loc_limit": 342,
-      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
-      "reason": "P0.2 初始上限=P0 阶段实际值：基 cc16e8f（含 E1 与 J1 CF 两张计划内卡，在 DIET-2 R/N 之前合并）。提高须写明理由并经用户确认。"
+      "prod_loc_limit": 316,
+      "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
+      "reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。"
     },
     {
       "id": "common",
       "label": "通用基础",
       "patterns": [],
       "prod_files": 48,
-      "prod_loc_limit": 14139,
-      "ratchet": "R1/R2 上限不变；N 阶段按卡预算增长；里程碑验收后以实际值重写本上限；其余时间只降不升。",
-      "reason": "R1.1 生产→测试转移，合计不变，待用户确认：搬走 fixture_agent.py(77 行)，上限 14216-77=14139。"
+      "prod_loc_limit": 4459,
+      "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
+      "reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。"
     }
   ],
   "tests_total_files": 246,
-  "tests_total_loc_limit": 109332,
-  "tests_total_reason": "N3 声明预算(生产≤350/测试≤500) + N1 已批准预算(测试≤400，增398) + T0 工具测试(≤150，增108) + N4 已批准预算(测试≤200，实际净增131：新增147/删除16) + N2 已批准预算(测试增 710)"
+  "tests_total_loc_limit": 96182,
+  "tests_total_reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。"
 }
