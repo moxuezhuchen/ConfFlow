@@ -1,11 +1,13 @@
 """Setuptools build hook for reproducible ConfFlow wheel provenance.
 
 Only the build commit and working-tree cleanliness are written into the
-wheel itself. The wheel filename and the final byte digest are decided
-by the release workflow's external ``SHA256SUMS`` and the deployer's
-``install-provenance.json``; baking those identifiers into the wheel
-content would require a two-stage self-describing build that is never
-performed. ConfFlow 1.4.5 forbids that pattern explicitly.
+wheel itself. The wheel filename is decided by the build backend; the
+deployed wheel's identity is reported out-of-band through the
+``install-provenance.json`` record read by ``confflow.install_provenance``
+(the offline release workflow and its external ``SHA256SUMS`` are retired).
+Baking those identifiers into the wheel content would require a two-stage
+self-describing build that is never performed. ConfFlow 1.4.5 forbids that
+pattern explicitly.
 """
 
 from __future__ import annotations

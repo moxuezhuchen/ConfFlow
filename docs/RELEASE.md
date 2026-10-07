@@ -1,10 +1,14 @@
-# Release Process
+# Release Process (retired)
 
-ConfFlow uses a GitHub Actions release workflow that builds, verifies,
-attests, and publishes immutable tagged release artifacts. PyPI publication
-remains separate manual or future work.
+The offline release/install pipeline (`.github/workflows/release.yml`, the
+offline wheelhouse, `release/` locks, `scripts/install_release_wheel.py`,
+`scripts/generate_dependency_locks.py`) is retired. Server installs use
+source installation per [`USAGE.md`](USAGE.md) (`git clone` /
+`git pull && pip install .`). What follows is the historical record of the
+retired workflow, kept for the v2.1.4/v2.1.5 failure evidence and the
+provenance schema that `confflow/install_provenance.py` still reads.
 
-Automated by `.github/workflows/release.yml`:
+Retired automation (formerly `.github/workflows/release.yml`):
 
 - Build wheel and source distribution.
 - Generate `SHA256SUMS`.
@@ -17,8 +21,8 @@ Automated by `.github/workflows/release.yml`:
 - Write release provenance, publish an explicit asset set, require the new
   release to be immutable, and download every asset to recheck bytes and hashes.
 
-The current `gh` CLI treats `--signer-repo` and `--signer-workflow` as mutually
-exclusive actor-identity policies. The workflow uses only the more precise
+The `gh` CLI treats `--signer-repo` and `--signer-workflow` as mutually
+exclusive actor-identity policies. The retired workflow used only the more precise
 `--signer-workflow OWNER/REPOSITORY/.github/workflows/release.yml`; its full
 identity includes the repository and workflow path. `--repo` remains the
 required artifact/attestation lookup scope and is compatible with that policy.
@@ -62,11 +66,12 @@ For coverage:
 
 Confirm GitHub Actions CI is green for the release commit.
 
-## 4. Build Wheel And Source Distribution
+## 4. Build Wheel And Source Distribution (retired workflow)
 
-The release artifact workflow builds wheel and source distribution only on tag
-pushes matching `v*`. Manual dispatch is intentionally unavailable because the
-release gate binds `GITHUB_REF` and `GITHUB_SHA` to an annotated remote tag.
+The retired release artifact workflow built wheel and source distribution
+only on tag pushes matching `v*`. Manual dispatch was intentionally
+unavailable because the release gate bound `GITHUB_REF` and `GITHUB_SHA`
+to an annotated remote tag.
 
 For local verification, install build tooling if needed:
 
@@ -90,9 +95,9 @@ Expected outputs are under `$BUILD_DIR`, typically:
 - `$BUILD_DIR/confflow-X.Y.Z-py3-none-any.whl`
 - `$BUILD_DIR/confflow-X.Y.Z.tar.gz`
 
-## 5. Generate Checksums
+## 5. Generate Checksums (retired workflow)
 
-The release artifact workflow writes `dist/SHA256SUMS`. For local verification, generate SHA256 checksums:
+The retired release artifact workflow wrote `dist/SHA256SUMS`. For local verification, generate SHA256 checksums:
 
 ```bash
 python -m pip hash dist/*
@@ -100,13 +105,13 @@ python -m pip hash dist/*
 
 Alternatively, use a platform checksum tool such as `sha256sum dist/*` when available. Publish checksums with the release notes.
 
-## 6. SBOM Status
+## 6. SBOM Status (retired workflow)
 
-The release artifact workflow generates a CycloneDX SBOM from the controlled
-runtime lock and stores it as `dist/sbom.cdx.json`. Generation is fail closed:
-the release is not created if the SBOM is missing or invalid.
+The retired release artifact workflow generated a CycloneDX SBOM from the controlled
+runtime lock and stored it as `dist/sbom.cdx.json`. Generation was fail closed:
+the release was not created if the SBOM was missing or invalid.
 
-## 7. Tag And Publish A GitHub Release
+## 7. Tag And Publish A GitHub Release (retired workflow)
 
 ### Owner immutable-release preflight
 
@@ -133,18 +138,18 @@ unless it is non-empty and exactly equals `GITHUB_SHA` and the local annotated
 tag's peeled commit. The workflow still verifies the created release's actual
 `isImmutable=true` state after publication.
 
-Create an annotated tag from the verified commit. Pushing a `v*` tag triggers the release artifact workflow:
+Create an annotated tag from the verified commit. Pushing a `v*` tag triggered the retired release artifact workflow:
 
 ```bash
 git tag -a vX.Y.Z -m "ConfFlow X.Y.Z"
 git push origin vX.Y.Z
 ```
 
-The workflow creates the immutable GitHub Release itself. It uploads only its
+The retired workflow created the immutable GitHub Release itself. It uploaded only its
 explicit standard asset set, including the wheel, sdist, SBOM, attestation
 bundle and verification record, provenance, release/install dependency lock,
-wheelhouse manifest, release notes, and `SHA256SUMS`. It then downloads those
-assets and verifies exact filenames, byte identity, and checksums. Do not create
+wheelhouse manifest, release notes, and `SHA256SUMS`. It then downloaded those
+assets and verified exact filenames, byte identity, and checksums. Do not create
 the release manually.
 
 ### Failed v2.1.4 attempt
@@ -170,11 +175,15 @@ PyPI publication is not automated. Do not assume a package is available on PyPI 
 
 If PyPI publishing is introduced later, document token handling, trusted publishing, test PyPI validation, and rollback limitations.
 
-## 9. Three-Layer Release / Install Provenance (since v1.4.4)
+## 9. Three-Layer Release / Install Provenance (since v1.4.4; layers 2–2a retired)
 
-ConfFlow v1.4.4 introduces a three-layer provenance model that the
-wheel build, the release workflow, and the deployer all participate in.
-**The wheel never describes its own digest.**
+ConfFlow v1.4.4 introduced a three-layer provenance model that the
+wheel build, the (now retired) release workflow, and the (now retired)
+deployer participated in.
+**The wheel never describes its own digest.** Only layer 1 (build
+provenance, still written by `setup.py`) and the layer-3 record schema
+(still read by `confflow/install_provenance.py`) remain live; layers
+2–2a below are the retired historical record.
 
 ### Layer 1 — Wheel-internal build provenance
 
@@ -191,12 +200,12 @@ the wheel file and they must never be treated as such. The wheel's own
 filename and digest are deliberately absent from `__build__.py` and
 must never be added back.
 
-### Layer 2 — External `SHA256SUMS` (authoritative wheel digest)
+### Layer 2 — External `SHA256SUMS` (retired; historical record)
 
-The release artifact workflow writes `dist/SHA256SUMS` next to the
-wheel. The deployer (`scripts/install_release_wheel.py`) requires this
-file and refuses to install when the on-disk wheel digest does not
-match the row in `SHA256SUMS`.
+The retired release artifact workflow wrote `dist/SHA256SUMS` next to the
+wheel. The retired deployer (`scripts/install_release_wheel.py`, deleted)
+required this file and refused to install when the on-disk wheel digest
+did not match the row in `SHA256SUMS`.
 
 Format:
 
@@ -207,9 +216,9 @@ Format:
 `SHA256SUMS` must contain exactly one row for the target wheel. Globs
 (`*.whl`) and duplicate entries are rejected.
 
-### Layer 2a - Controlled Python runtime dependencies
+### Layer 2a - Controlled Python runtime dependencies (retired; historical record)
 
-The 2.1.6 release/install target is CPython 3.12 / Linux x86_64 and is
+The retired 2.1.6 release/install target was CPython 3.12 / Linux x86_64 and was
 derived from the verified 1.4.4 production venv. The committed release lock is
 `release/confflow-2.1.6-py312-linux-x86_64.lock`; the matching wheelhouse
 manifest is `release/confflow-2.1.6-py312-linux-x86_64.SHA256SUMS`. Together
@@ -236,13 +245,13 @@ That command reproduces the wheelhouse; it does not claim to re-resolve or
 update dependency selections. A future lock update must record the resolver
 tool/version and regeneration inputs when the selections are made.
 
-The installer requires both --dependency-lock and --wheelhouse. The
-wheelhouse must contain only the manifest and the binary wheels listed by it.
-Candidate and production mode both fail closed when either input is absent,
-when a wheel is missing, extra, altered, an sdist, or incompatible with
-Python 3.12 Linux x86_64. No system site-packages or network index is used.
+The retired installer required both --dependency-lock and --wheelhouse. The
+wheelhouse had to contain only the manifest and the binary wheels listed by it.
+Candidate and production mode both failed closed when either input was absent,
+when a wheel was missing, extra, altered, an sdist, or incompatible with
+Python 3.12 Linux x86_64. No system site-packages or network index was used.
 
-The staged install sequence is:
+The retired staged install sequence was:
 
 1. pip install --no-index --find-links --require-hashes -r <lock>, with
    --only-binary=:all:.
@@ -253,11 +262,12 @@ The install provenance records the lock digest, wheelhouse manifest digest,
 Python version/implementation, and platform/machine identity alongside the
 wheel and release attestation fields.
 
-### Layer 3 — Target-venv `install-provenance.json`
+### Layer 3 — Target-venv `install-provenance.json` (record schema still read)
 
-After successful checksum verification the deployer writes
+After successful checksum verification the retired deployer wrote
 `<sys.prefix>/share/confflow/install-provenance.json` inside the
-target venv. The schema is:
+target venv. The schema (still read by `confflow/install_provenance.py`
+for the capability probe) is:
 
 ```json
 {

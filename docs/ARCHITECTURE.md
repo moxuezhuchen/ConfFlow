@@ -37,7 +37,7 @@ confflow/
   shared/        跨层默认值与 ORCA block 格式化
   cli.py main.py v4cli.py                命令行入口
   control.py control_worker.py worker_*  控制协议 v1 适配器与外部 worker（排队的启动意图）
-  contract.py artifact_json.py install_provenance.py release_dependencies.py   契约常量、原子 JSON、安装/发布溯源
+  contract.py artifact_json.py install_provenance.py   契约常量、原子 JSON、安装溯源
 ```
 
 `science/` 与 `domain/` 不做 I/O；`execution/` 不解析 YAML；`workflow/v4` 不执行任何东西。执行层只通过

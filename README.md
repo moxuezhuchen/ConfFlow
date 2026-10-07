@@ -208,22 +208,26 @@ not a prefix.
 | workflow_state | `.workflow_state.json` | `confflow.workflow_state.v1` |
 | output_manifest | `output_manifest.json` | `confflow.output_manifest.v1` |
 
-### Release / install provenance — three layers
+### Release / install provenance — three layers (offline pipeline retired)
 
 ConfFlow no longer bakes its own wheel digest into the wheel.
 
 1. **Wheel-internal build provenance** — `confflow.__build__.COMMIT`
    and `DIRTY` are set by `setup.py`'s build hook and describe only
    *what source built this wheel*, never the wheel file itself.
-2. **External release provenance** — the release workflow writes a
-   `SHA256SUMS` file next to the wheel in `dist/`. The deployer
-   refuses to install on checksum mismatch.
-3. **Target venv install provenance** — the deployer creates
+2. **External release provenance (retired)** — the retired release workflow
+   wrote a `SHA256SUMS` file next to the wheel in `dist/`. The retired
+   deployer refused to install on checksum mismatch.
+3. **Target venv install provenance** — the retired deployer created
    `<sys.prefix>/share/confflow/install-provenance.json` after
    verifying the wheel against `SHA256SUMS` (and, in production,
-   against the approved attestation). The capability probe reads
-   this file; the wheel's `__build__.COMMIT` is *not* trusted as
+   against the approved attestation). The capability probe still reads
+   this file when present; the wheel's `__build__.COMMIT` is *not* trusted as
    the wheel's identity.
+
+Server installs use source installation per `docs/USAGE.md`
+(`git clone` / `git pull && pip install .`), not the retired offline
+wheelhouse.
 
 The capability probe surfaces `producer.wheel.filename` /
 `producer.wheel.sha256` and `producer.install_provenance.status`

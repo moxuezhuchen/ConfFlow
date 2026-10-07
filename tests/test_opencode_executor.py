@@ -192,7 +192,8 @@ def test_resolve_fast_matches_repo_runner():
     argv = select_tests.resolve_profile("fast")
     assert argv[0] == "./scripts/test.sh"
     assert "-m" in argv and "not integration" in argv
-    assert any("test_install_release_wheel" in a for a in argv)
+    assert argv == ["./scripts/test.sh", "-q", "-m", "not integration"]
+    assert not any("test_install_release_wheel" in a for a in argv)
 
 
 def test_resolve_full_runs_canonical_suite():

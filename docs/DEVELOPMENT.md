@@ -5,7 +5,7 @@
 
 ## 1. 环境
 
-- Python ≥ 3.10（CI 矩阵 3.10–3.13；release 安装器相关测试固定在 3.12）。
+- Python ≥ 3.10（CI 矩阵 3.10–3.13）。
 - 运行依赖：numpy、scipy、pyyaml、psutil、rich、pydantic、rdkit、jsonschema、referencing、rfc8785。
 
 ```bash
@@ -86,9 +86,12 @@ pytest -q                  # 见 TESTING.md；scripts/test.sh 会把所有产物
 
 ## 8. 发布
 
-发布流程、锁文件、wheel 安装器与溯源见 [`RELEASE.md`](RELEASE.md)；依赖锁用
-`scripts/generate_dependency_locks.py --write/--check` 生成与核对；发布 wheel 的隔离安装用
-`scripts/install_release_wheel.py`。
+离线发布流水线（`release.yml`、离线 wheelhouse、`release/` 锁文件、
+`scripts/install_release_wheel.py`、`scripts/generate_dependency_locks.py`）
+已退役。服务器安装与更新见 [`USAGE.md`](USAGE.md)（`git clone` /
+`git pull && pip install .`）；构建溯源（`setup.py` 写入
+`confflow/__build__.py` 的提交号）与安装溯源读取
+（`confflow/install_provenance.py`）保留，详见 [`RELEASE.md`](RELEASE.md)。
 
 ## 9. 重构记录
 
