@@ -17,7 +17,9 @@ consistency between the validator and ``materialize_native_input``.
 
 from __future__ import annotations
 
+import dataclasses
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -356,3 +358,118 @@ def test_orca_two_retired_modes_yield_one_diagnostic() -> None:
     errors = report.errors()
     assert len(errors) == 1, errors
     assert "unknown native keys" in errors[0]["message"]
+
+
+# -- R2.3 retired-mode fail-closed branches ------------------------------------
+
+
+class _FaultySlots(FrozenDict):
+    """Extra-structures map whose ``reactant`` lookup always fails.
+
+    Test-only input double exercising the defensive ``slots.get`` failure
+    branch in ``GaussianProgramAdapter._execution_mode``; the adapter logic
+    itself is never mocked.
+    """
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key == "reactant":
+            raise RuntimeError("synthetic slots lookup failure")
+        return super().get(key, default)
+
+
+class _FaultyNative(FrozenDict):
+    """Native map whose ``irc`` lookup always fails.
+
+    Test-only input double exercising the defensive ``native.get`` failure
+    branch in ``OrcaProgramAdapter._resolve_path_mode``; the adapter logic
+    itself is never mocked.
+    """
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key == "irc":
+            raise RuntimeError("synthetic native lookup failure")
+        return super().get(key, default)
+
+
+def test_gaussian_qst_rejection_survives_faulty_slots_lookup() -> None:
+    # R2.3d: the ``reactant`` lookup fails (defensive ``except`` branch) but
+    # the bound ``product`` slot must still fail closed with retired semantics.
+    from confflow.programs.gaussian.adapter import GaussianProgramAdapter
+
+    base = _gaussian_inputs({"keyword": "B3LYP/6-31G* Opt"})
+    inputs = dataclasses.replace(
+        base, extra_structures=_FaultySlots({"product": (structure("s1"),)})
+    )
+    with pytest.raises(ValueError) as excinfo:
+        GaussianProgramAdapter().materialize_native_input(inputs)
+    message = str(excinfo.value)
+    assert "native_input_error" in message
+    assert "retired" in message
+    assert "product" in message
+
+
+@pytest.mark.parametrize("mode", ["irc", "neb", "goat"])
+def test_orca_retired_path_mode_rejected(mode: str) -> None:
+    # R2.3b/e + R2.3c/d: retired path/ensemble native keys fail closed here
+    # (definition validation already rejects them as unknown keys).
+    from confflow.programs.orca.adapter import OrcaProgramAdapter
+
+    inputs = _orca_inputs({"keyword": "B3LYP Opt", mode: {"n_images": 5}})
+    with pytest.raises(ValueError) as excinfo:
+        OrcaProgramAdapter._resolve_path_mode(inputs, job="job")
+    message = str(excinfo.value)
+    assert "native_input_error" in message
+    assert "retired" in message
+    assert mode in message
+
+
+def test_orca_path_mode_survives_faulty_native_lookup() -> None:
+    # R2.3b/e + R2.3c/d: the ``irc`` lookup fails (defensive ``except``
+    # branch) but the declared ``neb`` mode must still fail closed.
+    from confflow.programs.orca.adapter import OrcaProgramAdapter
+
+    base = _orca_inputs({"keyword": "B3LYP Opt"})
+    inputs = dataclasses.replace(
+        base, native=_FaultyNative({"keyword": "B3LYP Opt", "neb": {"n_images": 5}})
+    )
+    with pytest.raises(ValueError) as excinfo:
+        OrcaProgramAdapter._resolve_path_mode(inputs, job="job")
+    message = str(excinfo.value)
+    assert "native_input_error" in message
+    assert "retired" in message
+    assert "neb" in message
+
+
+@pytest.mark.parametrize("mode", ["irc", "neb", "goat"])
+def test_path_mode_option_errors_is_retired_noop(mode: str) -> None:
+    # R2.3b/e + R2.3c/d: all path/ensemble modes are retired, so per-mode
+    # option validation is a no-op retained for call-site stability.
+    from confflow.programs.orca.adapter import _path_mode_option_errors
+
+    assert _path_mode_option_errors(mode, FrozenDict({"n_images": 5})) == ()
+
+
+@pytest.mark.parametrize("mode", ["irc", "neb", "neb_ts", "goat"])
+def test_orca_retired_materialized_mode_refuses_parsing(tmp_path: Path, mode: str) -> None:
+    # R2.3b/e + R2.3c/d: a materialized result carrying a retired
+    # path/ensemble mode must refuse parsing instead of publishing facts.
+    from confflow.programs.orca.adapter import OrcaProgramAdapter
+
+    adapter = OrcaProgramAdapter()
+    materialized = adapter.materialize_native_input(_orca_inputs({"keyword": "B3LYP Opt"}))
+    retired = dataclasses.replace(
+        materialized, metadata=FrozenDict({**dict(materialized.metadata), "mode": mode})
+    )
+    log_name = "s_opt_item0.out"
+    (tmp_path / log_name).write_text(
+        "****ORCA TERMINATED NORMALLY****\nFINAL SINGLE POINT ENERGY -76.0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError) as excinfo:
+        adapter.parse_native_result(
+            work_dir=str(tmp_path), log_file_name=log_name, materialized=retired
+        )
+    message = str(excinfo.value)
+    assert "native_parse_error" in message
+    assert "retired" in message
+    assert mode in message
