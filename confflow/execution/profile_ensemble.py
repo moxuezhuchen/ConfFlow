@@ -100,9 +100,7 @@ def _termination_diagnostic(context: ProfileContext) -> Diagnostic:
 
 def _passthrough_artifacts(context: ProfileContext) -> ArtifactSet:
     """Return the discovered artifacts unchanged."""
-    if isinstance(context.discovered_artifacts, ArtifactSet):
-        return context.discovered_artifacts
-    return ArtifactSet(tuple(context.discovered_artifacts))
+    return context.discovered_artifacts
 
 
 def _member_output_id(logical_key: str, member: NativeEnsembleMember) -> str:
