@@ -100,13 +100,7 @@ def sanitize_job_name(logical_key: str) -> str:
 
 
 def hashed_item_slug(work_item_id: str) -> str:
-    """Return a bounded collision-resistant directory slug for one item.
-
-    ``blake2b-120`` hex (30 chars) over the full ``wi:<logical_key>``
-    identity: injective for practical purposes, bounded length, never the
-    raw logical key.  Attempt isolation comes from the ``attempt_NNNN``
-    child, never from reusing one directory across retries.
-    """
+    """Return a bounded collision-resistant directory slug for one item."""
     if not isinstance(work_item_id, str) or not work_item_id:
         raise DomainError("work_item_id must be a non-empty string for directory hashing")
     return hashlib.blake2b(work_item_id.encode("utf-8"), digest_size=15).hexdigest()
@@ -275,13 +269,7 @@ class ItemExecutionContext:
     executor_capability: str | None = None
 
     def item_directory(self, logical_key: str) -> str:
-        """Return the deterministic work directory for a logical key.
-
-        Legacy non-injective layout (``sanitize_job_name``); kept for
-        read-only migration inspection.  New production code must use
-        :meth:`durable_item_dir` / :meth:`attempt_dir`, which are
-        collision-resistant and attempt-isolated.
-        """
+        """Return the deterministic work directory for a logical key."""
         base = self.work_base or os.path.join(self.run_root, "items")
         return os.path.join(base, self.step_id, sanitize_job_name(logical_key))
 
@@ -415,16 +403,7 @@ class WorkItemExecutor:
     def _require_checkpoint_consumption(
         context: ItemExecutionContext, staged: tuple[StagedArtifact, ...]
     ) -> None:
-        """Fail closed when staged checkpoints cannot be consumed natively.
-
-        Staged means cryptographically verified; used means the adapter's
-        rendered input references the staged file.  Adapters that declare no
-        checkpoint vocabulary must reject checkpoints explicitly
-        (``artifact_unsupported``) instead of reporting staged-but-unused
-        success.  ORCA carries no checkpoint input vocabulary; Gaussian
-        consumes via ``%OldChk`` (standard/IRC) and rejects QST+checkpoint
-        at render time.
-        """
+        """Fail closed when staged checkpoints cannot be consumed natively."""
         if not staged:
             return
         program = getattr(getattr(context, "adapter", None), "program_name", None)
@@ -783,14 +762,7 @@ class WorkItemExecutor:
     def _resubject_restart_artifacts(
         self, profile_output: ProfileOutput, work_item: WorkItem
     ) -> ProfileOutput:
-        """Re-subject restart artifacts to the profile's output structures.
-
-        Single-output items keep the V4-4 rule (restart artifacts redirect
-        to the sole output id).  Multi-output items follow the V4-5 rule:
-        artifacts already bound to one output keep it; input-bound
-        checkpoints stay work-item scoped and are never fanned out to all
-        outputs.  Anything else passes through untouched.
-        """
+        """Re-subject restart artifacts to the profile's output structures."""
         from .multi_output import resolve_multi_output_restart_subjects
 
         output_ids = tuple(record.id for record in profile_output.structures)
@@ -1015,12 +987,7 @@ class WorkItemExecutor:
         should_cancel: Callable[[], bool] | None,
         quota: tuple[Any, str, str] | None = None,
     ) -> tuple[NativeExecutionResult, CancelOutcome | None] | None:
-        """Submit *request* and wait for a terminal outcome.
-
-        Returns ``None`` only when the process could not be launched or the
-        handle was lost.  Cancellation and walltime are converted into
-        explicit outcomes, never exceptions.
-        """
+        """Submit *request* and wait for a terminal outcome."""
         resources, run_id, work_item_id = quota if quota is not None else (None, "", "")
         cores = getattr(resources, "cores_per_item", None)
         memory = getattr(resources, "memory_per_item_bytes", None)

@@ -111,14 +111,7 @@ class ProducedFile:
 
 @dataclass(frozen=True, slots=True)
 class NativePathEndpoint:
-    """One parsed reaction-path endpoint (IRC/NEB direction).
-
-    A parser fact, not a workflow judgment: ``direction`` is the native
-    path direction marker (``"forward"`` or ``"reverse"``), never a
-    reactant/product claim.  Only endpoints with an explicit native
-    direction marker may be reported; silently inferring a direction from
-    parser order is forbidden.
-    """
+    """One parsed reaction-path endpoint (IRC/NEB direction)."""
 
     direction: str
     geometry: ParsedGeometry
@@ -153,14 +146,7 @@ class NativePathEndpoint:
 
 @dataclass(frozen=True, slots=True)
 class NativeEnsembleMember:
-    """One parsed ensemble/conformer member (GOAT/NEB images).
-
-    ``member_index`` is the native member identity (conformer number,
-    image number) as reported by the program, never the parser's encounter
-    order.  When the native output carries no stable member identity the
-    parser must use the documented deterministic fallback order and say so
-    in ``native_metadata``, never silently.
-    """
+    """One parsed ensemble/conformer member (GOAT/NEB images)."""
 
     member_index: int
     geometry: ParsedGeometry
@@ -517,15 +503,7 @@ class ProgramAdapter(Protocol):
         ...
 
     def validate_native_definition(self, native: Mapping[str, Any]) -> tuple[str, ...]:
-        """Return deterministic native-definition failures, or ``()``.
-
-        The structure-independent half of native rendering: strict native
-        vocabulary, required/empty native values, and deterministic native
-        option constraints that never depend on a structure, geometry or
-        resources.  Semantic validation calls this before a document can be
-        submitted; :meth:`materialize_native_input` refuses on the same
-        result, so validator and renderer share one requirement path.
-        """
+        """Return deterministic native-definition failures, or ``()``."""
         ...
 
     def build_execution_request(
@@ -564,10 +542,5 @@ class ProgramAdapter(Protocol):
         ...
 
     def environment_probe(self, executable: str) -> dict[str, Any]:
-        """Return safely measurable program facts, possibly empty.
-
-        Probes must be cheap and side-effect free.  When no safe probe
-        exists the adapter returns an empty mapping and file identity
-        carries the environment digest.
-        """
+        """Return safely measurable program facts, possibly empty."""
         ...

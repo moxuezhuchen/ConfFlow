@@ -517,12 +517,7 @@ class ExecutionEnvironment:
 
     @classmethod
     def unknown(cls, program: str, *, reason: str) -> ExecutionEnvironment:
-        """Build a fail-closed unmeasured environment for *program*.
-
-        The returned digest is unique per construction (fresh nonce), so it
-        can never satisfy a reuse equality check. *reason* is recorded in
-        metadata for audit.
-        """
+        """Build a fail-closed unmeasured environment for *program*."""
         _require_text(program, "program")
         _require_text(reason, "reason")
         return cls(

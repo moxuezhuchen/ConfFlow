@@ -2,23 +2,16 @@
 
 """V4 multi-output helpers (V4-5).
 
-Pure, presentation- and bookkeeping-level helpers shared by every
-multi-output producer (path endpoints, ensembles):
-
-- :func:`order_item_structures` sorts one work item's structures into the
-  deterministic presentation order without changing identity;
-- :func:`validate_multi_output_uniqueness` fails closed on duplicated
-  structure ids;
-- :func:`resolve_multi_output_restart_subjects` applies the restart-subject
-  rule for multi-output items: an artifact already bound to one of the
-  emitted outputs keeps that subject; a restart-role artifact still bound to
-  the consumed input keeps the input subject when several outputs were
-  emitted (work-item scoped, never copied to every output); a restart-role
-  artifact bound to the input re-subjects to the single emitted output;
-  everything else passes through unchanged.
-
-Only ``confflow.domain`` and the frozen
-:mod:`confflow.workflow.v4.artifact_flow` vocabulary are imported here.
+Pure presentation/bookkeeping helpers shared by every multi-output producer:
+``order_item_structures`` sorts into deterministic presentation order without
+changing identity; ``validate_multi_output_uniqueness`` fails closed
+(``DomainError``) on duplicated structure ids;
+``resolve_multi_output_restart_subjects`` keeps artifacts already bound to an
+emitted output, keeps restart-role artifacts bound to the input when several
+outputs emit (work-item scoped, never copied to every output), re-subjects a
+restart-role input-bound artifact to the single emitted output, and passes
+everything else through unchanged. Imports only ``confflow.domain`` and the
+frozen ``artifact_flow`` vocabulary.
 """
 
 from __future__ import annotations
@@ -40,21 +33,7 @@ __all__ = [
 
 
 def order_item_structures(structures: StructureSet) -> StructureSet:
-    """Return *structures* in deterministic presentation order.
-
-    Parameters
-    ----------
-    structures : StructureSet
-        Structures emitted by one work item, in any order.
-
-    Returns
-    -------
-    StructureSet
-        The same records sorted by ``output_ordering_key(role, ordinal)``
-        (stable: records with equal keys keep their input order).  Ordering
-        is presentation only; downstream pairing must use identity, group,
-        and subject, never this order.
-    """
+    """Return *structures* in deterministic presentation order."""
     ordered = tuple(
         sorted(
             structures.structures,
@@ -100,30 +79,7 @@ def resolve_multi_output_restart_subjects(
     output_ids: tuple[str, ...],
     input_subject: str | None,
 ) -> ArtifactSet:
-    """Reassign artifact subjects for one multi-output work item.
-
-    Parameters
-    ----------
-    artifacts : ArtifactSet
-        Executor-discovered artifacts bound (or not) to the consumed input.
-    output_ids : tuple[str, ...]
-        Ids of the structures the profile emitted for this work item.
-    input_subject : str | None
-        Id of the structure the work item consumed, if known.
-
-    Returns
-    -------
-    ArtifactSet
-        The reassigned set, in the original order:
-
-        - an artifact already bound to one of *output_ids* keeps it;
-        - a restart-role artifact bound to *input_subject* keeps the input
-          subject when more than one output was emitted (work-item scoped;
-          it is never copied to every output), and re-subjects to the
-          single output when exactly one was emitted;
-        - every other artifact passes through unchanged (including
-          restart-role artifacts with an unknown or unbound subject).
-    """
+    """Reassign artifact subjects for one multi-output work item."""
     outputs = tuple(output_ids)
     reassigned: list[ArtifactRef] = []
     for artifact in artifacts:

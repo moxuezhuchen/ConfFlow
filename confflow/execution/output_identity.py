@@ -74,26 +74,7 @@ _PATH_ROLES: Final = frozenset(
 
 
 def multi_output_structure_id(logical_key: str, role: str, ordinal: int = 0) -> str:
-    """Return the deterministic entity id for one multi-output slot.
-
-    Parameters
-    ----------
-    logical_key : str
-        Logical key of the producing work item (``<step id>:<group>``).
-    role : str
-        Semantic output role (one of the frozen role constants above).
-    ordinal : int
-        Stable ordinal within ``(logical_key, role)``.  For single-slot
-        roles (each path direction) this is always ``0``; for ensemble
-        roles it is the native member/image index, never the parser
-        position.
-
-    Returns
-    -------
-    str
-        ``"<logical_key>:structure:<role>:<ordinal>"`` — stable across
-        retry, resume, local, and remote execution of the same slot.
-    """
+    """Return the deterministic entity id for one multi-output slot."""
     if not isinstance(logical_key, str) or not logical_key:
         raise ValueError("logical_key must be a non-empty string")
     if not isinstance(role, str) or not role:
@@ -104,21 +85,7 @@ def multi_output_structure_id(logical_key: str, role: str, ordinal: int = 0) -> 
 
 
 def endpoint_output_id(logical_key: str, direction: str) -> str:
-    """Return the entity id for one reaction-path endpoint.
-
-    Parameters
-    ----------
-    logical_key : str
-        Logical key of the producing work item.
-    direction : str
-        ``"forward"`` or ``"reverse"`` (native path direction only).
-
-    Returns
-    -------
-    str
-        Deterministic endpoint id; the direction selects the role, so a
-        shuffled parser order can never swap the two endpoints.
-    """
+    """Return the entity id for one reaction-path endpoint."""
     if direction == "forward":
         return multi_output_structure_id(logical_key, PATH_ENDPOINT_FORWARD_ROLE, 0)
     if direction == "reverse":
@@ -144,13 +111,7 @@ def neb_ts_candidate_output_id(logical_key: str) -> str:
 def endpoint_lineage(
     driving: StructureRecord,
 ) -> tuple[tuple[str, ...], str, str | None]:
-    """Return ``(parent_ids, lineage_root_id, group_key)`` for path endpoints.
-
-    Both endpoints of one IRC/NEB item share the same lineage: the single
-    driving (TS) structure is the parent, its lineage root propagates (or
-    its own id when it has none beyond itself), and the group key is the
-    driving group key when present, else the deterministic driving id.
-    """
+    """Return ``(parent_ids, lineage_root_id, group_key)`` for path endpoints."""
     parent_ids = (driving.id,)
     lineage_root = driving.lineage_root_id or driving.id
     group_key = driving.group_key if driving.group_key is not None else driving.id
@@ -160,22 +121,7 @@ def endpoint_lineage(
 def multi_parent_lineage(
     parents_in_slot_order: tuple[StructureRecord, ...],
 ) -> tuple[tuple[str, ...], str | None, str | None]:
-    """Return lineage for a multi-parent output (QST/NEB TS candidate).
-
-    Parameters
-    ----------
-    parents_in_slot_order : tuple[StructureRecord, ...]
-        Parent structures in semantic slot order
-        (reactant, product, guess) — never dict or random order.
-
-    Returns
-    -------
-    tuple
-        ``(parent_ids, lineage_root_id, group_key)``.  The lineage root
-        propagates only when every parent shares one non-empty root;
-        otherwise ``None`` (never an arbitrary pick).  The group key
-        propagates only when every parent shares one non-empty key.
-    """
+    """Return lineage for a multi-parent output (QST/NEB TS candidate)."""
     if not parents_in_slot_order:
         raise ValueError("multi-parent lineage requires at least one parent")
     parent_ids = tuple(record.id for record in parents_in_slot_order)
@@ -193,13 +139,7 @@ def multi_parent_lineage(
 
 
 def output_ordering_key(role: str, ordinal: int | None) -> tuple[int, int]:
-    """Return the deterministic presentation order key for one output.
-
-    Within an item, ``path_endpoint_forward`` sorts before
-    ``path_endpoint_reverse``; NEB images and conformers sort by stable
-    ordinal; anything else sorts last by ordinal.  Correctness must never
-    depend on this order — it only makes serialized sets reproducible.
-    """
+    """Return the deterministic presentation order key for one output."""
     rank = {
         PATH_ENDPOINT_FORWARD_ROLE: 0,
         PATH_ENDPOINT_REVERSE_ROLE: 1,

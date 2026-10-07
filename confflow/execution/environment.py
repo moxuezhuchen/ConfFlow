@@ -2,42 +2,18 @@
 
 """V4 execution-environment measurement.
 
-The environment digest is the independent axis that says *where* a
-computation ran: program identity, full executable content identity, and
-the COMPLETE effective native environment the subprocess receives. It never
-folds endpoint locators, absolute paths, file stat, scheduler width, or
-presentation facts — those are operational provenance, recorded for audit
-but digest-inert.
-
-Identity rule v3 (see ``confflow.execution.contracts``):
-
-- Executable identity is the FULL content hash. No prefix truncation: a
-  changed tail byte always moves the digest, even past any historical
-  prefix cap. Stat (size/mtime/dev/ino) is provenance plus cache
-  invalidation only — a relocated byte-identical binary touched to a new
-  mtime measures the same environment.
-- The measurer cache is stat-gated: a cached identity is re-validated
-  against fresh stat on every read, so mid-run binary replacement is
-  re-measured instead of aliased. An in-place rewrite that preserves
-  every stat field is undetectable without rehashing and is out of scope;
-  call :func:`measure_executable` directly to bypass the cache.
-- ``relevant_env`` is the complete effective environment the native
-  subprocess actually receives, built by the single authority
-  :func:`confflow.execution.binding_resolution.effective_native_env`:
-  the producer inheritance policy (ambient ``os.environ``) overlaid with
-  the declared binding env, or the target-side equivalent
-  (``target_env`` under the producer handoff snapshot). Launch env and
-  hashed env are the SAME immutable mapping by construction: any
-  inherited variable an executable can read is part of identity, so
-  changing or deleting it can never reuse a stale scientific result.
-  (:func:`select_relevant_env` remains a validation helper for callers
-  that already hold a complete mapping.)
-- Pure (non-native) executors record their implementation identity via
-  :func:`build_pure_environment` — no Gaussian/ORCA executable required.
-  Unknown measurements never equal verified ones (fail-closed nonce).
-
-Measurement is cached per resolved executable so repeated items in one step
-do not re-hash binaries.
+Digest says *where* a computation ran: program, full executable content,
+and the COMPLETE effective native env; endpoint locators, absolute paths,
+file stat, scheduler width, and presentation facts are digest-inert audit
+provenance only. Executable identity is the FULL content hash with no prefix
+truncation; stat is provenance plus cache invalidation only. The measurer
+cache is stat-gated and re-validated on every read, so mid-run replacement
+is re-measured not aliased; in-place rewrites preserving all stat are out
+of scope, call ``measure_executable`` to bypass the cache. ``relevant_env``
+is the single-authority ``effective_native_env`` snapshot; launch and hashed
+env are the SAME mapping, so any inherited variable change/delete can never
+reuse a stale result. Pure executors use ``build_pure_environment`` with no
+native binary; unknown measurements never equal verified ones (fail-closed nonce).
 """
 
 from __future__ import annotations
@@ -205,13 +181,7 @@ def measure_executable(
 
 
 def select_relevant_env(full_env: Mapping[str, Any], *, declared: Iterable[str]) -> dict[str, str]:
-    """Select the declared scientifically relevant subset of *full_env*.
-
-    Only names in *declared* that are present in *full_env* are returned.
-    Relevance is an explicit caller contract (binding resolution): nothing
-    is inferred, and undeclared operational variables can never leak into
-    the digest axis through this helper.
-    """
+    """Select the declared scientifically relevant subset of *full_env*."""
     if not isinstance(full_env, Mapping):
         raise DomainError("full_env must be a mapping")
     names = tuple(declared)
@@ -320,14 +290,7 @@ class EnvironmentMeasurer:
         target: str | None = None,
         relevant_env: Mapping[str, str] | None = None,
     ) -> ExecutionEnvironment:
-        """Measure *candidate* and build its execution environment.
-
-        ``target`` is preserved as operational provenance and is
-        digest-inert under identity rule v3. ``relevant_env`` is the
-        COMPLETE effective environment the executor will launch with
-        (see :func:`confflow.execution.binding_resolution.effective_native_env`);
-        the digest and the launch mapping are the same construction.
-        """
+        """Measure *candidate* and build its execution environment."""
         identity = self.measure(candidate, adapter=adapter)
         metadata: dict[str, object] = {
             "adapter_version": adapter.adapter_version,

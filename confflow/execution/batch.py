@@ -2,20 +2,14 @@
 
 """V4 batch step execution.
 
-A :class:`BatchStepExecutor` runs the deterministic work items of one compiled
-calculation step: it schedules items under a scheduler policy, collects work
-item results in canonical order, applies the completion policy, and assembles
-the step result.  It understands threads and policies, never chemistry: no
-program names, no task roles, no XYZ reading.
-
-Steps still form barriers: no streaming, no cross-step scheduling.  Only the
-concurrency width is a scheduler concern; scientific identity never depends
-on it.
-
-Persistence arrives through ports, not imports: an optional
-:class:`WorkItemRepository` records item state transitions and an optional
-:class:`ReuseStore` short-circuits execution for digest-identical work.  V4-2
-ships in-memory implementations; durable stores land in V4-3 behind the same
+Runs one compiled calculation step's deterministic work items under a
+scheduler policy, collecting results in canonical order and assembling the
+step result; it understands threads and policies, never chemistry. Steps are
+barriers with no streaming or cross-step scheduling; only concurrency width is
+a scheduler concern and scientific identity never depends on it. Persistence
+arrives through ports not imports: optional ``WorkItemRepository`` records
+transitions and optional ``ReuseStore`` short-circuits only digest-identical
+work; in-memory implementations ship now, durable stores land behind the same
 protocols without touching execution contracts.
 """
 
@@ -165,30 +159,7 @@ class InMemoryReuseStore:
 
 
 def _item_error_diagnostics(item: WorkItemResult, *, step_id: str) -> tuple[Diagnostic, ...]:
-    """Project one failed item's error into a step-level diagnostic.
-
-    The item error is the authoritative failure record
-    (``WorkItemResult.error``); the step diagnostics and the manifest are
-    projections of it, never a second interpretation.  The diagnostic uses
-    the producer's own error code and message and is deduplicated against
-    diagnostics the item already emitted for the same failure (for example
-    cancellation, which records its diagnostic at the failure site), so one
-    defect yields one diagnostic.
-
-    Parameters
-    ----------
-    item : WorkItemResult
-        Collected work-item result, possibly failed.
-    step_id : str
-        Step the item belongs to; carried on the diagnostic so consumers can
-        associate the reason with the failed step.
-
-    Returns
-    -------
-    tuple[Diagnostic, ...]
-        Zero or one diagnostic: empty when the item carries no error or the
-        error is already represented on the item's own diagnostics.
-    """
+    """Project one failed item's error into a step-level diagnostic."""
     error = item.error
     if error is None:
         return ()
@@ -628,11 +599,7 @@ class BatchStepExecutor:
         should_cancel: Callable[[], bool],
         attempt: int | None = None,
     ) -> WorkItemResult:
-        """Launch one claimed item in-process through the local executor.
-
-        The attempt is always read from the durable store, never
-        invented. (R1.2 retired remote delivery; this seam is local-only.)
-        """
+        """Launch one claimed item in-process through the local executor."""
         if attempt is None:
             attempt = store.get_registered(item.id)["current_attempt"]
         return self._executor.execute(item, context, should_cancel=should_cancel)
@@ -645,13 +612,7 @@ class BatchStepExecutor:
         store: SqliteWorkItemStore,
         environment_digest: str | None,
     ) -> WorkItemResult | None:
-        """Reconcile an abandoned attempt before retry (R1.2: always None).
-
-        Remote delivery was retired, so there is no out-of-band bundle
-        to import; the caller always follows the normal
-        mark-interrupted → claim-next-attempt → relaunch protocol.
-        Kept as a seam so the RECOVER_ABANDONED path stays explicit.
-        """
+        """Reconcile an abandoned attempt before retry (R1.2: always None)."""
         return None
 
     @staticmethod
@@ -680,14 +641,7 @@ class BatchStepExecutor:
 
     @staticmethod
     def _current_provenance(request: StepExecutionRequest) -> FrozenDict:
-        """Build the producer-provenance record for *request*.
-
-        An explicit ``request.producer_provenance`` (pure executors whose
-        reuse axis is the registry executor contract, not an adapter /
-        profile pair) is used verbatim.  Otherwise the provenance derives
-        from the resolved adapter, profile, checks, and recovery, which
-        are then required.
-        """
+        """Build the producer-provenance record for *request*."""
         if request.producer_provenance is not None:
             return request.producer_provenance
         adapter = request.adapter
@@ -712,14 +666,7 @@ class BatchStepExecutor:
         environment_digest: str | None,
         provenance: FrozenDict,
     ) -> ReuseInputs:
-        """Build the current reuse axes for *item*.
-
-        Bound-input artifact checksums ride inside ``work_item_digest``
-        (assembly folds ``digest_payload`` into the input payload), so the
-        checksum axis is intentionally empty on both sides: content change
-        surfaces as ``INVALIDATE_INPUT`` while post-hoc corruption surfaces
-        through verification as ``INVALIDATE_ARTIFACT``.
-        """
+        """Build the current reuse axes for *item*."""
         return ReuseInputs(
             work_item_digest=item.semantic_digest,
             step_semantic_digest=step_semantic_digest,
@@ -750,13 +697,7 @@ class BatchStepExecutor:
         retryable: bool,
         details: dict[str, Any] | None = None,
     ) -> WorkItemResult:
-        """Build a non-persisted failure report for a non-executed item.
-
-        Synthetic results are assembled into the step result so completion
-        policy sees every item, but they are never written to the store:
-        blocked items keep their ``RUNNING`` row for future reconciliation
-        and invalidated items keep their terminal history.
-        """
+        """Build a non-persisted failure report for a non-executed item."""
         from ..domain.work_item import RecoveryInfo, ResultError, Timing
 
         recovery_name = getattr(request.recovery, "name", "none")
@@ -797,12 +738,7 @@ class BatchStepExecutor:
         should_cancel: Callable[[], bool],
         _claim_retried: bool = False,
     ) -> tuple[WorkItemResult, bool]:
-        """Run one item through register → decide → execute-or-report.
-
-        Returns the item result plus whether it is durably backed (stored
-        or freshly committed).  Store-level failures propagate as
-        :class:`PersistenceError` for the caller to report.
-        """
+        """Run one item through register → decide → execute-or-report."""
         step = request.step
         try:
             store.register_item(
@@ -1050,13 +986,7 @@ class BatchStepExecutor:
         should_cancel: Callable[[], bool],
         _claim_retried: bool = False,
     ) -> tuple[WorkItemResult, bool]:
-        """Resolve a lost claim race without duplicating native execution.
-
-        A rival may have completed, failed, or abandoned the item since our
-        decision snapshot: re-evaluate once against fresh state (which
-        typically reuses the rival's durable result).  Only a second loss —
-        or a still-live rival — synthesizes a blocked report.
-        """
+        """Resolve a lost claim race without duplicating native execution."""
         state = store.get_state(item.id)
         if state is StoredWorkItemStatus.RUNNING:
             recorded = store.get_owner(item.id)
@@ -1174,15 +1104,7 @@ class BatchStepExecutor:
     def _bind_recovery(
         recovery: RecoveryPolicy | None, adapter: ProgramAdapter | None
     ) -> RecoveryPolicy | None:
-        """Substitute a step-bound rescue policy for an unbound instance.
-
-        Single-authority compatibility for direct-batch callers that still
-        hand an unbound policy object: the bound replacement comes from
-        the execution registry with the step's program adapter, so rescue
-        work renders through the same file-format authority as primary
-        work.  Registry-resolved callers already pass bound policies and
-        are returned untouched.
-        """
+        """Substitute a step-bound rescue policy for an unbound instance."""
         if recovery is None or adapter is None:
             return recovery
         if getattr(recovery, "name", "") != "ts_rescue_scan":

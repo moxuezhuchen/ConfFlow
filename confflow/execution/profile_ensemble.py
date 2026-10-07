@@ -2,25 +2,17 @@
 
 """V4 ensemble result profile (V4-5).
 
-The ensemble profile normalizes parsed conformer members
-(:class:`NativeEnsembleMember`) plus the seed work-item input into domain
-collections: one :class:`StructureRecord` per native member, one ``"energy"``
-result per member that parsed an energy, and the executor-discovered
-artifacts passed through untouched.
-
-Identity is delegated to the frozen
-:mod:`confflow.execution.output_identity` authority: member ids derive from
-the work-item logical key plus the frozen conformer role plus the native
-member index — never the parser encounter order — so member ordering is
-deterministic by ``member_index``.  Lineage follows the single-parent rule
-shared with path endpoints.  Identical geometries under different member
-indexes are never deduped: a :class:`StructureSet` allows shared content
-under distinct ids, and each member is a distinct scientific entity.
-
-A duplicated ``member_index`` fails closed with no structures and a
-``duplicate_ensemble_member`` error diagnostic (never dedupe, never
-renumber); an empty member list yields an ``empty_ensemble`` error
-diagnostic.
+Normalizes parsed conformer members plus the seed input into one
+``StructureRecord`` per native member, one ``energy`` per member with parsed
+energy, and passthrough artifacts. Identity is the frozen
+``output_identity`` authority: ids derive from logical key plus frozen role
+plus native ``member_index``, never parser encounter order, so ordering is
+deterministic by ``member_index``; lineage is single-parent. Identical
+geometries under different indexes are never deduped: shared content under
+distinct ids is allowed, each member a distinct entity. A duplicated
+``member_index`` fails closed with no structures and a
+``duplicate_ensemble_member`` error (never dedupe, never renumber); an empty
+member list yields an ``empty_ensemble`` error.
 """
 
 from __future__ import annotations
@@ -75,18 +67,7 @@ def _text_or_none(value: object) -> str | None:
 
 
 def _build_provenance(context: ProfileContext) -> Provenance:
-    """Build producer provenance for every result of this profile.
-
-    Parameters
-    ----------
-    context : ProfileContext
-        Profile inputs carrying the native program and declared keywords.
-
-    Returns
-    -------
-    Provenance
-        Producer provenance naming this profile contract as the adapter.
-    """
+    """Build producer provenance for every result of this profile."""
     native_map = context.inputs.native
     return Provenance(
         program=context.native_result.program.value,
@@ -100,18 +81,7 @@ def _build_provenance(context: ProfileContext) -> Provenance:
 
 
 def _termination_diagnostic(context: ProfileContext) -> Diagnostic:
-    """Build the native-termination transport diagnostic.
-
-    Parameters
-    ----------
-    context : ProfileContext
-        Profile inputs carrying the native termination fact.
-
-    Returns
-    -------
-    Diagnostic
-        ``INFO`` when the native program terminated normally, else ``ERROR``.
-    """
+    """Build the native-termination transport diagnostic."""
     terminated = bool(context.native_result.terminated_normally)
     return Diagnostic(
         code=NATIVE_TERMINATION_CODE,
@@ -129,18 +99,7 @@ def _termination_diagnostic(context: ProfileContext) -> Diagnostic:
 
 
 def _passthrough_artifacts(context: ProfileContext) -> ArtifactSet:
-    """Return the discovered artifacts unchanged.
-
-    Parameters
-    ----------
-    context : ProfileContext
-        Profile inputs carrying the executor-discovered artifacts.
-
-    Returns
-    -------
-    ArtifactSet
-        The discovered set, passed through untouched.
-    """
+    """Return the discovered artifacts unchanged."""
     if isinstance(context.discovered_artifacts, ArtifactSet):
         return context.discovered_artifacts
     return ArtifactSet(tuple(context.discovered_artifacts))
@@ -169,20 +128,7 @@ class EnsembleProfile:
         return ENSEMBLE_PROFILE_CONTRACT
 
     def apply(self, context: ProfileContext) -> ProfileOutput:
-        """Normalize parsed ensemble members into domain collections.
-
-        Parameters
-        ----------
-        context : ProfileContext
-            Profile inputs: the seed structure plus parser facts.
-
-        Returns
-        -------
-        ProfileOutput
-            Member structures ordered by native member index, per-member
-            energy results, untouched artifacts, ``PRODUCED`` semantics, and
-            the termination plus ensemble-shape diagnostics.
-        """
+        """Normalize parsed ensemble members into domain collections."""
         seed = context.inputs.structure
         if context.inputs.charge is not None:
             charge = context.inputs.charge
