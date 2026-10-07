@@ -9,7 +9,7 @@ never regress.  Attack conditions are preserved verbatim:
 - R1: ambient/explicit/remote environment identity vs actual launch env.
 - R2: (retired in R2.2 with the ``target`` field and transport seam.)
 - R3: live cancellation reaches the running native process.
-- R4: analysis result references resolve against the published universe.
+- R4: result references resolve against the published universe.
 - R5: (retired in R2.2 with the tspes chain and live analysis.)
 - R6: a new run generation can never leave an old terminal manifest current.
 - R7: a durable worker bundle is reconciled before any retry attempt.
@@ -213,115 +213,13 @@ def _sleeping_native(root: Path, *, sleep_seconds: float) -> Path:
 
 
 class TestR4ResultReferenceIntegrity:
-    """R4: analysis citations resolve against the published universe."""
+    """R4: result references resolve against the published universe.
 
-    # R2.2 (G18): no live analysis step can run (the ``analysis`` executor
-    # is unregistered), so the projector is driven with synthesized
-    # ``reaction_profile`` payloads.  The live-manifest end-to-end (which
-    # needed a real analysis run) is deleted; the citation-integrity
-    # assertions over the retained projector are preserved verbatim.
-    @staticmethod
-    def _profile_step(
-        sources: list[Any] | None = None, *, extra_results: tuple[Any, ...] = ()
-    ) -> Any:
-        from confflow.domain import ResultSet, ScientificResult
-        from confflow.domain.units import Unit
-
-        energies = [
-            ScientificResult(
-                kind=kind,
-                value=value,
-                unit=Unit.HARTREE,
-                subject_structure_id=subject,
-                result_id=f"{subject}{kind}",
-            )
-            for subject in ("T", "F", "R")
-            for kind, value in (("energy", -5.0), ("gibbs_correction", 0.1))
-        ]
-        profile = ScientificResult(
-            kind="reaction_profile",
-            value=FrozenDict(
-                {
-                    "group_key": "g",
-                    "nodes": {"ts": "T", "forward": "F", "reverse": "R"},
-                    "electronic_energy": {"T": -5.0, "F": -10.0, "R": -20.0},
-                    "gibbs_energy": {"T": -4.9, "F": -9.8, "R": -19.7},
-                    "barriers": {
-                        "forward_endpoint": {"value": 5.0},
-                        "reverse_endpoint": {"value": 6.0},
-                    },
-                    "source_result_ids": list(sources) if sources is not None else ["Tenergy"],
-                }
-            ),
-            subject_structure_id="T",
-            result_id="profile-g",
-        )
-        return type(
-            "StepStub",
-            (),
-            {
-                "step_id": "s",
-                "results": ResultSet(tuple(energies) + (profile,) + tuple(extra_results)),
-                "structures": (),
-            },
-        )()
-
-    def test_projector_publishes_group_over_resolved_citations(self) -> None:
-        from confflow.producer.run_result import project_analysis_groups
-
-        groups = project_analysis_groups((self._profile_step(),))
-        assert len(groups) == 1
-        assert groups[0]["source_result_ids"] == ["Tenergy"]
-        assert groups[0]["group_key"] == "g"
-
-    def test_projector_rejects_dangling_duplicate_typed_and_stale(self, tmp_path: Path) -> None:
-        from dataclasses import replace
-
-        from confflow.domain import ResultSet
-        from confflow.producer.run_result import project_analysis_groups
-
-        step = self._profile_step()
-        (profile,) = [item for item in step.results if item.kind == "reaction_profile"]
-        for sources, expected in (
-            (["NONEXISTENT"], "unresolved"),
-            (["NONEXISTENT", "NONEXISTENT"], "duplicate"),
-            ([123], "non-empty strings"),
-            (["old-attempt-id"], "unresolved"),
-        ):
-            value = dict(profile.value)
-            value["source_result_ids"] = sources
-            changed = replace(profile, value=FrozenDict(value))
-            others = tuple(item for item in step.results if item is not profile)
-            changed_step = type(
-                "StepStub",
-                (),
-                {
-                    "step_id": step.step_id,
-                    "results": ResultSet((changed,) + others),
-                    "structures": (),
-                },
-            )()
-            with pytest.raises(ValueError) as error:
-                project_analysis_groups((changed_step,))
-            assert expected in str(error.value), (sources, error.value)
-
-    def test_projector_rejects_wrong_subject_citation(self, tmp_path: Path) -> None:
-
-        from confflow.domain import ScientificResult
-        from confflow.domain.units import Unit
-        from confflow.producer.run_result import project_analysis_groups
-
-        foreign = ScientificResult(
-            kind="energy",
-            value=-99.0,
-            unit=Unit.HARTREE,
-            subject_structure_id="not-in-group",
-            result_id="foreign-energy",
-        )
-        step = self._profile_step(sources=["foreign-energy"], extra_results=(foreign,))
-        with pytest.raises(ValueError) as error:
-            project_analysis_groups((step,))
-        assert "wrong-subject" in str(error.value)
+    R2.3a (G18): the reaction-profile projector (and its synthesized
+    ``reaction_profile`` payloads) is retired with ``confflow.analysis``;
+    only the retained reference-universe guard (duplicate ids fail
+    closed) remains.
+    """
 
     def test_reference_index_rejects_duplicate_produced_ids(self) -> None:
         from dataclasses import replace

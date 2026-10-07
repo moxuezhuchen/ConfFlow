@@ -33,14 +33,13 @@ PACKAGE_ROOT = REPO_ROOT / "confflow"
 
 
 def _v46_strict_roots() -> list[Path]:
-    """ACTIVE V4 production path, extended with analysis/producer when landed."""
+    """ACTIVE V4 production path (R2.3a: analysis retired)."""
     roots: list[Path] = []
     for name in (
         "domain",
         "workflow/v4",
         "execution",
-        "analysis",  # sibling workstream; absent today
-        "producer",  # sibling workstream; absent today
+        "producer",
         "persistence",
         "programs",
         "remote",
@@ -80,7 +79,7 @@ def _v46_strict_roots() -> list[Path]:
 #: doubles (``JobdeskV4ConsumerDouble``); they simulate the other repo and
 #: must stay ``confflow``-free exactly like ``DOUBLE_FILES``.
 
-#: Landed V4-6 production modules (producer + analysis).  Every entry must
+#: Landed V4-6 production modules (producer; R2.3a: analysis retired).  Every entry must
 #: live under the scan roots above and must not import exact forbidden
 #: legacy modules.  (Runtime isolation beyond exact-module matching is NOT
 #: asserted: the producer legitimately reads schema constants through
@@ -91,14 +90,6 @@ V46_MODULES = (
     "confflow.producer.manifest",
     "confflow.producer.recipes",
     "confflow.producer.validation",
-    "confflow.analysis.executor",
-    "confflow.analysis.grouping",
-    "confflow.analysis.models",
-    "confflow.analysis.pes",
-    "confflow.analysis.reaction",
-    "confflow.analysis.registry",
-    "confflow.analysis.thermochemistry",
-    "confflow.analysis.units",
 )
 
 
