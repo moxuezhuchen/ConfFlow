@@ -2,53 +2,18 @@
 
 """Durable terminal arbitration and generation ownership for formal V4 runs.
 
-Two independent state machines — the producer application (generation /
-manifest publication) and the execution service (cancel intent / terminal
-projection) — must agree on exactly one winner per run generation.  A
-"check, then atomic replace" sequence cannot provide that agreement: file
-integrity (``os.replace``) is not state-machine ordering.  This module is
-the single durable arbitration authority:
-
-- ``begin_generation`` installs the current generation owner.  Any older
-  generation immediately and permanently loses publication authority
-  (CONTRACT: a superseded writer can never overwrite the current truth).
-- ``terminal_publication`` claims terminal ownership for one generation
-  under an OS-level mutual-exclusion region and yields a scope whose
-  ``confirm`` publishes the generation's terminal record.  The manifest
-  write happens inside the same region.
-- ``record_cancel_intent`` records a durable cancellation claim.  A cancel
-  intent recorded before a completion claim makes cancellation the winner;
-  a completion claim recorded first makes a later cancel lose (the service
-  projects the winner instead of rewriting it).  A terminal claim already
-  recorded by a publication in progress is authoritative for refusal, so a
-  cancel arriving while that publication still holds the lock is refused
-  promptly instead of being reported accepted.
-- ``generation_publication_scope`` is the only way a generation-owned
-  artifact (step result, step lifecycle state) may be written: the
-  expected-owner check and the caller's durable write happen inside one
-  lock region, so a superseded writer can never overwrite the current
-  generation's truth.
-- ``finalize_generation`` terminalizes a generation without a manifest
-  (crash recovery / confirmed cancellation).
-- ``compare_and_set_generation`` is the only generation-record mutation API
-  with an expected owner.
-
-Durable files (all under the run root):
-
-- ``generation_ownership.json`` — the arbitration ledger (internal; never
-  consumed by JobDesk).
-- ``.generation.lock`` — the mutual-exclusion region (``flock`` on POSIX;
-  the lock is released by the kernel when the process dies, so a crashed
-  holder never wedges the run root).
-- ``run_generation.json`` — the public projection (schema unchanged).
-- ``run_result.json`` — the published manifest (written inside the lock,
-  before the terminal generation record).
-
-Ordering is frozen (CONTRACT 8): claim terminal ownership -> manifest
-durable -> generation terminal durable -> service projection.  Every
-arbitration entry point repairs an interrupted publication when it acquires
-the lock: a claim with a same-generation terminal manifest is confirmed
-from the manifest; a claim without one is revoked (it never linearized).
+Single authority: ``os.replace`` integrity is not ordering; check-then-replace cannot agree.
+``begin_generation`` installs owner; superseded writers can never overwrite current truth.
+``terminal_publication`` claims terminal ownership under OS mutual exclusion; manifest
+write + ``confirm`` happen inside same region.
+Cancel before completion wins; completion first makes later cancel lose (project, never
+rewrite); in-progress terminal claim refuses concurrent cancel promptly (fail closed).
+``generation_publication_scope``/``compare_and_set_generation`` are the only owner-checked
+generation write paths; check + write share one lock region. ``finalize_generation``
+terminalizes without manifest (crash recovery/confirmed cancellation). Ordering frozen (CONTRACT 8): claim ->
+manifest durable -> generation terminal durable -> projection. Every entry repairs
+interrupted claims: same-generation manifest confirmed, claim without one revoked
+(never linearized); kernel releases dead holder lock so crashes never wedge runs.
 """
 
 from __future__ import annotations
@@ -228,13 +193,7 @@ class GenerationLedger:
 
 @dataclass(frozen=True, slots=True)
 class TerminalClaim:
-    """Outcome of one terminal-ownership claim.
-
-    ``status`` is the winner's terminal status; ``won`` is true when this
-    claim recorded the winner (the caller may publish a manifest for it);
-    ``claimant`` names the winner class (completion/cancellation/failure/
-    partial/idempotent).
-    """
+    """Outcome of one terminal-ownership claim."""
 
     generation_id: str
     status: str
@@ -244,12 +203,7 @@ class TerminalClaim:
 
 @dataclass(slots=True)
 class PublicationScope:
-    """Terminal publication scope: manifest write + generation confirmation.
-
-    Yielded inside the arbitration lock.  The caller writes the manifest
-    with ``claim.status`` and then calls :meth:`confirm`; both happen inside
-    the same mutual-exclusion region as the ownership claim.
-    """
+    """Terminal publication scope: manifest write + generation confirmation."""
 
     claim: TerminalClaim
     confirmed: bool = False
@@ -286,12 +240,7 @@ class PublicationScope:
 
 @contextmanager
 def _generation_lock(run_root: str, *, nonblocking: bool = False) -> Iterator[bool]:
-    """Hold the run root's generation arbitration lock for one operation.
-
-    Yields ``True`` when the lock is held and ``False`` only for a
-    non-blocking request that found the lock busy (the caller decides the
-    fallback); the lock is released when the context exits.
-    """
+    """Hold the run root's generation arbitration lock for one operation."""
     root = validate_run_root(run_root)
     if _fcntl is not None:
         os.makedirs(root, exist_ok=True)
@@ -494,13 +443,7 @@ def _write_terminal_from_ledger_locked(root: str, ledger: GenerationLedger) -> N
 
 
 def _repair_locked(root: str, ledger: GenerationLedger) -> GenerationLedger:
-    """Repair an interrupted publication after acquiring the lock.
-
-    A claim is confirmed only by its generation's terminal manifest or by an
-    explicit terminal confirmation.  An unconfirmed claim with no manifest
-    never linearized: it is revoked so cancellation (or a newer generation)
-    can win deterministically.
-    """
+    """Repair an interrupted publication after acquiring the lock."""
     current = ledger.current_generation_id
     if current is None:
         return ledger
@@ -552,14 +495,7 @@ def begin_generation(
     run_id: str,
     definition_digest: str,
 ) -> GenerationLedger:
-    """Install *generation_id* as the current owner of *run_root*.
-
-    Any older generation immediately and permanently loses publication
-    authority: its later ``terminal_publication`` calls raise
-    :class:`StaleGenerationError`.  A previous generation's unconfirmed
-    claim is repaired first (confirmed from its manifest when one exists,
-    revoked otherwise).
-    """
+    """Install *generation_id* as the current owner of *run_root*."""
     for name, value in (
         ("generation_id", generation_id),
         ("run_id", run_id),
@@ -659,11 +595,7 @@ def _cancel_intent_locked(root: str, source: str, token: str | None) -> str | No
 
 
 def _visible_terminal_status(root: str) -> str | None:
-    """Return a terminal status visible without acquiring the lock.
-
-    Only used as a fail-closed refusal fast path for cancellation
-    admission; the authoritative decision still happens under the lock.
-    """
+    """Return a terminal status visible without acquiring the lock."""
     ledger = _load_ledger_file(root)
     if ledger is None or ledger.current_generation_id is None:
         return None
@@ -702,12 +634,7 @@ def compare_and_set_generation(
     expected_generation_id: str,
     record: RunGeneration,
 ) -> None:
-    """Publish *record* only while *expected_generation_id* still owns the root.
-
-    The expected-owner check and the atomic replace happen inside the same
-    mutual-exclusion region, so a stale writer can never overwrite a newer
-    generation's record.
-    """
+    """Publish *record* only while *expected_generation_id* still owns the root."""
     if not isinstance(record, RunGeneration):
         raise CorruptStateError("compare_and_set_generation requires a RunGeneration")
     if record.generation_id != expected_generation_id:
@@ -743,15 +670,7 @@ def generation_publication_scope(
     expected_generation_id: str,
     action: str = "publication",
 ) -> Iterator[None]:
-    """Hold the generation lock while one generation-owned artifact is written.
-
-    The expected-owner check and the caller's durable write happen inside the
-    same cross-process mutual-exclusion region: once a newer generation is
-    current, any older writer's publication raises
-    :class:`StaleGenerationError` before a single byte is replaced.  Callers
-    must perform the write inside the ``with`` body; a passed earlier
-    ownership check never grants authority.
-    """
+    """Hold the generation lock while one generation-owned artifact is written."""
     if not isinstance(expected_generation_id, str) or not expected_generation_id.strip():
         raise CorruptStateError("generation_publication_scope requires a generation id")
     if not isinstance(action, str) or not action.strip():
@@ -777,14 +696,7 @@ def terminal_publication(
     requested_status: str,
     cancel_probe: Callable[[], bool] | None = None,
 ) -> Iterator[PublicationScope]:
-    """Claim terminal ownership and hold the publication region.
-
-    Winner rules (CONTRACT 2): a durable cancel claim recorded before this
-    call, or a cancellation signal observed inside the lock, wins over any
-    requested completion/failure/partial.  A winner recorded earlier for the
-    same generation is returned idempotently.  A newer current generation
-    raises :class:`StaleGenerationError`.
-    """
+    """Claim terminal ownership and hold the publication region."""
     if requested_status not in TERMINAL_STATUSES:
         raise CorruptStateError(f"unknown requested terminal status {requested_status!r}")
     root = validate_run_root(run_root)
@@ -854,12 +766,7 @@ def finalize_generation(
     active_step_id: str | None = None,
     diagnostics: tuple[dict[str, Any], ...] = (),
 ) -> str:
-    """Terminalize a generation without publishing a manifest.
-
-    Used for confirmed cancellation after a crash and for failure paths
-    whose manifest publication could not complete.  Returns the winner
-    (an already-confirmed terminal status is never rewritten).
-    """
+    """Terminalize a generation without publishing a manifest."""
     if requested_status not in TERMINAL_STATUSES:
         raise CorruptStateError(f"unknown requested terminal status {requested_status!r}")
     root = validate_run_root(run_root)
@@ -891,14 +798,7 @@ def finalize_current_generation(
     active_step_id: str | None = None,
     diagnostics: tuple[dict[str, Any], ...] = (),
 ) -> str:
-    """Terminalize whichever generation currently owns *run_root*.
-
-    Same semantics as :func:`finalize_generation`, but the current owner is
-    resolved inside the same lock acquisition, so a concurrently installed
-    newer generation is never mistaken for the one being terminalized.
-    Returns ``"cancelled"`` when the run root holds no generation at all
-    (there is nothing to terminalize).
-    """
+    """Terminalize whichever generation currently owns *run_root*."""
     if requested_status not in TERMINAL_STATUSES:
         raise CorruptStateError(f"unknown requested terminal status {requested_status!r}")
     root = validate_run_root(run_root)

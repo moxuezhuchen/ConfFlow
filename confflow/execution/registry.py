@@ -105,40 +105,25 @@ class ExecutionRegistry:
         self._executors[contract.capability] = _RegisteredCapability(contract, implementation)
 
     def register_adapter(self, adapter: ExecutionAdapterSpec, implementation: Any = None) -> None:
-        """Register (or replace) the atomic execution-adapter entry.
-
-        *implementation* is the runtime input-shape resolver callable.
-        """
+        """Register (or replace) the atomic execution-adapter entry."""
         if not isinstance(adapter, ExecutionAdapterSpec):
             raise DomainError("adapter must be an ExecutionAdapterSpec")
         self._adapters[adapter.name] = _RegisteredCapability(adapter, implementation)
 
     def register_profile(self, profile: ResultProfileSpec, implementation: Any = None) -> None:
-        """Register (or replace) the atomic result-profile entry.
-
-        *implementation* is the runtime profile object.
-        """
+        """Register (or replace) the atomic result-profile entry."""
         if not isinstance(profile, ResultProfileSpec):
             raise DomainError("profile must be a ResultProfileSpec")
         self._profiles[profile.name] = _RegisteredCapability(profile, implementation)
 
     def register_check(self, check: CheckSpec, implementation: Any = None) -> None:
-        """Register (or replace) the atomic scientific-check entry.
-
-        *implementation* is the runtime check object.
-        """
+        """Register (or replace) the atomic scientific-check entry."""
         if not isinstance(check, CheckSpec):
             raise DomainError("check must be a CheckSpec")
         self._checks[check.name] = _RegisteredCapability(check, implementation)
 
     def register_recovery(self, recovery: RecoverySpec, implementation: Any = None) -> None:
-        """Register (or replace) the atomic recovery-profile entry.
-
-        *implementation* is a factory taking the step's program adapter (or
-        ``None``) and returning the runtime policy, so adapter-scoped
-        policies are always bound through this entry, never constructed
-        ad hoc by executors.
-        """
+        """Register (or replace) the atomic recovery-profile entry."""
         if not isinstance(recovery, RecoverySpec):
             raise DomainError("recovery must be a RecoverySpec")
         self._recoveries[recovery.name] = _RegisteredCapability(recovery, implementation)
@@ -334,11 +319,7 @@ class ExecutionRegistry:
         return entry.spec
 
     def resolve_check(self, name: str) -> CheckSpec:
-        """Resolve scientific check *name* to its contract.
-
-        The contract comes from the same atomic entry that carries the
-        runtime check.
-        """
+        """Resolve scientific check *name* to its contract."""
         try:
             entry = self._checks[name]
         except KeyError as exc:
@@ -353,13 +334,7 @@ class ExecutionRegistry:
         return entry.spec
 
     def resolve_recovery(self, name: str, *, adapter: Any = None) -> RecoverySpec:
-        """Resolve recovery profile *name* to its contract.
-
-        The contract comes from the same atomic entry that carries the
-        recovery factory.  The optional *adapter* is documented for the
-        implementation accessor (:meth:`recovery_implementation`); contract
-        resolution itself needs no adapter.
-        """
+        """Resolve recovery profile *name* to its contract."""
         try:
             entry = self._recoveries[name]
         except KeyError as exc:
@@ -404,24 +379,13 @@ class ExecutionRegistry:
         return self._checks[name].implementation
 
     def recovery_implementation(self, name: str, *, adapter: Any = None) -> Any:
-        """Return the runtime recovery policy from the same entry.
-
-        The entry's factory is called with the step's program adapter, so
-        adapter-scoped policies (the bond-scan rescue, which renders native
-        input through the program adapter) are genuinely bound to it.
-        Policies with no adapter scope ignore *adapter*.  An unbound
-        (``adapter=None``) scan policy declines execution, per the policy's
-        own contract.
-        """
+        """Return the runtime recovery policy from the same entry."""
         self.resolve_recovery(name, adapter=adapter)
         factory = self._recoveries[name].implementation
         return factory(adapter)
 
     def program_adapter(self, name: str) -> Any:
-        """Return the program adapter for program *name* (or alias).
-
-        Documented equivalent of :meth:`resolve_program`.
-        """
+        """Return the program adapter for program *name* (or alias)."""
         return self.resolve_program(name)
 
     def adapter_implementation(self, name: str) -> Any:

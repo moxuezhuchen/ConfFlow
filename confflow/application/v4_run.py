@@ -1,38 +1,16 @@
 #!/usr/bin/env python3
 
-"""V4 whole-workflow application runtime (V4-6, D-owned).
+"""V4 whole-workflow application runtime.
 
-:class:`V4RunApplication` is the single formal path from typed inputs to
-published results.  It owns no science: every step — calculation,
-confgen, transform, analysis — runs its assembled items through ONE
-generic lifecycle (durable :class:`BatchStepExecutor` with the
-registry-resolved executor implementation).  There are no per-capability
-branches here: capability selection lives in the execution registry
-(owner A), binding resolution in the execution layer (owner C), analysis
-item framing with wave-2 F, and producer-state gating in assembly
-materialization (owner B).  This module only orchestrates: compile,
-import-identity reconciliation, RunState lifecycle, assembly-error
-propagation, resolution through the frozen registry/binding APIs, and
-schema-conformant durable manifest publication.
-
-Pipeline::
-
-    XYZ / typed input
-        ↓  import_xyz (opaque entity IDs + arbitrated durable import map)
-    V4 WorkflowDocument
-        ↓  compile (parser + compiler)
-    ExecutionPlan
-        ↓  V4RunApplication (topological step order, RunState lifecycle)
-    WorkItem assembly → BatchStepExecutor[registry executor]
-        → item commit → verified StepResult publication → RunState
-    RunResultManifest (schema-conformant, durably written)
-    JobDesk
-
-Resume is item-backed: the published step file is never an early return.
-Every step re-assembles its current items, propagates assembly errors
-scoped to the step, and lets the durable store decide per-item reuse
-(definition/input/environment/provenance/artifact mismatch fails
-closed).  Completed items are never re-executed.
+V4RunApplication is the single formal path from typed inputs to published results; owns no science.
+All steps share one durable BatchStepExecutor lifecycle with registry-resolved executors; no
+per-capability branches (capability selection in execution registry, binding in execution layer,
+analysis framing in wave-2 F, producer-state gating in assembly materialization).
+Orchestrates compile, import-identity reconciliation, RunState lifecycle, assembly errors,
+frozen registry/binding resolution, and schema-conformant manifest publication.
+Resume is item-backed: step file never early-returns; each step re-assembles items, propagates
+step-scoped assembly errors, reuses per-item only on definition/input/environment/provenance/
+artifact match (mismatch fails closed); completed items never re-executed.
 """
 
 from __future__ import annotations
@@ -106,18 +84,7 @@ def import_xyz(
     source_name: str = "<input>",
     entity_ids: tuple[str, ...] | list[str] | None = None,
 ) -> StructureSet:
-    """Parse XYZ text into a :class:`StructureSet` with opaque identities.
-
-    Fresh imports mint independent opaque entity IDs (UUID hex): two
-    imports of equal geometry never share identity, and list position is
-    never identity.  Pass ``entity_ids`` to bind user-supplied entities
-    explicitly; the count must match the block count exactly and every id
-    must be unique.  ``source_name`` is provenance only.
-
-    Durable identity across resumes comes from the run-root import map
-    (see :mod:`confflow.persistence.imports`), reconciled by the
-    application, never from these minted IDs alone.
-    """
+    """Parse XYZ text into a :class:`StructureSet` with opaque identities."""
     if not isinstance(text, str) or not text.strip():
         raise DomainError(f"XYZ input from {source_name!r} must be non-empty text")
     blocks = _split_xyz_blocks(text)
@@ -387,13 +354,7 @@ def _apply_declared_input_topology(name: str, structures: Any, declaration: Any)
 
 
 def _stamp_each_entity_grouping(name: str, structures: Any) -> StructureSet:
-    """Derive group identity for an ``each_entity`` input.
-
-    Every entity becomes the root of its own reaction-group lineage:
-    ``group_key = entity id`` when the record carries no explicit group key
-    (an explicit producer/user group key is never overwritten).  The entity
-    id is the opaque import identity — never a list position or filename.
-    """
+    """Derive group identity for an ``each_entity`` input."""
     from dataclasses import replace as _replace
 
     stamped: list[StructureRecord] = []
@@ -410,12 +371,7 @@ def _stamp_each_entity_grouping(name: str, structures: Any) -> StructureSet:
 
 
 def _save_run_state_fenced(run_root: str, state: RunState, generation_id: str) -> None:
-    """Write the step lifecycle state under the generation publication fence.
-
-    The expected-owner check and the durable write share one cross-process
-    arbitration region, so a superseded generation can never overwrite the
-    current generation's step lifecycle truth.
-    """
+    """Write the step lifecycle state under the generation publication fence."""
     with arbitration.generation_publication_scope(
         run_root,
         expected_generation_id=generation_id,
@@ -437,22 +393,7 @@ class V4RunApplication:
         return self._registry if self._registry is not None else default_registry()
 
     def run(self, request: V4RunRequest) -> V4RunReport:
-        """Compile, execute, publish, and summarize one V4 workflow.
-
-        A generation begins once the run root accepts this definition
-        (compile + run-state definition reconciliation), and from that point
-        on the invocation is durable current-generation truth: a ``running``
-        record is published before any step executes, and every terminal
-        path — success, partial, cancelled, runtime failure, blocked
-        downstream step, assembly error — publishes the generation's
-        terminal truth (manifest when possible, generation record always)
-        before returning or re-raising.  A superseded completed manifest can
-        therefore never masquerade as current.  Validation failures that
-        never became a generation (uncompilable document, a different
-        definition aimed at an occupied run root) leave the run root's last
-        valid terminal truth untouched: history is never reinterpreted
-        under a rejected digest.
-        """
+        """Compile, execute, publish, and summarize one V4 workflow."""
         run_root = validate_run_root(request.run_root)
         os.makedirs(run_root, exist_ok=True)
         run_id = os.path.basename(request.run_root.rstrip(os.sep)) or "run"
@@ -636,14 +577,7 @@ class V4RunApplication:
         context: _GenerationContext,
         error: BaseException,
     ) -> None:
-        """Best-effort current-generation terminal truth for a failed run.
-
-        Publishes the failure manifest for the completed partial steps
-        (when the plan is known) and always publishes the terminal
-        generation record with the failure location.  Publication problems
-        are suppressed here: the original exception is the authority and
-        must never be masked by a secondary reporting failure.
-        """
+        """Best-effort current-generation terminal truth for a failed run."""
         failure = FrozenDict(
             {
                 "type": type(error).__name__,
@@ -1010,19 +944,7 @@ class V4RunApplication:
         terminal_failure: dict[str, Any] | None = None,
         terminal_active_step_id: str | None = None,
     ) -> tuple[FrozenDict, str]:
-        """Claim terminal ownership, publish the manifest, confirm the winner.
-
-        The terminal claim, the manifest's atomic replace, and the terminal
-        generation confirmation all happen inside ONE arbitration region
-        (CONTRACT 4/6): a durable cancel claim recorded before the claim
-        makes cancellation the winner and no completed manifest is ever
-        written; a newer current generation raises
-        :class:`StaleGenerationError` before any byte is replaced.
-
-        Returns ``(manifest, effective_status)`` where ``effective_status``
-        is the arbitration winner (``completed``/``partial``/``failed``/
-        ``cancelled``), which may differ from the requested *status*.
-        """
+        """Claim terminal ownership, publish the manifest, confirm the winner."""
         completed_step_ids = tuple(
             item.step_id for item in step_results if item.status.value == "completed"
         )
@@ -1063,32 +985,7 @@ class V4RunApplication:
         generation_id: str,
         run_inputs: Any = None,
     ) -> FrozenDict:
-        """Build, validate, and atomically write one run-result manifest.
-
-        Every step entry carries the real published digest re-discovered
-        from durable storage (never a status string) plus the planned-step
-        semantic digest from the validated plan fingerprint, schema-exact
-        counts and diagnostics, and only artifacts with verified sha256
-        checksums and portable run-relative locators.  Top-level ``results``
-        carries the authoritative ResultRef universe: one entry per real
-        emitted scientific result of the current generation plus one entry
-        per run-input reference.  R2.3a: ``analyses`` is always empty (the
-        ``analysis`` executor and its reaction-profile grouping are
-        retired).  The manifest is validated against
-        the actual producer schema and atomically written to
-        ``run_root/run_result.json`` (directory fsynced); the in-memory
-        report mirrors the durable bytes.
-
-        This is a pure writer: callers MUST already hold the terminal
-        publication scope (see :meth:`_publish_manifest`), so the replace
-        can never race a competing generation's publication.
-
-        Projection delegates to the producer-owned helpers
-        (:mod:`confflow.producer.run_result`) so there is exactly one
-        manifest shape.  The planned-step semantic map is read from the
-        validated plan only (no second capability table); per-step
-        provenance already carries the same fingerprint value as fallback.
-        """
+        """Build, validate, and atomically write one run-result manifest."""
         import jsonschema
 
         import confflow
@@ -1170,13 +1067,7 @@ def _evaluate_run_status(statuses: tuple[StepStatus, ...]) -> str:
 
 
 def _validate_unresolved_input(*, run_root: str, input_name: str, current: Any) -> Any:
-    """Validate an input without raw source bytes against its snapshot.
-
-    The first run persists the ordered entity IDs plus geometry digests;
-    later runs must present the same entities in the same order.  Freshly
-    minted UUIDs never match: callers must either reuse their typed
-    records or supply the raw source text so identity reloads durably.
-    """
+    """Validate an input without raw source bytes against its snapshot."""
     from ..domain.structure import StructureSet
 
     if not isinstance(current, StructureSet):
@@ -1248,12 +1139,7 @@ def _load_input_snapshot(*, run_root: str, input_name: str) -> dict[str, Any] | 
 def _extend_materialized(
     plan: Any, planned: Any, materialized: MaterializedOutputs, result: Any
 ) -> MaterializedOutputs:
-    """Add one step result to the materialized producer outputs.
-
-    The real step status plus completion provenance travels on the
-    ``StepOutputs`` record (owner B's materialization), so downstream
-    assembly gates on the actual producer outcome.
-    """
+    """Add one step result to the materialized producer outputs."""
     steps = dict(materialized.steps)
     steps[result.step_id] = StepOutputs(
         step_id=result.step_id,

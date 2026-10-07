@@ -344,12 +344,7 @@ _EXECUTOR_BLOCK_BY_CAPABILITY = {
 def _build_scientific(
     step: StepModel,
 ) -> tuple[ScientificDefinition | None, bool, list[Diagnostic]]:
-    """Return (scientific, is_known_executor, diagnostics).
-
-    The executor-capability vocabulary itself is validated semantically; this
-    function only maps executor-specific YAML blocks onto the canonical
-    scientific definition.
-    """
+    """Return (scientific, is_known_executor, diagnostics)."""
     diagnostics: list[Diagnostic] = []
     field_path = f"steps.{step.id}"
     blocks = {

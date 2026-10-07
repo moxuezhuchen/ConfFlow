@@ -2,20 +2,13 @@
 
 """V4 durable persistence: per-item truth for resume and reuse.
 
-Authority hierarchy (frozen)::
-
-    WorkItemStore  = per-item execution / attempts / resume / reuse truth
-    StepResult     = published semantic output truth
-    RunState       = workflow / step lifecycle truth
-    Artifacts      = durable external / native file objects
-
-Filenames, directory names, log existence, and ``result.xyz``-style side
-channels are never semantic truth.
-
-This package imports only ``confflow.domain`` plus the standard library.
-The executor side (``confflow.execution``) depends on this package, never the
-reverse.  ``contracts.py`` is main-agent owned and frozen; implementation
-modules are owned by their respective workstreams.
+Authority hierarchy (frozen): WorkItemStore = per-item execution/attempts/resume/reuse
+truth; StepResult = published semantic output truth; RunState = workflow/step lifecycle
+truth; Artifacts = durable file objects.
+Filenames, directory names, log existence, and ``result.xyz``-style side channels are
+never semantic truth. Imports only ``confflow.domain`` + stdlib; executor depends here,
+never the reverse. ``contracts.py`` is frozen (main-agent owned); implementation modules
+have their own workstream owners.
 """
 
 from __future__ import annotations

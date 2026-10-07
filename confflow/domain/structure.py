@@ -266,12 +266,7 @@ class StructureRecord:
 
     @property
     def geometry_digest(self) -> str:
-        """Return the deterministic digest of the geometry content.
-
-        The digest covers atom order, coordinates, and the canonical unit only.
-        Identity, provenance, charge, multiplicity, and metadata are excluded
-        so that identical geometries share content identity.
-        """
+        """Return the deterministic digest of the geometry content."""
         return typed_digest(
             GEOMETRY_DIGEST_KIND,
             {
@@ -282,17 +277,7 @@ class StructureRecord:
         )
 
     def scientific_payload(self) -> dict[str, Any]:
-        """Return this structure's contribution to a work-item digest.
-
-        The payload carries everything that can change computed results
-        without changing the geometry: geometry content, charge,
-        multiplicity, and — only when declared — the topology correction
-        and the authoritative persisted working graph. Entity id and
-        provenance are deliberately excluded so that identical scientific
-        content re-imported under new entity ids keeps the same reuse
-        identity. Records without a patch and without a persisted graph
-        keep the exact legacy shape so legacy digests never move.
-        """
+        """Return this structure's contribution to a work-item digest."""
         payload: dict[str, Any] = {
             "geometry_digest": self.geometry_digest,
             "charge": self.charge,
@@ -307,18 +292,7 @@ class StructureRecord:
         return payload
 
     def reuse_payload(self, effective: Any | None = None) -> dict[str, Any]:
-        """Return the provenance-aware reuse payload for work-item digests.
-
-        Unlike :meth:`scientific_payload` (pure content equality), the reuse
-        payload pins the entity-relevant semantic axes required by the V4
-        repair freeze: entity id, geometry content, effective
-        charge/multiplicity/freeze, group key, role, parent ids, and lineage
-        root.  Locators, scheduler placement, and GUI metadata stay excluded.
-        *effective* may be an
-        :class:`~confflow.workflow.v4.scientific.EffectiveScientificParameters`
-        record; when omitted the record's inherent charge/multiplicity and no
-        freeze are used.
-        """
+        """Return the provenance-aware reuse payload for work-item digests."""
         if effective is None:
             charge = self.charge
             multiplicity = self.multiplicity
@@ -348,21 +322,13 @@ class StructureRecord:
         return payload
 
     def has_same_content(self, other: StructureRecord) -> bool:
-        """Return whether *other* has identical scientific content.
-
-        Content identity compares geometry, charge, and multiplicity; entity
-        ids, parentage, roles, and metadata are ignored.
-        """
+        """Return whether *other* has identical scientific content."""
         return isinstance(other, StructureRecord) and (
             self.scientific_payload() == other.scientific_payload()
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a canonical, JSON-compatible representation.
-
-        ``topology_patch`` and ``working_topology`` are omitted when
-        absent so legacy records keep their exact legacy representation.
-        """
+        """Return a canonical, JSON-compatible representation."""
         payload: dict[str, Any] = {
             "id": self.id,
             "atoms": list(self.atoms),

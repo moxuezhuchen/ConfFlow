@@ -324,13 +324,7 @@ class ScientificResult:
 
     @property
     def identity_digest(self) -> str | None:
-        """Return the producer-scoped identity digest, or ``None`` for legacy.
-
-        Identity covers the stable ``result_id`` plus producer context
-        (step, work item, subject, kind, provenance): distinct producers,
-        methods, or subjects are distinguishable even when values match.
-        The value itself never participates beyond the kind discriminator.
-        """
+        """Return the producer-scoped identity digest, or ``None`` for legacy."""
         if self.result_id is None:
             return None
         return typed_digest(
@@ -351,12 +345,7 @@ class ScientificResult:
         return self.result_id is not None
 
     def digest_payload(self) -> dict[str, Any]:
-        """Return this result's contribution to a work-item digest.
-
-        The value digest stays value-only; identity (``result_id``) and
-        producer provenance are scientifically relevant and participate
-        separately so same values from different sources digest differently.
-        """
+        """Return this result's contribution to a work-item digest."""
         return {
             "kind": self.kind,
             "value_digest": self.value_digest,
@@ -450,15 +439,7 @@ class ResultSet:
         self,
         ids: tuple[str, ...] | list[str],
     ) -> tuple[ResultSet, tuple[str, ...], tuple[str, ...]]:
-        """Select results by independent ``result_id`` references.
-
-        Each requested id is resolved independently: zero candidates for
-        one id is ``missing``; more than one candidate for the *same*
-        requested id is ``ambiguous`` (duplicate production ids fail).
-        Distinct requested ids may each resolve to one result, so a MANY
-        port may legitimately select several ids.  No global
-        exactly-one-result requirement is imposed here.
-        """
+        """Select results by independent ``result_id`` references."""
         requested = tuple(ids)
         selected: list[ScientificResult] = []
         missing: list[str] = []
@@ -492,13 +473,7 @@ class ResultSet:
         subject_structure_id: str | None = None,
         result_id: str | None = None,
     ) -> ScientificResult:
-        """Return the uniquely selected result or raise ``InvalidResultError``.
-
-        Zero candidates and multiple ambiguous candidates both fail: callers
-        must provide a ``result_id`` (or equivalent selector) when several
-        results share kind/subject.  Positional first-match is never a
-        substitute for unique selection.
-        """
+        """Return the uniquely selected result or raise ``InvalidResultError``."""
         candidates = [r for r in self.results if r.kind == kind]
         if subject_structure_id is not None:
             candidates = [r for r in candidates if r.subject_structure_id == subject_structure_id]

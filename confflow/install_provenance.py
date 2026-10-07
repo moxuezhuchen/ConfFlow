@@ -1,26 +1,15 @@
 #!/usr/bin/env python3
 """Install-side provenance for ConfFlow releases.
 
-The producer's wheel cannot be its own source of truth for its content
-hash. ConfFlow instead records three layers of provenance:
-
-* *wheel-internal build provenance* — ``confflow.__build__.COMMIT`` and
-  ``DIRTY`` are set by the wheel build hook (``setup.py``) and never
-  describe the wheel file itself.
-* *external release provenance* — the release workflow writes
-  ``SHA256SUMS`` and (later) an artifact attestation next to the wheel
-  in ``dist/``. These are *outside* the wheel.
-* *target venv install provenance* — the deployer creates a fresh
-  ``<sys.prefix>/share/confflow/install-provenance.json`` after
-  verifying the wheel digest against ``SHA256SUMS`` (and, in production,
-  the approved attestation). This module is that record's owner.
-
-The capability payload reads ``install_provenance.json`` instead of any
-wheel-baked digest. When the file is missing or does not match the
-expected schema, the payload falls back to the v4 diagnostic shape
-(``producer.wheel = {"filename": null, "sha256": null}``,
-``producer.install_provenance.status = "missing"`` and a machine-readable
-``reason_code``). JobDesk's production gate treats every non-``verified``
+Wheel cannot attest its own content hash; provenance is three-layered:
+wheel-internal build provenance (`confflow.__build__`), external release
+provenance (`SHA256SUMS`/attestation beside wheel in `dist/`), and target
+venv record (`<sys.prefix>/share/confflow/install-provenance.json`,
+owned here) written after digest verification.
+Capability payload reads `install-provenance.json`, never a wheel-baked
+digest. Missing/invalid file falls back to v4 diagnostic shape
+(`producer.wheel` nulls, `install_provenance.status="missing"`,
+machine-readable `reason_code`); JobDesk treats every non-`verified`
 status as candidate-only diagnostic.
 """
 
@@ -141,12 +130,7 @@ def read_sha256sums(path: str | os.PathLike[str]) -> dict[str, str]:
 
 @dataclass(frozen=True)
 class CapabilityProvenanceDigest:
-    """The v4 capability view of the install provenance.
-
-    Either ``status == "verified"`` (``reason_code`` must be ``None`` and
-    wheel filename/sha are non-empty), or a non-verified diagnostic
-    payload that JobDesk rejects as production input.
-    """
+    """The v4 capability view of the install provenance."""
 
     status: str
     reason_code: str | None
@@ -157,17 +141,7 @@ class CapabilityProvenanceDigest:
 def read_install_provenance(
     sys_prefix: str | None = None,
 ) -> tuple[CapabilityProvenanceDigest, list[str]]:
-    """Return ``(digest, errors)`` for the runtime capability probe.
-
-    ``errors`` is empty when ``status == "verified"``. The diagnostic
-    shape for any non-verified status is strictly the v4 contract:
-
-    * ``wheel_filename`` / ``wheel_sha256`` are ``None`` (or any value
-      when ``status == "verified"`` and provenance explicitly states
-      the chosen wheel),
-    * ``reason_code`` is a single machine-readable token,
-    * no secret, no environment variable, no full remote output.
-    """
+    """Return ``(digest, errors)`` for the runtime capability probe."""
     path = install_provenance_path(sys_prefix)
     if not path.exists():
         return (

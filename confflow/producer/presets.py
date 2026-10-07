@@ -61,10 +61,7 @@ PRESET_TYPES: tuple[str, ...] = tuple(sorted(_PRESET_TABLE))
 
 
 def parse_preset_ref(ref: Any) -> tuple[str, str]:
-    """Split a preset reference into ``(name, version)``.
-
-    Mapping references reject unknown keys.
-    """
+    """Split a preset reference into ``(name, version)``."""
     if isinstance(ref, dict):
         unknown = sorted(set(ref) - {"name", "type", "preset", "version"})
         if unknown:

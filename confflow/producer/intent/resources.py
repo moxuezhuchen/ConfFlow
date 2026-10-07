@@ -223,12 +223,7 @@ def _apply_machine_profile(
 def _apply_checkpoints(
     wire_document: dict[str, Any], intents: Mapping[str, dict[str, Any]]
 ) -> None:
-    """Wire semantic checkpoint intents through the checkpoints lane.
-
-    Private authoring keys are stripped from every step before the helper
-    validates, and each edge applies to the fresh document the previous
-    edge returned, so multiple edges never leak or go stale.
-    """
+    """Wire semantic checkpoint intents through the checkpoints lane."""
     try:
         from ..checkpoints import wire_checkpoint_reuse
     except ImportError as exc:

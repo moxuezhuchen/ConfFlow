@@ -73,26 +73,7 @@ def build_intent_registry(
     *,
     execution_registry: Any = None,
 ) -> IntentRegistry:
-    """Build a locally immutable registry from explicit descriptors.
-
-    Rejects duplicate keys (conflict), unknown executors, entries
-    without a handler, and empty/duplicate fragment-key declarations.
-    Only an explicit non-empty ``wire_block_key`` outside ``fragment_keys``
-    is rejected (empty derives from ``fragment_keys[0]`` so C2-era custom
-    descriptors stay constructible); per-executor effective wire-block keys
-    must agree (fail-closed at assembly).  Rejected-key entries must be
-    non-empty strings (empty tuple = no placement restriction).  No import
-    side effects, no global state.
-
-    L1-A3a explicit channel: when ``execution_registry`` is given, each
-    descriptor executor is verified against that same
-    :class:`ExecutionRegistry`'s actually registered contract (including
-    the already-registered ``analysis`` capability) instead of the
-    builtin 3-item table; no second hardcoded table is built here.
-    When omitted, the legacy 3-allowed check and unknown-executor
-    message bytes are preserved verbatim.  The given instance (or
-    ``None``) is stored verbatim on the returned registry.
-    """
+    """Build a locally immutable registry from explicit descriptors."""
     seen: dict[str, CapabilityDescriptor] = {}
     for descriptor in descriptors:
         if not isinstance(descriptor, CapabilityDescriptor):
@@ -191,13 +172,7 @@ def build_intent_registry(
 
 
 def _effective_wire_block_key(descriptor: CapabilityDescriptor) -> str:
-    """Return the effective wire block key (explicit or ``fragment_keys[0]``).
-
-    Strict: missing ``wire_block_key`` derives compat ``fragment_keys[0]``;
-    present-but-non-string or explicit-outside-``fragment_keys`` raises
-    fail-closed (never silently derived). Missing/invalid ``fragment_keys``
-    also raises.
-    """
+    """Return the effective wire block key (explicit or ``fragment_keys[0]``)."""
     try:
         explicit = getattr(descriptor, "wire_block_key", "")
     except Exception as exc:
@@ -237,12 +212,7 @@ def _effective_wire_block_key(descriptor: CapabilityDescriptor) -> str:
 
 
 def _check_executor_wire_consistency(entries: Mapping[str, CapabilityDescriptor]) -> None:
-    """Fail closed when one executor maps to divergent wire-block keys.
-
-    Declared strategy: same-executor entries must share one effective key
-    (explicit or derived).  Divergent metadata is an assembly error, never a
-    silent compiler choice.
-    """
+    """Fail closed when one executor maps to divergent wire-block keys."""
     by_executor: dict[str, set[str]] = {}
     for descriptor in entries.values():
         by_executor.setdefault(descriptor.executor, set()).add(
@@ -256,15 +226,7 @@ def _check_executor_wire_consistency(entries: Mapping[str, CapabilityDescriptor]
 
 
 def _effective_seed_block_keys(descriptor: Any) -> tuple[str, ...]:
-    """Return the effective seed block keys for one descriptor (strict).
-
-    Explicit non-empty ``seed_block_keys`` wins verbatim after validation
-    (non-string/duplicate/outside-``fragment_keys`` raises fail-closed).
-    Missing attribute derives the builtin compat default
-    (calculation/confgen ``(fragment_keys[0],)``, others ``()``).
-    Present-but-invalid (non-iterable, non-string items) raises instead of
-    pretending undeclared.
-    """
+    """Return the effective seed block keys for one descriptor (strict)."""
     try:
         has_attr = hasattr(descriptor, "seed_block_keys")
     except Exception as exc:
@@ -329,12 +291,7 @@ def _effective_seed_block_keys(descriptor: Any) -> tuple[str, ...]:
 
 
 def _check_executor_seed_consistency(entries: Mapping[str, CapabilityDescriptor]) -> None:
-    """Fail closed when one executor maps to divergent seed block keys.
-
-    Same-executor entries must share one effective seed key tuple.
-    Divergent metadata is an assembly error, never a silent sorted-first
-    compiler choice.
-    """
+    """Fail closed when one executor maps to divergent seed block keys."""
     by_executor: dict[str, set[tuple[str, ...]]] = {}
     for descriptor in entries.values():
         by_executor.setdefault(descriptor.executor, set()).add(
@@ -349,12 +306,7 @@ def _check_executor_seed_consistency(entries: Mapping[str, CapabilityDescriptor]
 
 
 def _recipe_hook_pair(descriptor: Any) -> tuple[Any, Any]:
-    """Return the (requires_assignment, patch_recipe_step) pair (strict).
-
-    Missing attributes derive ``None`` for C2-era compat; present-but-invalid
-    (non-callable, non-None) raises fail-closed and never collapses into a
-    silent skip.  Unreadable attributes also raise.
-    """
+    """Return the (requires_assignment, patch_recipe_step) pair (strict)."""
     try:
         has_req = hasattr(descriptor, "requires_assignment")
         has_patch = hasattr(descriptor, "patch_recipe_step")
@@ -378,14 +330,7 @@ def _recipe_hook_pair(descriptor: Any) -> tuple[Any, Any]:
 def _check_executor_recipe_hooks_consistency(
     entries: Mapping[str, CapabilityDescriptor],
 ) -> None:
-    """Fail closed on divergent non-None recipe hook pairs (b1, ROOT-relaxed).
-
-    ``None``/``None`` is a legal C2-era declaration ("no hooks for this card")
-    and coexists with set pairs for the same executor (old custom probes stay
-    constructible; query returns the set pair).  Failure only when two
-    distinct non-None pairs exist for one executor, or when a single
-    descriptor sets exactly one of the two hooks (must be set together).
-    """
+    """Fail closed on divergent non-None recipe hook pairs (b1, ROOT-relaxed)."""
     by_executor: dict[str, set[tuple[int, int]]] = {}
     for descriptor in entries.values():
         req, patch = _recipe_hook_pair(descriptor)
@@ -404,12 +349,7 @@ def _check_executor_recipe_hooks_consistency(
 
 
 def _role_block_of(descriptor: Any) -> Any:
-    """Return the role-card block hook (strict, callable-or-None).
-
-    Missing attribute derives ``None`` for C2-era compat; present-but-invalid
-    (non-callable, non-None) raises fail-closed and never collapses into a
-    silent skip.  Unreadable attributes also raise.
-    """
+    """Return the role-card block hook (strict, callable-or-None)."""
     try:
         has_attr = hasattr(descriptor, "apply_role_card_block")
     except Exception as exc:
@@ -426,13 +366,7 @@ def _role_block_of(descriptor: Any) -> Any:
 def _check_executor_role_block_consistency(
     entries: Mapping[str, CapabilityDescriptor],
 ) -> None:
-    """Fail closed on divergent non-None role-card block hooks.
-
-    ``None`` is a legal declaration ("no role-card science for this card")
-    and coexists with a set hook for the same executor (C2-era custom cards
-    stay constructible; query returns the set hook).  Failure only when two
-    distinct non-None hooks exist for one executor.
-    """
+    """Fail closed on divergent non-None role-card block hooks."""
     by_executor: dict[str, set[int]] = {}
     for descriptor in entries.values():
         hook = _role_block_of(descriptor)
@@ -445,16 +379,7 @@ def _check_executor_role_block_consistency(
 
 
 def role_block_for_executor(registry: Any, executor: str) -> Any | None:
-    """Return the consistent role-card block hook for *executor* (generic).
-
-    Queries by wire ``executor`` (never by guessed card type).  ``None``
-    means "no non-None hook declared for this executor" (today
-    confgen/transform all-None; C2-era ``None`` coexisting with a set
-    default) or "no entry for this executor" (unknown-executor analogue of
-    the old non-calculation early return) -- all skip.  Divergent non-None
-    hooks and present-but-non-callable declarations raise fail-closed and
-    never collapse into ``None``.
-    """
+    """Return the consistent role-card block hook for *executor* (generic)."""
     try:
         entries = getattr(registry, "entries", None)
     except Exception as exc:
@@ -485,17 +410,7 @@ def role_block_for_executor(registry: Any, executor: str) -> Any | None:
 
 
 def recipe_hooks_for_executor(registry: Any, executor: str) -> tuple[Any, Any] | None:
-    """Return the consistent recipe hook pair for *executor* (generic query).
-
-    Queries by wire ``executor`` (never by guessed card type, so recipe base
-    steps without ``_card_type`` resolve).  ``None`` means "no non-None hooks
-    declared for this executor" (today confgen/transform all-None; C2-era
-    custom cards with ``None`` coexisting with set defaults) or "no entry
-    for this executor" (unknown-executor analogue of the old non-block early
-    return) -- all skip, preserving old bytes.  Divergent non-None pairs and
-    partial (one-set/one-None) descriptors raise fail-closed and never
-    collapse into ``None``.
-    """
+    """Return the consistent recipe hook pair for *executor* (generic query)."""
     try:
         entries = getattr(registry, "entries", None)
     except Exception as exc:
@@ -531,15 +446,7 @@ def recipe_hooks_for_executor(registry: Any, executor: str) -> tuple[Any, Any] |
 
 
 def rejected_step_keys_for_legacy_fallback(executor: str) -> frozenset[str]:
-    """Return the builtin rejected set for the legacy 4-arg fallback.
-
-    Explicit assembly point owning the old compiler branches: the three
-    builtin ``REJECTED_STEP_KEYS`` constants are read here, never in the
-    compiler.  Unknown executors yield an empty frozenset (old empty-set
-    analogue).  Internal module import errors and invalid declared metadata
-    propagate fail-closed and are never swallowed into an empty set (which
-    would silently drop science).
-    """
+    """Return the builtin rejected set for the legacy 4-arg fallback."""
     from .calculation import REJECTED_STEP_KEYS as _CALC_REJ
     from .confgen import REJECTED_STEP_KEYS as _CONF_REJ
     from .transform import REJECTED_STEP_KEYS as _TR_REJ
@@ -560,16 +467,7 @@ def rejected_step_keys_for_legacy_fallback(executor: str) -> frozenset[str]:
 
 
 def seed_block_keys_for_registry(registry: Any) -> tuple[str, ...]:
-    """Return the union seed block names declared by *registry* (ordered).
-
-    Strict: each descriptor's effective seed keys are read fail-closed
-    (declared-bad raises, old missing-field derives compat). Per-executor
-    divergence raises instead of silently merging. Empty registry (or
-    ``None``) falls back to the builtin default union so the compiler stays
-    usable without extra context. Order is the builtin declaration order
-    (``calculation`` then ``confgen``) to preserve the historical loop
-    order; unknown keys append sorted.
-    """
+    """Return the union seed block names declared by *registry* (ordered)."""
     try:
         entries = getattr(registry, "entries", None)
     except Exception as exc:
@@ -616,15 +514,7 @@ def seed_block_keys_for_registry(registry: Any) -> tuple[str, ...]:
 
 
 def wire_block_key_for_executor(registry: Any, executor: str) -> str | None:
-    """Return the consistent wire-block key for *executor* (fail-closed).
-
-    Queries the registry by executor (never by guessed card type, so recipe
-    base steps without ``_card_type`` resolve). No entry for *executor*
-    falls back to the builtin default (``FRAGMENT_KEYS_BY_EXECUTOR`` first
-    item, owned by this assembly point); unknown executors yield ``None``.
-    Same-executor divergence raises instead of silently picking
-    ``sorted-first`` or the builtin default.
-    """
+    """Return the consistent wire-block key for *executor* (fail-closed)."""
     try:
         entries = getattr(registry, "entries", None)
     except Exception as exc:
@@ -671,15 +561,7 @@ SEED_BLOCK_KEYS_BY_EXECUTOR: dict[str, tuple[str, ...]] = {
 
 
 def build_default_intent_registry() -> IntentRegistry:
-    """Assemble the production default registry (14 builtin cards, explicit).
-
-    Three legacy payload builders stay verbatim (``_wire_*`` keep their old
-    return shape and ``is``/``__module__`` compat); the registry wires the
-    new fragment adapters (``*_fragment``) that return the complete
-    capability-owned fragment.  Function-local lazy imports only, no
-    top-level handler import, no self-registration.
-    No test-local keys are referenced here.
-    """
+    """Assemble the production default registry (14 builtin cards, explicit)."""
     from ...cards import CARD_TYPES, get_card
     from .calculation import REJECTED_STEP_KEYS as _CALC_REJECTED
     from .calculation import apply_role_card_block as _calc_role_block

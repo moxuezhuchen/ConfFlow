@@ -2,26 +2,16 @@
 
 """Explicit reuse and compatibility decisions for V4 durable execution (V4-3).
 
-This module is pure: it performs no SQLite, filesystem, or process access. It
-compares the digest axes of a freshly computed work item against the durable
-record of a stored work item and returns one explicit
-:class:`~confflow.persistence.contracts.ReuseDecision`.
-
-Frozen rule order in :func:`evaluate_reuse`:
-
-1. No durable record (``stored``/status missing or unknown) never reuses.
-2. ``PENDING`` never reuses.
-3. ``RUNNING`` never launches a duplicate: a definitely-dead owner recovers
-   the abandoned claim, any other verdict blocks on the uncertain owner.
-4. ``CANCELLED`` never auto-relaunches; only an explicit retry may rerun it.
-5. Terminal ``COMPLETED``/``FAILED``/``INTERRUPTED`` records run the
-   compatibility chain, first mismatch winning: producer provenance,
-   environment digest, step semantic digest, bound-input artifact checksums,
-   work-item digest, then stored-artifact verification.
-
-Presentation facts (labels, GUI annotations), scheduler width, and absolute
-binary paths are not fields of :class:`ReuseInputs`, so they can never
-invalidate reuse by construction.
+Pure: no SQLite, filesystem, or process access; compares fresh vs stored digest axes
+into ``ReuseDecision``. Frozen rule order in ``evaluate_reuse``:
+1. No durable record never reuses. 2. ``PENDING`` never reuses.
+3. ``RUNNING`` never duplicates: definitely-dead recovers, otherwise blocks on owner.
+4. ``CANCELLED`` never auto-relaunches; explicit retry only.
+5. Terminal ``COMPLETED``/``FAILED``/``INTERRUPTED`` run compatibility chain, first
+mismatch wins: provenance, environment digest, step semantic digest, bound-input
+artifact checksums, work-item digest, then artifact verification.
+Labels, GUI annotations, scheduler width, absolute binary paths are not
+``ReuseInputs`` fields, so never invalidate reuse by construction.
 """
 
 from __future__ import annotations
@@ -188,21 +178,7 @@ def build_producer_provenance(
 
 
 def _normalize_status(value: StoredWorkItemStatus | str | None) -> StoredWorkItemStatus | None:
-    """Coerce *value* to a known status, or return ``None`` when unknown.
-
-    Parameters
-    ----------
-    value : StoredWorkItemStatus | str | None
-        Durable status from the store.  Raw strings are coerced through the
-        enum; unrecognized strings (such as ``"pending-missing"``) and other
-        unexpected types collapse to ``None`` so the caller fails open to a
-        fresh execution instead of reusing blindly.
-
-    Returns
-    -------
-    StoredWorkItemStatus | None
-        The known status, or ``None`` when there is no durable record.
-    """
+    """Coerce *value* to a known status, or return ``None`` when unknown."""
     if value is None or isinstance(value, StoredWorkItemStatus):
         return value
     if isinstance(value, str):
@@ -214,20 +190,7 @@ def _normalize_status(value: StoredWorkItemStatus | str | None) -> StoredWorkIte
 
 
 def _normalize_verdict(value: OwnerVerdict | str | None) -> OwnerVerdict | None:
-    """Coerce *value* to a known owner verdict, or return ``None``.
-
-    Parameters
-    ----------
-    value : OwnerVerdict | str | None
-        Liveness verdict for an abandoned ``RUNNING`` claim.  Unrecognized
-        values collapse to ``None``, which takes the uncertain-owner path
-        and never launches a duplicate.
-
-    Returns
-    -------
-    OwnerVerdict | None
-        The known verdict, or ``None`` when liveness is unproven.
-    """
+    """Coerce *value* to a known owner verdict, or return ``None``."""
     if value is None or isinstance(value, OwnerVerdict):
         return value
     if isinstance(value, str):
@@ -239,20 +202,7 @@ def _normalize_verdict(value: OwnerVerdict | str | None) -> OwnerVerdict | None:
 
 
 def _provenance_diff(current: FrozenDict, stored: FrozenDict) -> tuple[str, ...]:
-    """Return the sorted union of provenance keys whose values differ.
-
-    Parameters
-    ----------
-    current : FrozenDict
-        Freshly computed producer provenance.
-    stored : FrozenDict
-        Durably recorded producer provenance.
-
-    Returns
-    -------
-    tuple[str, ...]
-        Sorted differing key names.
-    """
+    """Return the sorted union of provenance keys whose values differ."""
     current_map = current.thaw()
     stored_map = stored.thaw()
     differing = sorted(
@@ -264,18 +214,7 @@ def _provenance_diff(current: FrozenDict, stored: FrozenDict) -> tuple[str, ...]
 
 
 def _status_label(value: StoredWorkItemStatus | str | None) -> str | None:
-    """Return the durable status name for decision details.
-
-    Parameters
-    ----------
-    value : StoredWorkItemStatus | str | None
-        Raw stored status as passed to :func:`evaluate_reuse`.
-
-    Returns
-    -------
-    str | None
-        Enum value, raw string, or ``None``.
-    """
+    """Return the durable status name for decision details."""
     if isinstance(value, StoredWorkItemStatus):
         return value.value
     if isinstance(value, str):
@@ -284,18 +223,7 @@ def _status_label(value: StoredWorkItemStatus | str | None) -> str | None:
 
 
 def _verdict_label(value: OwnerVerdict | str | None) -> str | None:
-    """Return the owner verdict name for decision details.
-
-    Parameters
-    ----------
-    value : OwnerVerdict | str | None
-        Raw owner verdict as passed to :func:`evaluate_reuse`.
-
-    Returns
-    -------
-    str | None
-        Enum value, raw string, or ``None``.
-    """
+    """Return the owner verdict name for decision details."""
     if isinstance(value, OwnerVerdict):
         return value.value
     if isinstance(value, str):

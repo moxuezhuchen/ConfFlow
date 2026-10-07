@@ -2,65 +2,18 @@
 
 """V4 standard recovery policies: ``none`` and ``ts_rescue_scan``.
 
-Recovery is explicit: a step declares a recovery profile, the executor
-evaluates it after check failures, and any recovery execution is recorded
-with diagnostics and provenance.  Rescue after an unconfirmed cancellation
-never happens (the whole process boundary might still be live).
-
-Policies never launch processes themselves; all native work goes through the
-executor-supplied :class:`RescueDriver`, which keeps process control,
-cancellation, and staging in one place.
-
-Executor wiring contract
-------------------------
-- The ``ts_rescue_scan`` policy is constructed with the step's program
-  adapter (``TsRescueScanPolicy(adapter)``): rendering constrained-scan and
-  reoptimization inputs needs file-format knowledge that the frozen
-  ``execute(context, driver)`` signature cannot receive otherwise.
-- The executor merges the step's ``check_params`` (notably ``bond_atoms``)
-  and the execution binding (``executable``, ``work_dir``, ``env``,
-  ``walltime_seconds``) into ``RecoveryContext.params``; binding keys fall
-  back to the adapter default executable, ``"rescue"``, an empty env, and no
-  walltime.
-
-Native ownership
-----------------
-Recovery expresses semantic intent only (scan this bond, freeze this
-distance, refresh the Hessian strategy via a reoptimization).  All Gaussian
-route-section vocabulary — TS-to-scan keyword rewriting, ``ModRedundant``
-handling, frequency-request detection, the ``B a b F`` freeze directive,
-and the ``keyword``/``modredundant`` native-map entries — is owned by the
-program adapter behind the :class:`RescueRendering` protocol (implemented
-by ``GaussianProgramAdapter``).  The policy declines (returns ``None``)
-when the bound adapter does not render rescue intent; recovery never
-reimplements native syntax as a fallback.
-
-Scan engine (compact port of the legacy rescue)
------------------------------------------------
-Coarse probes at ``r0 +/- k * coarse_step``, a fine grid around the peak,
-peak selection by local maximum, then reoptimization with the original
-keyword at the peak geometry.  Reoptimization is accepted only when drift,
-RMSD, and (for freq keywords) imaginary-count validation pass.
-
-Deliberate simplifications over the legacy scanner:
-
-- Each scan point renders from the original input structure with the bond
-  set to the target length; legacy chained each point onto the previous
-  point's optimized geometry (an optimization, not a semantic).
-- No terminal tables, marker files, or backup handling: the scan table is
-  carried in the success diagnostic details, and lifecycle side effects
-  belong to the executor.
-- Only Gaussian constrained scans are supported (as in legacy); anything
-  else declines with ``recovery_disabled_for_program``.
-- At most one rescue attempt per work item: ``attempt >= 1`` declines with
-  ``max_attempts_reached``.
-
-Unbound policy instance
------------------------
-``RECOVERIES["ts_rescue_scan"]`` holds a policy constructed without an
-adapter for registry wiring; it evaluates program gating from the failed
-result alone and its ``execute`` declines (returns ``None``) until the
-executor substitutes a step-bound ``TsRescueScanPolicy(adapter)``.
+Recovery is explicit per step after check failures, recorded with
+diagnostics and provenance; rescue after unconfirmed cancellation never
+happens. Policies never launch processes; all native work goes through the
+executor-supplied ``RescueDriver``. ``ts_rescue_scan`` is constructed as
+``TsRescueScanPolicy(adapter)``; step ``check_params`` plus binding ``(executable, work_dir, env,
+walltime_seconds)`` merge into params with adapter-default/rescue/empty-env/no-walltime fallbacks.
+All route-section vocabulary is adapter-owned via ``RescueRendering``; the policy declines
+(``None``) when the adapter does not render intent and never reimplements
+native syntax. Coarse/fine scan peak plus reoptimization, accepted only on
+drift, RMSD, and imaginary-count validation; Gaussian only (else
+``recovery_disabled_for_program``); at most one attempt (``attempt >= 1`` declines
+``max_attempts_reached``; unbound registry entry declines until bound).
 """
 
 from __future__ import annotations
@@ -147,15 +100,7 @@ CANCELLATION_SIGNALS = frozenset({"cancellation_error", "cancellation_unconfirme
 
 @runtime_checkable
 class RescueRendering(Protocol):
-    """Adapter-owned rendering of rescue intent into native input.
-
-    Recovery policies express semantic intent only (scan this bond, freeze
-    this distance, detect a frequency job); the bound program adapter owns
-    every native-syntax decision behind this protocol.  ``GaussianProgram-
-    Adapter`` implements it; adapters without rescue vocabulary (ORCA, test
-    stubs without rescue support) simply do not satisfy it, and the policy
-    declines instead of reimplementing native syntax.
-    """
+    """Adapter-owned rendering of rescue intent into native input."""
 
     def rescue_scan_keyword(self, original_keyword: str) -> str:
         """Render the constrained-scan keyword for a rescue, or ``""``."""
@@ -181,16 +126,7 @@ class RescueRendering(Protocol):
 
 
 def parse_ts_bond_atoms(value: Any) -> tuple[int, int] | None:
-    """Parse the TS bond atom pair (1-based indices).
-
-    Accepts a two-element list/tuple of integers or a string containing at
-    least two positive integers (digit extraction).  Returns ``None`` when
-    the value is missing, malformed, or names the same atom twice.
-
-    (Canonical implementation lives in :mod:`confflow.execution.checks` so
-    recovery shares the exact check-layer semantics without depending on
-    check wiring.)
-    """
+    """Parse the TS bond atom pair (1-based indices)."""
     return parse_bond_atom_pair(value)
 
 
@@ -202,44 +138,23 @@ def _gaussian_adapter() -> type[GaussianProgramAdapter]:
 
 
 def keyword_requests_freq(keyword: str) -> bool:
-    """Return whether *keyword* explicitly requests a frequency calculation.
-
-    Deprecated thin wrapper over the adapter-owned
-    ``GaussianProgramAdapter.keyword_requests_freq``; recovery engine code
-    must call the bound adapter instead.
-    """
+    """Return whether *keyword* explicitly requests a frequency calculation."""
     return bool(_gaussian_adapter().keyword_requests_freq(keyword))
 
 
 def make_scan_keyword_from_ts_keyword(keyword: str) -> str:
-    """Rewrite a TS keyword line into one suitable for a scan job.
-
-    Deprecated thin wrapper over the adapter-owned
-    ``GaussianProgramAdapter.scan_keyword_from_ts``; recovery engine code
-    must call the bound adapter instead.  Kept for the unbound policy
-    instance (no adapter) and existing unit callers.
-    """
+    """Rewrite a TS keyword line into one suitable for a scan job."""
     rewritten = _gaussian_adapter().scan_keyword_from_ts(keyword)
     return rewritten or ""
 
 
 def ensure_gaussian_modredundant_keyword(keyword: str) -> str:
-    """Return a Gaussian keyword line that enables ``ModRedundant``.
-
-    Deprecated thin wrapper over the adapter-owned
-    ``GaussianProgramAdapter.ensure_modredundant_keyword``; recovery engine
-    code must call the bound adapter instead.
-    """
+    """Return a Gaussian keyword line that enables ``ModRedundant``."""
     return _gaussian_adapter().ensure_modredundant_keyword(keyword)
 
 
 def scan_keyword_for_rescue(original_keyword: str) -> str:
-    """Derive the constrained-scan keyword for a rescue, or ``""``.
-
-    Deprecated thin wrapper over the adapter-owned
-    ``GaussianProgramAdapter.rescue_scan_keyword``; recovery engine code
-    must call the bound adapter instead.
-    """
+    """Derive the constrained-scan keyword for a rescue, or ``""``."""
     return _gaussian_adapter().rescue_scan_keyword(original_keyword or "")
 
 
@@ -287,10 +202,7 @@ def _bond_length_of(coordinates: Coordinates, atom_a: int, atom_b: int) -> float
 def _set_bond_length(
     coordinates: Coordinates, atom_a: int, atom_b: int, target: float
 ) -> Coordinates | None:
-    """Return coordinates with the bond set to *target* (moves ``atom_b`` only).
-
-    Returns ``None`` for out-of-range indices or a degenerate bond vector.
-    """
+    """Return coordinates with the bond set to *target* (moves ``atom_b`` only)."""
     points = [tuple(float(v) for v in point) for point in coordinates]
     count = len(points)
     if atom_a < 1 or atom_b < 1 or atom_a > count or atom_b > count or atom_a == atom_b:
@@ -388,17 +300,7 @@ class NoneRecoveryPolicy:
 
 
 class TsRescueScanPolicy:
-    """Bond-scan rescue for a failed Gaussian transition-state calculation.
-
-    Parameters
-    ----------
-    adapter : ProgramAdapter | None
-        The step's program adapter, used to render constrained-scan and
-        reoptimization inputs.  Wired by the executor at construction time
-        because the frozen ``execute`` signature carries no adapter handle.
-        ``None`` leaves an unbound instance whose ``execute`` always
-        declines; program gating then relies on the failed result alone.
-    """
+    """Bond-scan rescue for a failed Gaussian transition-state calculation."""
 
     def __init__(self, adapter: ProgramAdapter | None = None) -> None:
         self._adapter = adapter
@@ -470,13 +372,7 @@ class TsRescueScanPolicy:
         )
 
     def _request_kwargs(self, context: RecoveryContext) -> dict[str, Any] | None:
-        """Build launch-request fields from driver-owned binding facts.
-
-        The execution binding owns ``executable``/``env``/``walltime``/
-        ``work_dir``; scientific recovery params can never supply them (the
-        executor strips user ``executable/env/walltime_seconds/work_dir``
-        keys and re-supplies them under reserved ``_binding_*`` keys).
-        """
+        """Build launch-request fields from driver-owned binding facts."""
         adapter = self._adapter
         if adapter is None:
             return None
@@ -530,13 +426,7 @@ class TsRescueScanPolicy:
         native_keyword: str,
         extra_directives: tuple[str, ...] = (),
     ) -> ResolvedCalculationInputs | None:
-        """Render-ready inputs for one recovery geometry via the adapter.
-
-        Semantic intent (target geometry, scan keyword, freeze directives)
-        flows into ``RescueRendering.build_rescue_inputs``; every
-        native-vocabulary decision stays in the adapter.  Returns ``None``
-        when no bound adapter renders rescue intent.
-        """
+        """Render-ready inputs for one recovery geometry via the adapter."""
         builder = getattr(self._adapter, "build_rescue_inputs", None)
         if not callable(builder):
             return None

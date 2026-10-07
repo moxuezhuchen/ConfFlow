@@ -127,14 +127,7 @@ class RunInputDeclaration:
         return Pairing.BY_SUBJECT
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a canonical, JSON-compatible representation.
-
-        ``grouping``, ``topology``, ``charge``, and ``multiplicity`` are
-        omitted when undeclared so adding the fields never moves the
-        representation of documents that do not use them.  ``to_dict``
-        round-trips the full patch including nonsemantic provenance;
-        :meth:`to_payload` is the digest projection.
-        """
+        """Return a canonical, JSON-compatible representation."""
         payload: dict[str, Any] = {
             "name": self.name,
             "kind": self.kind.value,
@@ -154,12 +147,7 @@ class RunInputDeclaration:
         return payload
 
     def to_payload(self) -> dict[str, Any]:
-        """Return the semantic digest contribution of this declaration.
-
-        Patch provenance is nonsemantic and excluded: only ``add``/``delete``
-        edge sets move the definition digest.  Absent declarations keep the
-        exact legacy shape.
-        """
+        """Return the semantic digest contribution of this declaration."""
         payload: dict[str, Any] = {
             "name": self.name,
             "kind": self.kind.value,

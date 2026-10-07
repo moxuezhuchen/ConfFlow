@@ -2,19 +2,15 @@
 
 """Versioned calculation cards (Phase 3).
 
-A card fixes the *scientific* shape of one step — executor, execution
-adapter, result profile, acceptance checks and recovery — from an explicit
-``<type>@<version>`` reference.  The human ``role`` defaults from the card
-and is preserved verbatim into ``CalculationModel.role``; downstream lanes
-may consume it scientifically (checkpoint method compatibility keys on the
-rendered method, never on guessed keywords), so overriding it is advanced.
-Native keywords are never inspected to guess card, role, checks, or
-recovery.
-
-No registry, parser or compiler import lives here: this module is pure
-constants so :func:`confflow.producer.intent.intent_catalog` stays free of
-compiler/contract recursion.  :mod:`confflow.producer.intent` resolves the
-descriptors against the real execution registry at compile time.
+A card fixes the scientific shape of one step (executor, execution adapter, result profile,
+acceptance checks, recovery) from an explicit ``<type>@<version>`` reference; human ``role``
+defaults from the card and is preserved verbatim into ``CalculationModel.role``, so overriding it is
+advanced. Downstream lanes may consume role scientifically (checkpoint method compatibility keys on
+rendered method, never guessed keywords); native keywords are never inspected to guess card, role,
+checks, or recovery. New scientific meanings get a new version; existing ``<type>@v1`` references
+never change meaning. No registry/parser/compiler import lives here (pure constants) so
+``intent_catalog`` stays free of compiler/contract recursion; descriptors resolve against the real
+execution registry at compile time.
 """
 
 from __future__ import annotations

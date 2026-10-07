@@ -2,20 +2,14 @@
 
 """Producer-owned V4 recipe catalog: named runnable starting points.
 
-The catalog follows the historical structural pattern (entries with
-``id``/``label``/``description``/``category``/``order``/``document``/
-``required_fields``/``exposed_fields``), but every ``document`` is a complete
-V4 workflow document that compiles through
-:mod:`confflow.workflow.v4.parser` and
-:mod:`confflow.workflow.v4.compiler` as shipped.
-
-V4 recipes are runnable documents, not fragments: compilation requires a
-program on every calculation step, so each recipe pins a reviewed program
-default and a native keyword. Both stay flagged in ``required_fields`` (a
-subset of ``exposed_fields``), which names the editors the user must confirm
-before production use. A recipe pins only what makes it a different recipe
-plus those compile-required defaults -- never resources, scheduler widths, or
-execution bindings.
+Follows historical structural pattern
+(id/label/description/category/order/document/required_fields/exposed_fields), but every
+``document`` is a complete V4 workflow compiling through V4 parser and compiler as shipped. V4
+recipes are runnable documents, not fragments: compilation requires a program on every calculation
+step, so each recipe pins a reviewed program default and native keyword, both flagged in
+``required_fields`` (subset of ``exposed_fields``) for user confirmation before production use; a
+recipe pins only what makes it a different recipe plus those compile-required defaults, never
+resources, scheduler widths, or execution bindings.
 """
 
 from __future__ import annotations
@@ -134,20 +128,7 @@ def _confgen_v3_recipe() -> dict[str, Any]:
 
 
 def _monomer_conformers_recipe() -> dict[str, Any]:
-    """Build the XTB2-preopt -> ConfGen(ring+torsion) -> dedup recipe.
-
-    Pre-optimization uses the standard ORCA adapter with the opaque
-    ``XTB2 Opt`` keyword (rendered verbatim; no XTB2-specific adapter
-    branch). The ConfGen step consumes the ``preopt`` optimized product
-    (step-product reference, never the top-level run input) with one
-    explicit ring axis and one explicit torsion axis that the user must
-    confirm/replace for their seed structures. The final dedup step
-    consumes the ConfGen ensemble. ``required_fields``/``exposed_fields``
-    are editor prompts (not compiler gates); the legal replacement scope
-    is a wire-document copy with user axes recompiled through the V4
-    parser/compiler (calculation program/native via the intent recipe
-    assignment lane, ConfGen axes via direct document edit).
-    """
+    """Build the XTB2-preopt -> ConfGen(ring+torsion) -> dedup recipe."""
     preopt = _calc_step(
         "preopt",
         program="orca",
@@ -221,19 +202,7 @@ def _monomer_conformers_recipe() -> dict[str, Any]:
 
 
 def _ensemble_refine_recipe() -> dict[str, Any]:
-    """Build the ensemble-refinement recipe (N4).
-
-    Input is a multi-frame xyz (CREST/GOAT ensembles, thinned MD frames):
-    ``deduplicate`` -> ``opt`` -> RMSD ``refine`` -> ``freq`` -> energy
-    ``filter``. The filter's ``structure`` and ``results`` inputs both bind
-    the ``freq`` step explicitly, so the N3 same-step compile rule holds;
-    the ``refine`` leg therefore sits between ``opt`` and ``freq`` (RMSD
-    grouping collapses near-duplicate opt minima before the expensive
-    frequencies) rather than between ``freq`` and ``filter``. ``required_``
-    /``exposed_fields`` are editor prompts (not compiler gates); the legal
-    replacement scope is a wire-document copy recompiled through the V4
-    parser/compiler.
-    """
+    """Build the ensemble-refinement recipe (N4)."""
     dedup: dict[str, Any] = {
         "id": "dedup",
         "label": "Deduplicate input frames",
@@ -355,16 +324,7 @@ def _run_binding() -> dict[str, Any]:
 def _document(
     steps: list[dict[str, Any]], *, inputs: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Wrap recipe steps into a complete V4 workflow document.
-
-    Recipe documents carry the neutral scientific fallback (charge ``0``,
-    multiplicity ``1``) exactly like every executable V4 document: native
-    rendering requires resolved charge/multiplicity, and the exposed
-    ``calc.overrides.charge`` / ``calc.overrides.multiplicity`` fields let the
-    user replace the fallback per run.  Structure-inherent values still win
-    over the run-level default (the one precedence authority is
-    ``confflow.workflow.v4.scientific``).
-    """
+    """Wrap recipe steps into a complete V4 workflow document."""
     return {
         "schema": SCHEMA_ID,
         "inputs": copy.deepcopy(inputs or _STRUCTURES_INPUT),

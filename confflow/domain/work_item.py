@@ -2,20 +2,16 @@
 
 """V4 work item model.
 
-A work item is the smallest executable unit of a V4 run.  Three identities are
-deliberately distinct:
+Three distinct identities:
 
 - ``WorkItem.id`` is the deterministic instance address
-  (``wi:<step id>:<logical key>``); it is the persistence key.
-- ``WorkItem.logical_key`` is the logical address of the item
-  (``<step id>:<grouping key>``); it stays stable across recompilation when
+  (``wi:<step id>:<logical key>``); the persistence key.
+- ``WorkItem.logical_key`` is the logical address
+  (``<step id>:<grouping key>``); stable across recompilation when
   logical inputs are unchanged.
-- ``WorkItem.semantic_digest`` is the content identity that controls reuse
-  validity; a changed scientific input moves the digest but not necessarily
-  the logical key.
-
-Results carry structures, results, and artifacts, plus diagnostics, timing,
-error, and recovery metadata.
+- ``WorkItem.semantic_digest`` is the content identity controlling reuse
+  validity; a changed scientific input moves the digest but not
+  necessarily the logical key.
 """
 
 from __future__ import annotations

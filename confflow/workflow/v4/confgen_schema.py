@@ -1,22 +1,12 @@
 """Typed declarations for the ConfGen v3 scientific scope.
 
-The legacy native block remains a separate schema. These declarations expose
-only supported controls; atom references share one explicit index convention.
-
-Semantic validators source their vocabularies and defaults from the
-component descriptors (lightweight ``schema_constants()``, never solver
-imports):
-
-- coordination shapes from the coordination descriptor (lane-B graph
-  authority, no new copy);
-- ring templates from the rings descriptor (stdlib-only name table);
-- torsion angle wrapping from the torsions descriptor (stdlib math);
-- global tolerances from ``confflow.science.confgen.tolerances`` (core lane);
-- coordination section tolerances from the coordination descriptor.
-
-Deeper geometric validation (bonded/ring/measurability checks, duplicate bond
-axes, conditional scope) stays lane-owned and runs at normalization and
-stage construction; the typed boundary fails closed early on ambiguous
+Legacy native block remains a separate schema; declarations expose
+only supported controls with one explicit atom index convention.
+Vocabularies/defaults come from component ``schema_constants()``
+(never solver imports): coordination shapes, ring templates, torsion
+wrapping, global tolerances (core lane), coordination section tolerances.
+Deeper geometric validation stays lane-owned (normalization and stage
+construction); the typed boundary fails closed early on ambiguous
 declarations.
 """
 
@@ -90,12 +80,7 @@ def _template_sizes() -> dict[str, int]:
 
 
 def _form_sizes() -> dict[str, list[int]]:
-    """Return ring precise-form name -> supporting sizes (via descriptor).
-
-    v2 fix: values are size SETS (5/6 share E_0..E_9; a flat single-size map
-    lets 6 overwrite 5 and misrejects all n5 E). Explicit-P P/P_0 cover
-    4/5/6 (5/6 specials outside the 20/38 catalogs).
-    """
+    """Return ring precise-form name -> supporting sizes (via descriptor)."""
     from confflow.science.confgen.registry import build_default_registry
 
     for _d in build_default_registry().descriptors:
@@ -120,11 +105,7 @@ def _form_sizes() -> dict[str, list[int]]:
 
 
 def _forms_for_size(n: int) -> tuple[str, ...]:
-    """Return precise-form names valid for ring size n (component authority).
-
-    Reads the per-size directory (no duplicate table in schema).
-    Explicit-P P_0 is authorized for 5/6 although outside 20/38.
-    """
+    """Return precise-form names valid for ring size n (component authority)."""
     from confflow.science.confgen.registry import build_default_registry
 
     for _d in build_default_registry().descriptors:
@@ -143,13 +124,7 @@ def _forms_for_size(n: int) -> tuple[str, ...]:
 
 
 def _form_families(n: int) -> set[str]:
-    """Return family selectors valid for ring size n (component authority).
-
-    Derived from the per-size precise directory (families are the
-    ``FAMILY`` part of ``FAMILY_INDEX``) plus the authorized specials:
-    bare ``P`` for 5/6 (explicit planar) and bare ``B`` for 4 (both B+/B-).
-    No puckering import here; the component directory stays authoritative.
-    """
+    """Return family selectors valid for ring size n (component authority)."""
     fams: set[str] = set()
     for _name in _forms_for_size(int(n)):
         if "_" in _name:

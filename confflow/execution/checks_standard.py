@@ -2,35 +2,17 @@
 
 """V4 standard scientific checks.
 
-Each check is an explicitly declared predicate over a normalized
-:class:`ProfileOutput` plus the original inputs.  Checks never read task
-names, roles, keywords, or legacy config; all parameters arrive through the
-step's declared ``check_params`` with :data:`CHECK_DEFAULTS` as fallback.
-
-Executor mapping contract
--------------------------
-A failed check carries a :class:`Diagnostic` with code ``"check_failed"``
-and details that always contain ``"check"`` (the check name) and
-``"reason"`` (a stable snake_case token).  The executor re-codes these
-transport diagnostics into workflow-level diagnostics.  Stable reasons:
-
-- ``normal_termination``: ``"abnormal_termination"``.
-- ``geometry_required``: ``"geometry_missing"``.
-- ``frequencies_required``: ``"frequencies_missing"``.
-- ``imaginary_frequency_count``: ``"imaginary_count_mismatch"``,
-  ``"frequencies_missing"`` (expected nonzero, no frequency data), or
-  ``"invalid_check_parameter"`` (unparseable ``expected``).
-- ``max_rmsd_from_input``: ``"rmsd_exceeded"``, ``"rmsd_uncomputable"``
-  (fail closed), or ``"invalid_check_parameter"``.
-- ``bond_drift``: ``"bond_drift_exceeded"``, ``"bond_atoms_missing"``
-  (undeclared, malformed, or unresolvable against the structures), or
-  ``"invalid_check_parameter"``.
-
-Imaginary-count rule
---------------------
-When no frequency data was parsed the count check passes only when the
-expectation is zero (frequencies simply were not requested); the
-``frequencies_required`` check covers the requested-but-unparsed case.
+Each check is a predicate over normalized ``ProfileOutput`` plus inputs;
+checks never read task names, roles, keywords, or legacy config: params come
+only via declared ``check_params`` with ``CHECK_DEFAULTS`` fallback. Failed
+checks carry ``check_failed`` with details always containing ``check`` and
+stable ``reason`` (re-coded by the executor): ``abnormal_termination``;
+``geometry_missing``; ``frequencies_missing``; ``imaginary_count_mismatch``,
+``frequencies_missing``, ``invalid_check_parameter``; ``rmsd_exceeded``,
+``rmsd_uncomputable`` (fail closed), ``invalid_check_parameter``;
+``bond_drift_exceeded``, ``bond_atoms_missing``, ``invalid_check_parameter``.
+With no parsed frequency data the imaginary-count check passes only when the
+expectation is zero; ``frequencies_required`` covers the requested-but-unparsed case.
 """
 
 from __future__ import annotations
@@ -141,10 +123,7 @@ def kabsch_aligned_rmsd(first: np.ndarray, second: np.ndarray) -> float | None:
 
 
 def bond_length_angstrom(record: StructureRecord, atom_a: int, atom_b: int) -> float | None:
-    """Return the ``atom_a``-``atom_b`` distance in Angstrom (1-based indices).
-
-    Returns ``None`` when either index is out of range.
-    """
+    """Return the ``atom_a``-``atom_b`` distance in Angstrom (1-based indices)."""
     count = len(record.coordinates)
     if atom_a < 1 or atom_b < 1 or atom_a > count or atom_b > count or atom_a == atom_b:
         return None
@@ -158,12 +137,7 @@ def bond_length_angstrom(record: StructureRecord, atom_a: int, atom_b: int) -> f
 
 
 def parse_bond_atoms(value: Any) -> tuple[int, int] | None:
-    """Parse a bond atom pair (1-based indices) from check parameters.
-
-    Accepts a two-element list/tuple of integers or a string containing at
-    least two positive integers (digit extraction).  Returns ``None`` when
-    the value is missing, malformed, or names the same atom twice.
-    """
+    """Parse a bond atom pair (1-based indices) from check parameters."""
     return parse_bond_atom_pair(value)
 
 

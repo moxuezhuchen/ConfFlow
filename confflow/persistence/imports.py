@@ -2,22 +2,14 @@
 
 """Durable XYZ import identity maps for ConfFlow Workflow V4 (D-owned).
 
-An import map binds one named run input to the exact source bytes it was
-imported from plus the ordered opaque entity IDs minted for those bytes.
-Resume of identical raw bytes reloads the persisted IDs; reordered or edited
-bytes without explicit IDs fail closed instead of guessing identity by
-geometry.
-
-Layout: ``<run_root>/imports/<input_name>.json``.  Publication is atomic
-and arbitrated: the winning payload is installed with an exclusive
-``os.link`` so two processes importing the same bytes concurrently converge
-on one ID sequence instead of executing different IDs for the same run
-input.  Losers adopt the winner's IDs (identical bytes parse identically;
-positional geometry digests are still verified).  A map is never
-overwritten: same digest reuses the winner, a different digest fails
-closed.  File bytes and the containing directory are both fsynced.
-
-This module imports only ``confflow.domain`` plus the standard library.
+Binds one named run input to exact source bytes plus ordered opaque entity IDs; resume
+of identical bytes reloads persisted IDs, reordered/edited bytes without explicit IDs
+fail closed instead of guessing identity by geometry.
+Layout ``<run_root>/imports/<input_name>.json``. Publication is atomic and arbitrated
+via exclusive ``os.link`` so concurrent importers converge on one ID sequence; losers
+adopt winner IDs (identical bytes parse identically; positional geometry digests still
+verified). Maps are never overwritten: same digest reuses winner, different digest fails
+closed. File bytes and directory both fsynced. Imports only ``confflow.domain`` + stdlib.
 """
 
 from __future__ import annotations
@@ -77,14 +69,7 @@ def _map_path(run_root: str, input_name: str) -> str:
 
 
 def _exclusive_publish(target_path: str, payload: bytes) -> bool:
-    """Install *payload* at *target_path*, arbitrating concurrent writers.
-
-    Returns ``True`` when this call won (the file now holds *payload*),
-    ``False`` when another process won first (the file holds the winner).
-    The winner is installed atomically via ``os.link``: exactly one
-    contender's link succeeds, so concurrent first imports converge on one
-    ID sequence.  File bytes and the directory are fsynced either way.
-    """
+    """Install *payload* at *target_path*, arbitrating concurrent writers."""
     directory = os.path.dirname(target_path)
     os.makedirs(directory, exist_ok=True)
     tmp_path = f"{target_path}.tmp.{os.getpid()}.{next(_TMP_COUNTER)}"

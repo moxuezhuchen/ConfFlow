@@ -2,65 +2,11 @@
 
 """Producer ``structure_preview`` thin projection (parsing only).
 
-Future authoring interface (frozen for L1 pairing and JD consumption):
-
-Parameters (``structure_preview_request(parameters)``)
--------------------------------------------------------
-``parameters`` is a mapping with::
-
-    {
-      "filename": "<original name, e.g. ligand.gjf>",
-      "content_text": "<full file text, UTF-8, newlines preserved>",
-      "source_format_hint": "<optional, only when needed>",
-    }
-
-* ``filename`` (required, non-empty ``str``): routing hint only.
-  It is never opened as a file.
-* ``content_text`` (required, ``str``): the single input document.
-  Paths are never accepted.
-* ``source_format_hint`` (optional, ``str``): canonical
-  ``xyz`` / ``gaussian-gjf`` / ``orca-inp`` (case-insensitive;
-  ``gjf``/``gf``/``com`` map to ``gaussian-gjf`` and ``inp`` maps to
-  ``orca-inp``). When present it must agree with the filename suffix;
-  conflicts fail closed. When the suffix is unknown the hint is
-  required.
-
-Result (``ok`` path)
---------------------
-::
-
-    {
-      "elements": ["C", "H", ...],
-      "coordinates": [[x, y, z], ...],
-      "index_base": 1,
-      "source_format": "xyz" | "gaussian-gjf" | "orca-inp",
-      "warnings": ["..."],
-      "charge": <int, only when the source declares it>,
-      "multiplicity": <int, only when the source declares it>,
-    }
-
-* ``elements``/``coordinates`` preserve the input atom order and full
-  float precision verbatim; no sorting, dedup, unit conversion,
-  re-perception, or optimization is performed.
-* ``index_base`` is always ``1`` (picker table id ``= i + 1``).
-* ``coordinates`` are in Angstrom.
-* ``warnings`` holds only factual notes (numeric atomic numbers
-  normalized, title fallback ignored, XYZ comment ignored, ...).
-* ``charge``/``multiplicity`` are source values only. XYZ inputs omit
-  them; no scientific defaults are fabricated.
-
-Errors (``raise`` path)
-----------------------
-Failures raise :class:`StructurePreviewError` (a ``ValueError``) with
-structured ``code``/``line``/``field``/``source_label`` attributes.
-Consumers must read those attributes and must never parse the human
-message text as a protocol. Stable ``code`` values include
-``invalid_parameters``, ``invalid_format``, ``multiple_geometries``,
-``empty_geometry``, ``incomplete_geometry``, ``invalid_header``,
-``unknown_element``, ``invalid_coordinate``,
-``unknown_coordinate_token``, ``unsupported_unit``,
-``unsupported_format``, ``trailing_content``,
-``missing_external_context``, and ``invalid_structure``.
+Future authoring interface frozen for L1 pairing/JD consumption: ``structure_preview_request(parameters)`` takes ``filename`` (required non-empty str, routing hint only, never opened), ``content_text`` (required str, single input document, paths never accepted), optional ``source_format_hint``.
+Hint is canonical xyz/gaussian-gjf/orca-inp case-insensitive (gjf/gf/com map to gaussian-gjf, inp to orca-inp); when present it must agree with filename suffix, conflicts fail closed; unknown suffix requires the hint.
+Ok result preserves input atom order and full float precision verbatim with no sorting/dedup/unit conversion/re-perception/optimization; ``index_base`` is always 1; coordinates in Angstrom; ``warnings`` holds factual notes only.
+``charge``/``multiplicity`` are source values only (XYZ omits them); no scientific defaults fabricated.
+Failures raise ``StructurePreviewError`` (a ``ValueError``) with structured ``code``/``line``/``field``/``source_label``; consumers must read attributes, never parse message text. Stable codes: ``invalid_parameters``, ``invalid_format``, ``multiple_geometries``, ``empty_geometry``, ``incomplete_geometry``, ``invalid_header``, ``unknown_element``, ``invalid_coordinate``, ``unknown_coordinate_token``, ``unsupported_unit``, ``unsupported_format``, ``trailing_content``, ``missing_external_context``, ``invalid_structure``.
 """
 
 from __future__ import annotations
@@ -87,12 +33,7 @@ FIELD_PATH: str = "content_text"
 
 
 class StructurePreviewError(ValueError):
-    """Structured preview refusal carrying producer-envelope fields.
-
-    The human message always starts with ``native_input_error``.
-    Consumers must read ``code``/``line``/``source_label``/``field``
-    and must never parse the message text as a protocol.
-    """
+    """Structured preview refusal carrying producer-envelope fields."""
 
     def __init__(
         self,
@@ -301,20 +242,7 @@ def _preview_orca(content_text: str, *, filename: str, source_label: str) -> dic
 
 
 def _parse_xyz_frames_strict(content_text: str) -> list[dict[str, Any]]:
-    """Split XYZ text into frames with strict file-reader semantics.
-
-    Frame structure (count header, comment line, truncation, trailing
-    content, multi-frame detection) mirrors the legacy strict XYZ file
-    reader line-for-line, while element and coordinate conversion reuses
-    the shared authorities (``canonicalize_element_symbol`` plus
-    ``coords_lines_to_array`` from the already-adopted
-    ``confflow.core.gaussian_input``) so this layer neither imports the
-    legacy file-reader module nor copies float-parsing logic.
-    ``ValueError`` messages reuse the legacy key phrases
-    (``no valid xyz frames``, ``missing comment``, ``incomplete frame``,
-    ``invalid element``, ``fewer than 4``) so the refusal-code mapping in
-    :func:`_preview_xyz` stays identical.
-    """
+    """Split XYZ text into frames with strict file-reader semantics."""
     from ..core.elements import canonicalize_element_symbol
     from ..core.gaussian_input import coords_lines_to_array
 
@@ -511,13 +439,7 @@ def _validate_record(
 
 
 def structure_preview_request(parameters: Mapping[str, Any]) -> dict[str, Any]:
-    """Project ``{filename, content_text}`` to picker geometry.
-
-    See the module docstring for the frozen parameters/result/errors
-    contract. This function performs no file reads of ``filename``,
-    writes no geometry parser, and preserves atom order and float
-    precision verbatim.
-    """
+    """Project ``{filename, content_text}`` to picker geometry."""
     if not isinstance(parameters, Mapping):
         raise _fail(
             "invalid_parameters",

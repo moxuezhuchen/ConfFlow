@@ -2,20 +2,14 @@
 
 """V4 digest axes.
 
-Four independent axes are defined and never mixed:
-
-- :func:`workflow_definition_digest` covers scientific and dataflow meaning:
-  resolved scientific defaults, named run inputs, per-step science, bindings,
-  completion policy, and resources.  Labels, annotations, GUI placement, and
-  scheduler width are excluded.
-- :func:`step_semantic_digest` covers one step's science, its contract
-  versions, resources, checks, recovery, and seed.  Scheduler width and
-  machine execution bindings are excluded.
-- work-item digests (computed during assembly) add bound input content.
-- :class:`~confflow.execution.contracts.ExecutionEnvironment` has its own
-  digest for *where* a computation ran.
-
-Canonicalization is RFC 8785 JCS with a domain-separated ``kind`` marker, via
+Four independent axes, never mixed: :func:`workflow_definition_digest`
+covers scientific/dataflow meaning (defaults, inputs, per-step science,
+bindings, completion, resources; excludes labels, annotations, GUI
+placement, scheduler width); :func:`step_semantic_digest` covers science,
+contract versions, resources, checks, recovery, seed (excludes scheduler
+width, machine bindings); work-item digests add bound input content;
+``ExecutionEnvironment`` has its own digest for where it ran.
+Canonicalization is RFC 8785 JCS with domain-separated ``kind`` via
 :func:`confflow.domain.canonical.typed_digest`.
 """
 

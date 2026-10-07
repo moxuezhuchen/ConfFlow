@@ -1,19 +1,13 @@
 #!/usr/bin/env python3
-"""Dependency-free wire-schema identifiers for the configuration contracts.
+"""Dependency-free wire-schema identifiers for configuration contracts.
 
-This module is the single authority for the schema-id strings shared by the
-producer contract envelope, the editor manifest, the recipe catalog, and the
-configuration-validation response.  It deliberately imports nothing beyond
-``__future__`` so that ``confflow.producer`` can read the identifiers without
-loading a configuration runtime.
-
-``confflow.configuration-validation.v1`` is **not** a retired V1 document.  It
-is the current, frozen content schema of the producer's validation response,
-consumed by JobDesk's V4 path, and it is shared by the V4 producer contract
-envelope (``workflow_schema`` / ``editor_manifest`` / ``recipe_catalog`` /
-``validation_response_schema``).  The released V1/V2 configuration *contract*
-documents were retired by the Architecture Diet PR-9; these identifiers were
-not.
+Single authority for schema-id strings shared by producer contract envelope, editor manifest,
+recipe catalog, and validation response; imports nothing beyond `__future__` so `confflow.producer`
+can read ids without loading a configuration runtime.
+`confflow.configuration-validation.v1` is not a retired V1 document: it is the current frozen
+content schema of the producer validation response (consumed by JobDesk V4 path; envelope fields
+`workflow_schema`/`editor_manifest`/`recipe_catalog`/`validation_response_schema`); V1/V2 contract
+documents retired (PR-9), these identifiers were not.
 """
 
 from __future__ import annotations

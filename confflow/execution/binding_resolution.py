@@ -1,27 +1,18 @@
 #!/usr/bin/env python3
 
-"""V4 execution-binding resolution (wave-1 stream C).
+"""V4 execution-binding resolution.
 
-Single resolution point for machine-specific execution settings.  Scientific
-definition, scheduler policy, and execution binding are three disjoint axes:
-this module never reads workflow documents, YAML, or application request
-objects.  Callers pass explicit domain/execution values; planned (per-step)
-fields always win and request-level defaults only fill gaps.
-
-Rules (frozen):
-
-- ``executable``: planned absolute/PATH name wins; else the caller-supplied
-  program default map; else the adapter default.
-- ``env``: planned entries win over default entries.  The declared mapping
-  is one layer of the effective native environment: producer-side callers
-  explicitly add the ambient inheritance policy, and the complete
-  resulting snapshot is digested and launched (see
-  ``effective_native_env``).  Scientific recovery params can never inject
-  or override binding environment (see ``work_item_executor``).
-- ``walltime_seconds`` / ``sandbox`` / ``allowed_executables``:
-  planned values are preserved, never dropped; defaults fill only ``None``.
-- Seed propagation: the step ``seed`` is the single stochastic authority.
-  It travels as a typed resolved input.
+Single resolution point for machine settings; scientific definition,
+scheduler policy, and execution binding are disjoint and this module never
+reads workflow documents, YAML, or application requests: planned per-step
+fields always win, request defaults only fill gaps. ``executable`` is planned
+wins, else program default map, else adapter default; ``env`` is planned over
+defaults as one layer of the effective env (producer adds ambient inheritance;
+complete snapshot is digested and launched); recovery params can never inject
+or override binding env. ``walltime_seconds``/``sandbox``/
+``allowed_executables`` are preserved never dropped, defaults fill only
+``None``. The step ``seed`` is the single stochastic authority and travels as
+a typed resolved input.
 """
 
 from __future__ import annotations
@@ -140,28 +131,7 @@ def resolve_execution_binding(
     defaults: BindingRequestDefaults | Mapping[str, Any] | None = None,
     adapter_default_executable: str | None = None,
 ) -> ExecutionBinding:
-    """Resolve one executable execution binding from explicit arguments.
-
-    Parameters
-    ----------
-    program : str
-        Scientific program name (for the executables-map lookup).
-    planned : ExecutionBinding | Mapping | None
-        Per-step planned execution (``StepModel.execution`` equivalent).
-        Every set field wins over defaults.
-    defaults : BindingRequestDefaults | Mapping | None
-        Caller-level defaults (executables map, env, walltime).
-        A plain mapping may carry ``executables``/``env``/
-        ``walltime_seconds`` keys.
-    adapter_default_executable : str | None
-        Adapter ``default_executable`` used as the last resort.
-
-    Returns
-    -------
-    ExecutionBinding
-        Resolved binding preserving env/walltime/executable
-        identity.  No filesystem validation happens here.
-    """
+    """Resolve one executable execution binding from explicit arguments."""
     if not isinstance(program, str) or not program.strip():
         raise DomainError("program must be a non-empty string")
     if isinstance(planned, ExecutionBinding):
@@ -250,18 +220,7 @@ def resolve_execution_binding(
 
 
 def validate_step_seed(seed: Any) -> int | None:
-    """Validate the typed step seed without touching native mappings.
-
-    The step seed is the single stochastic authority and travels as a
-    typed resolved input (``ResolvedCalculationInputs.seed``).
-    This module never reads or writes native seed keys.
-
-    Seed rendering (honest contract): the program adapter requires
-    the integer step seed and renders the deterministic boolean
-    flag.  Distinct step seeds share native bytes by design and
-    differ only in digest/envelope identity.  The invented ``Seed``
-    key never existed natively.
-    """
+    """Validate the typed step seed without touching native mappings."""
     if seed is None:
         return None
     if isinstance(seed, bool) or not isinstance(seed, int):

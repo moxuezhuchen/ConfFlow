@@ -12,11 +12,7 @@ __all__ = [
 
 
 def canonicalize_element_symbol(symbol: str) -> str:
-    """Return a valid element symbol with standard capitalization.
-
-    Atom labels such as ``O_chain`` or ``C1`` are rejected instead of being
-    silently truncated because they would change molecular identity.
-    """
+    """Return a valid element symbol with standard capitalization."""
     raw = str(symbol).strip()
     if not raw:
         raise ValueError("Invalid element symbol: empty value")

@@ -2,27 +2,16 @@
 
 """Single working-topology authority for Phase 1 input simplification.
 
-Every topology consumer (typed ConfGen planner, legacy ConfGen executor,
-refine/dedup transform adjacency, calculation output profiles, and the run
-import boundary) resolves the intended covalent graph through
-:func:`resolve_working_adjacency` — never through a second ad-hoc
-perception-plus-correction runtime.
-
-Resolution order for one structure:
-
-1. a persisted ``working_topology`` wins verbatim (the graph resolved once
-   on the root input geometry; descendants never re-perceive moved
-   geometry);
-2. otherwise distance perception at ``bond_scale`` plus the record's
-   ``topology_patch`` (one-based add/delete on top of perception);
-3. a pure-legacy record (no patch, no persisted graph) resolves to plain
-   perception — callers must not persist that result as new scientific
-   content (see :func:`should_persist_working_graph`).
-
-:func:`check_spec_patch_conflict` is the fail-closed gate between
-spec-level corrections (``topology.bonds`` / ``add_bond`` / ``del_bond``)
-and record-level patches: both present means two topology authorities and
-fails closed.
+All consumers resolve the covalent graph via `resolve_working_adjacency`,
+never a second ad-hoc perception-plus-correction runtime.
+Resolution order: (1) persisted `working_topology` wins verbatim;
+(2) else distance perception at `bond_scale` plus record `topology_patch`;
+(3) pure-legacy record resolves to plain perception.
+Callers must not persist case (3) as new content (see
+`should_persist_working_graph`).
+`check_spec_patch_conflict` is the fail-closed gate: spec corrections
+(`topology.bonds`/`add_bond`/`del_bond`) plus record patch both present
+means two authorities and fails closed.
 """
 
 from __future__ import annotations
@@ -64,12 +53,7 @@ def _record_patch(structure: Any) -> TopologyPatch | None:
 
 
 def should_persist_working_graph(structure: Any) -> bool:
-    """Return whether *structure* carries intended topology worth persisting.
-
-    Only a nonempty patch or an already-persisted graph is scientific
-    content.  Pure-legacy records must not gain a persisted graph just to
-    freeze one perception of their geometry.
-    """
+    """Return whether *structure* carries intended topology worth persisting."""
     if getattr(structure, "working_topology", None) is not None:
         return True
     return _record_patch(structure) is not None
@@ -173,15 +157,7 @@ def resolve_working_adjacency(
 
 
 def inherit_topology_kwargs(source: Any, context_adjacency: Any) -> dict[str, Any]:
-    """Return ``topology_patch``/``working_topology`` kwargs for a descendant.
-
-    In-engine inheritance: the working graph is already resolved (the
-    context adjacency, computed once on the run input geometry), so it is
-    propagated verbatim — never re-perceived on moved realization
-    geometry.  A source-persisted graph wins over the context adjacency
-    (identical by construction when the context was built from that
-    source).  Pure-legacy sources yield ``{}``.
-    """
+    """Return ``topology_patch``/``working_topology`` kwargs for a descendant."""
     if not should_persist_working_graph(source):
         return {}
     stored = getattr(source, "working_topology", None)
@@ -205,15 +181,7 @@ def resolve_and_persist_kwargs(
     bond_scale: float = DEFAULT_PERCEPTION_BOND_SCALE,
     atomic_numbers: Sequence[int] | None = None,
 ) -> dict[str, Any]:
-    """Return ``topology_patch``/``working_topology`` kwargs for a descendant.
-
-    The graph resolves exactly once: a persisted source graph wins; a bare
-    patch resolves on the *source* geometry passed in *coordinates* (callers
-    pass the pre-change geometry, never re-perceived moved output); a
-    pure-legacy source yields ``{}`` so no new scientific content is
-    invented.  Charge/multiplicity handling stays with the caller (explicit
-    calculation overrides retained).
-    """
+    """Return ``topology_patch``/``working_topology`` kwargs for a descendant."""
     if not should_persist_working_graph(source):
         return {}
     patch = getattr(source, "topology_patch", None)

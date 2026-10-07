@@ -32,13 +32,7 @@ def _is_supported_cid_value(value: Any) -> bool:
 
 
 def upsert_comment_kv(comment: str, key: str, value: Any) -> str:
-    """Update or insert a key=value pair in a comment line.
-
-    Uses the same value-boundary rule as :func:`parse_comment_metadata`, so
-    replacing ``TSAtoms=1,2`` does not leave a dangling ``,2`` and replacing a
-    key in a historical comma-separated comment does not swallow the next
-    pair.
-    """
+    """Update or insert a key=value pair in a comment line."""
     comment = (comment or "").strip()
     key = str(key)
     val_str = str(value)
@@ -57,12 +51,7 @@ def upsert_comment_kv(comment: str, key: str, value: Any) -> str:
 
 
 def parse_comment_metadata(comment: str) -> dict[str, Any]:
-    """Parse key=value metadata from an XYZ comment line.
-
-    A value ends at ``|``, at whitespace, or at a comma that starts the next
-    ``key=`` pair, so comma-containing values (``TSAtoms=1,2``) and historical
-    comma separators (``E=-1.23, CID=A000001``) both parse correctly.
-    """
+    """Parse key=value metadata from an XYZ comment line."""
     meta: dict[str, Any] = {}
     for match in re.finditer(rf"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*({_VALUE_PATTERN})", comment or ""):
         key, value = match.group(1), match.group(2)

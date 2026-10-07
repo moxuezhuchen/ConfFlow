@@ -2,21 +2,18 @@
 
 """ConfFlow V4 domain model.
 
-This package is the dependency-free semantic core of the V4 workflow engine.
-It must not import ``confflow.core``, ``confflow.config``, ``confflow.calc``,
-``confflow.workflow``, ``confflow.blocks``, or any V2/V3 runtime module; the
-architecture gate in ``tests/v4`` enforces that rule.
+Dependency-free core; must not import ``confflow.core``, ``confflow.config``,
+``confflow.calc``, ``confflow.workflow``, ``confflow.blocks``, or any V2/V3
+runtime module (enforced by ``tests/v4`` gate).
 
 Identity model
 --------------
-- entity identity: :attr:`StructureRecord.id`, :attr:`ArtifactRef.id`,
-  :attr:`WorkItem.id`
-- content identity: :attr:`StructureRecord.geometry_digest`,
-  :attr:`ScientificResult.value_digest`, work-item semantic digests
+- entity identity: :attr:`StructureRecord.id`, :attr:`ArtifactRef.id`, :attr:`WorkItem.id`
+- content identity: :attr:`StructureRecord.geometry_digest`, :attr:`ScientificResult.value_digest`, work-item semantic digests
 - logical identity: :attr:`WorkItem.logical_key`
 
-Digest axes are separated by construction: geometry digests exclude metadata
-and provenance, and scheduler-only settings never enter scientific digests.
+Digest axes are separated: geometry digests exclude metadata and
+provenance; scheduler-only settings never enter scientific digests.
 """
 
 from __future__ import annotations

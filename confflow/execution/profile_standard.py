@@ -2,50 +2,18 @@
 
 """V4 standard result profile.
 
-The standard profile normalizes parser facts (:class:`NativeResult`) plus the
-original work-item inputs into domain collections: one output structure, an
-energy/frequency result set, and the executor-discovered artifacts.
-
-Energy selection (canonical scientific-energy contract, frozen)
----------------------------------------------------------------
-Result kinds name disjoint physical quantities; a kind never changes
-meaning with context:
-
-- ``"energy"`` (Hartree): the parsed electronic energy ``e`` only,
-  always when parsed.  It is never the Gibbs free energy and never a
-  sum: composite Gibbs formation (``E_high + correction``) belongs to
-  the analysis layer, never to this profile.
-- ``"gibbs_energy"`` (Hartree): the parsed full Gibbs free energy
-  ``g`` only, when parsed.
-- ``"gibbs_correction"`` (Hartree): the parsed thermal Gibbs
-  correction ``gc`` only; when the parser yields ``e`` and ``g`` but
-  no explicit correction, it is derived once as ``gc = g - e``.
-- ``"frequencies"`` (cm^-1): the parsed frequency list, when non-empty.
-- ``"num_imaginary_frequencies"`` (dimensionless count): derived from the
-  parsed list with the legacy 10 cm^-1 noise floor.
-- ``"lowest_frequency"`` (cm^-1): the lowest kept mode, when one survives
-  the noise floor.
-
-Every result is bound to the input structure id and carries producer
-provenance (program, native keyword as method, this profile contract as
-adapter, step/work-item ids).
-
-Profile/check contract
-----------------------
-The native ``terminated_normally`` fact is not part of the check-visible
-:class:`ProfileOutput` structures/results, so the profile always appends a
-``native_termination`` diagnostic (details ``{"terminated": bool}``) that the
-``normal_termination`` check reads.  Parser diagnostics are forwarded
-unchanged after it.
-
-Deliberate parity break
------------------------
-The legacy single point inherited ``Imag``/``LowestFreq``/``TSBond`` values
-from XYZ comment metadata when the parser produced none.  V4 has no
-comment-metadata result transport, so frequency inheritance is dropped
-entirely: V4 results come only from parsed output.  A single point with no
-parsed frequencies therefore yields no frequency results (and the
-``frequencies_required`` check fails closed on it).
+Normalizes parser facts plus work-item inputs into one output structure,
+energy/frequency results, and discovered artifacts. Frozen energy contract:
+``energy`` is parsed electronic ``e`` only, never Gibbs or a sum (composite
+Gibbs formation belongs to analysis, never this profile); ``gibbs_energy``
+is ``g`` only; ``gibbs_correction`` is ``gc`` only, derived once as
+``gc = g - e`` when ``e`` and ``g`` parse without explicit correction;
+``frequencies`` when non-empty with 10 cm^-1 noise floor for
+``num_imaginary_frequencies``/``lowest_frequency``. Every result binds the input structure id with producer provenance. ``terminated_normally`` is not
+check-visible; the profile always appends ``native_termination``
+(``{"terminated": bool}``) for ``normal_termination`` plus forwarded parser
+diagnostics. No comment-metadata inheritance: results come only from parsed
+output, so missing frequencies yield none (``frequencies_required`` fails closed).
 """
 
 from __future__ import annotations
@@ -98,21 +66,7 @@ def count_imaginary_frequencies(
     *,
     noise_floor_cm: float = FREQUENCY_NOISE_FLOOR_CM,
 ) -> tuple[int, float | None]:
-    """Count imaginary modes and report the lowest kept frequency.
-
-    Parameters
-    ----------
-    frequencies : tuple[float, ...]
-        Parsed frequencies in cm^-1 (negative values are imaginary modes).
-    noise_floor_cm : float
-        Modes within this distance of zero are treated as numerical noise.
-
-    Returns
-    -------
-    tuple[int, float | None]
-        The imaginary-mode count and the lowest kept mode, or ``None`` when
-        no mode survives the noise floor.
-    """
+    """Count imaginary modes and report the lowest kept frequency."""
     modes: list[float] = []
     for value in frequencies:
         try:
@@ -137,16 +91,7 @@ def _text_or_none(value: object) -> str | None:
 def _select_energies(
     native_result: NativeResult,
 ) -> tuple[float | None, float | None, float | None]:
-    """Return ``(electronic, gibbs, correction)`` energies in Hartree.
-
-    Canonical scientific-energy contract (frozen): ``energy`` is the
-    parsed electronic energy only, ``gibbs_energy`` the parsed full
-    Gibbs energy only, ``gibbs_correction`` the parsed thermal
-    correction only.  A missing correction is derived once as
-    ``g - e`` when both are parsed; sums are never formed here, so a
-    downstream composite (``E_high + correction``) can never double
-    count Gibbs content already folded into ``energy``.
-    """
+    """Return ``(electronic, gibbs, correction)`` energies in Hartree."""
     raw = native_result.energies_hartree
     electronic = raw.get("electronic")
     gibbs = raw.get("gibbs")
@@ -188,20 +133,7 @@ def _result_kwargs(
     context: ProfileContext,
     provenance: Provenance,
 ) -> dict[str, Any]:
-    """Return ScientificResult kwargs stamped with B's deterministic identity.
-
-    ``result_id`` comes from :func:`make_result_id` over complete
-    producer/subject/kind data with ``producer_digest`` passed verbatim
-    from the producing work item's ``semantic_digest`` (coordinated keyword
-    ``producer_digest``; B owns the helper).  Retries or reordering of the
-    same semantic item retain refs; changed science moves the producer
-    digest and mints new refs.  Value digests, paths, and ordinals never
-    substitute.
-
-    When the context carries no producer digest (pre-contract unit
-    fixtures), results are emitted without ``result_id``; production
-    execution always supplies it via the executor.
-    """
+    """Return ScientificResult kwargs stamped with B's deterministic identity."""
     kwargs: dict[str, Any] = {
         "kind": kind,
         "value": value,
@@ -228,12 +160,7 @@ def _result_kwargs(
 def _named_parent_records(
     inputs: ResolvedCalculationInputs,
 ) -> tuple[StructureRecord, ...] | None:
-    """Return named-slot parents in slot order, or ``None`` for standard items.
-
-    When the inputs carry reactant/product slots (QST/NEB shapes), the
-    output structure descends from every present slot in semantic order
-    (reactant, product, guess) — never dict or random order.
-    """
+    """Return named-slot parents in slot order, or ``None`` for standard items."""
     slots = inputs.extra_structures
     if not hasattr(slots, "get"):
         return None
@@ -249,19 +176,7 @@ def _named_parent_records(
 
 
 def _output_structure(context: ProfileContext) -> tuple[StructureRecord, GeometrySemantics]:
-    """Build the single output structure for *context*.
-
-    Native facts decide, never task names or roles:
-
-    - ``PRODUCED`` with content differing from the input is a
-      transformation: a new entity with parent linkage, results bound to it.
-    - ``PRODUCED`` whose content is identical to the input (single-point
-      measurement parsed back verbatim) retains the input entity: the
-      input record itself is returned, results bind the input id.
-    - ``NONE`` (no geometry parsed) is the passthrough record with
-      identical content and a parent link; the executor, not the profile,
-      decides whether passthrough is acceptable from declared checks.
-    """
+    """Build the single output structure for *context*."""
     native_result = context.native_result
     inputs: ResolvedCalculationInputs = context.inputs
     source = inputs.structure
@@ -375,13 +290,7 @@ class StandardResultProfile:
         return STANDARD_PROFILE_CONTRACT
 
     def apply(self, context: ProfileContext) -> ProfileOutput:
-        """Normalize parser facts into domain collections.
-
-        Transformation/measurement rule (frozen): output results bind the
-        output geometry entity.  A produced native geometry mints a new
-        entity and results bind it; a missing geometry (measurement /
-        passthrough) retains the input entity as the subject.
-        """
+        """Normalize parser facts into domain collections."""
         native_result = context.native_result
         structure, semantics = _output_structure(context)
         provenance = _build_provenance(context)

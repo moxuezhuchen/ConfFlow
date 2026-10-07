@@ -2,27 +2,14 @@
 
 """Durable SQLite work-item store for ConfFlow Workflow V4 (V4-3 milestone).
 
-This module owns per-item execution truth for one step: registration digests,
-claim ownership, attempt history, terminal results, and digest-keyed reuse
-lookups.  Scientific payloads stay generic JSON; there are no chemistry-shaped
-columns anywhere in the schema.
-
-Design notes
-------------
-- Every public method runs one short transaction; no transaction is ever held
-  across native execution (this API has no execution hooks, only row ops).
-- All JSON is serialized with :func:`canonical_json_bytes` over ``to_dict``
-  payloads so stored bytes are deterministic across processes.
-- :class:`WorkItemResult` has no ``from_dict``; reconstruction from stored
-  payloads is strict and fails closed with :class:`CorruptStateError`.
-- The store duck-type satisfies the ``WorkItemRepository`` and ``ReuseStore``
-  protocols from ``confflow.execution.batch`` (``record_started``,
-  ``record_finished``, ``get_result``, ``lookup``, ``store``) without
-  importing ``confflow.execution``.  One semantic difference from the
-  in-memory reuse store is deliberate: :meth:`store` only acknowledges
-  results already completed through :meth:`complete`; results unknown to the
-  store are ignored rather than indexed, because the durable store must never
-  invent execution history it did not observe.
+Owns per-item execution truth: registration digests, claim ownership, attempt history,
+terminal results, digest-keyed reuse lookups; payloads are generic JSON, no chemistry columns.
+Every method runs one short transaction, never held across native execution (row ops only).
+All JSON uses ``canonical_json_bytes`` over ``to_dict`` so bytes are deterministic.
+Reconstruction is strict (no ``from_dict``) and fails closed with ``CorruptStateError``.
+Satisfies ``WorkItemRepository``/``ReuseStore`` protocols without importing execution.
+``store`` only acknowledges results already completed via ``complete``; unknown results
+are ignored, never indexed — store never invents unobserved history.
 """
 
 from __future__ import annotations
@@ -403,13 +390,7 @@ def _build_artifact(payload: Any) -> ArtifactRef:
 
 
 def _require_stored_result_identity(result: WorkItemResult, *, error: Any) -> None:
-    """Reject missing or duplicate production result ids at the store boundary.
-
-    Stamping is the emitters' job (C profiles, F analysis); this gate runs
-    on commit and on read so identity-less results can neither be durably
-    recorded nor replayed as production truth.  Empty sets pass vacuously
-    (failed and structure-only results carry none).
-    """
+    """Reject missing or duplicate production result ids at the store boundary."""
     try:
         require_production_ids(result.results)
     except InvalidResultError as exc:
@@ -786,25 +767,7 @@ class SqliteWorkItemStore:
                 raise PersistenceError(f"cannot register work item: {exc}") from exc
 
     def claim(self, work_item_id: str, *, owner: OwnerIdentity) -> bool:
-        """Claim one item for execution in a single atomic transaction.
-
-        ``PENDING`` items and retryable ``FAILED``/``INTERRUPTED`` items move
-        to ``RUNNING`` and gain a new attempt row.  Already ``RUNNING``,
-        ``COMPLETED``, or ``CANCELLED`` items — and unknown ids — return
-        ``False``; contention never raises.
-
-        Parameters
-        ----------
-        work_item_id : str
-            Item to claim.
-        owner : OwnerIdentity
-            Claim owner recorded on the item row.
-
-        Returns
-        -------
-        bool
-            ``True`` when the claim was granted.
-        """
+        """Claim one item for execution in a single atomic transaction."""
         if not isinstance(owner, OwnerIdentity):
             raise PersistenceError("owner must be an OwnerIdentity")
         item_id = _require_text(work_item_id, "work_item_id")
@@ -909,12 +872,7 @@ class SqliteWorkItemStore:
         result: WorkItemResult,
         environment_digest: str | None = None,
     ) -> None:
-        """Record a completed result for a ``RUNNING`` item.
-
-        All payload validation happens before the transaction opens, so a
-        rejected payload leaves the item ``RUNNING`` with attempt history
-        untouched.
-        """
+        """Record a completed result for a ``RUNNING`` item."""
         item_id = _require_text(work_item_id, "work_item_id")
         if not isinstance(result, WorkItemResult):
             raise PersistenceError("result must be a WorkItemResult")
@@ -1095,22 +1053,7 @@ class SqliteWorkItemStore:
         producer_provenance: dict | None,
         reason: str = "",
     ) -> None:
-        """Advance one terminal item to a new environment generation.
-
-        Execution bindings (executable content + effective env) are a
-        distinct axis from scientific definition: when only the
-        environment generation moves (``INVALIDATE_ENVIRONMENT`` on a
-        terminal row), the stored registration advances to the new axes
-        and the item returns to ``INTERRUPTED`` so the next claim opens a
-        fresh attempt. All prior attempts (and their result payloads) are
-        preserved in the attempts table; only the current generation
-        pointer moves. Definition/input/provenance/artifact invalidations
-        stay terminal and never call this method — history is preserved
-        and nothing re-executes.
-
-        Only terminal ``COMPLETED``/``FAILED``/``INTERRUPTED`` rows may
-        advance; ``PENDING``/``RUNNING``/``CANCELLED`` raise.
-        """
+        """Advance one terminal item to a new environment generation."""
         import sqlite3 as _sqlite3
 
         item_id = _require_text(work_item_id, "work_item_id")
@@ -1402,18 +1345,7 @@ class SqliteWorkItemStore:
     def record_finished(
         self, result: WorkItemResult, *, environment_digest: str | None = None
     ) -> None:
-        """Record the terminal result of a ``RUNNING`` item.
-
-        ``COMPLETED``/``FAILED`` results persist through the matching
-        terminal transition; ``CANCELLED`` results move the item to
-        ``CANCELLED`` while still persisting the result payload so
-        :meth:`get_result` can return it.
-
-        ``environment_digest`` optionally overrides the execution
-        environment recorded at commit (remote delivery commits the
-        worker-measured environment, never the producer-side assumption).
-        ``None`` keeps the registration-time digest.
-        """
+        """Record the terminal result of a ``RUNNING`` item."""
         if not isinstance(result, WorkItemResult):
             raise PersistenceError("result must be a WorkItemResult")
         if result.status is WorkItemStatus.COMPLETED:
@@ -1424,13 +1356,7 @@ class SqliteWorkItemStore:
             self._record_cancelled(result)
 
     def lookup(self, semantic_digest: str) -> WorkItemResult | None:
-        """Return a reusable completed result for *semantic_digest*, if any.
-
-        Terminal ``COMPLETED`` attempts are scanned in deterministic
-        (logical-key, work-item-id) order; the first row whose registered
-        work-item digest — or whose stored result semantic digest — equals
-        *semantic_digest* wins.  Logical keys are never compared.
-        """
+        """Return a reusable completed result for *semantic_digest*, if any."""
         digest = _require_digest_text(semantic_digest, "semantic_digest")
         with self._lock:
             connection = self._guard_open()
@@ -1454,15 +1380,7 @@ class SqliteWorkItemStore:
         return None
 
     def store(self, result: WorkItemResult) -> None:
-        """Acknowledge a completed result for future reuse lookups.
-
-        This is intentionally a no-op beyond validation: the durable store
-        only indexes results already completed through :meth:`complete`, so
-        results unknown to the store are ignored rather than indexed.  This
-        differs from the in-memory reuse store, which indexes any completed
-        result handed to it, because the durable store must never invent
-        execution history it did not observe.
-        """
+        """Acknowledge a completed result for future reuse lookups."""
         if not isinstance(result, WorkItemResult):
             raise PersistenceError("result must be a WorkItemResult")
         if not result.is_completed or result.semantic_digest is None:

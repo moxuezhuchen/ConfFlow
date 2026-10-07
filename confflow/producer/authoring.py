@@ -2,33 +2,17 @@
 
 """Producer authoring seam (``confflow.authoring.v4``).
 
-Four operations turn the frozen authoring wire into thin projections over the
-existing V4 authority:
-
-- :func:`describe_step` -- step projection: contracts and per-port facts from
-  the execution registry, current bindings, declared-vs-absent resources and
-  scheduler fields, capability identity, diagnostics;
-- :func:`binding_candidates` -- legal binding sources for one explicit target
-  port (named run inputs and enabled step outputs whose contract port kind
-  matches), plus the conservative ``auto_wire`` decision;
-- :func:`instantiate_card` -- build one new step from a scientific snapshot and
-  explicit binding choices, allocate a fresh legal step id when needed, then
-  validate the resulting document through the producer validator;
-- :func:`validate_document` -- thin wrapper over
-  :func:`confflow.producer.validation.validate_workflow_bytes`.
-
-No rule table lives here.  Port contracts, pairing/cardinality legality,
-capability vocabulary, adapter selection, cycle detection, and every validation
-outcome come from the V4 registry, parser, validation authority, and compiler;
-this module only queries them and projects the answers into the frozen
-response envelope (``authoring_protocol_schema()``).
-
-Request channel note: the published request schema keeps ``parameters`` open,
-so the two envelope-level payloads the operations need -- an explicit editor
-``action`` for the auto-wire decision and the ``snapshot`` of a card to
-instantiate -- ride inside ``parameters``.  No published request or response
-member is added, removed, or changed, and no scientific interpretation happens
-in this layer.
+Four thin projections over existing V4 authority: ``describe_step`` (contracts, per-port facts,
+bindings, declared-vs-absent resources/scheduler, capability identity, diagnostics);
+``binding_candidates`` (legal sources for one explicit target port plus conservative ``auto_wire``
+decision); ``instantiate_card`` (build one step from snapshot plus explicit bindings, allocate fresh
+legal id, validate via producer validator); ``validate_document`` (wrapper over
+``validate_workflow_bytes``). No rule table lives here: port contracts, pairing/cardinality
+legality, capability vocabulary, adapter selection, cycle detection, and every validation outcome
+come from V4 registry/parser/validation/compiler; this module only queries and projects into frozen
+envelope (``authoring_protocol_schema()``). Request ``parameters`` stays open: editor ``action`` and
+card ``snapshot`` ride inside it; no request/response member added/removed/changed, no scientific
+interpretation here.
 """
 
 from __future__ import annotations
@@ -341,13 +325,7 @@ def _resolve_step_facts(
     *,
     registry: ExecutionRegistry,
 ) -> _StepFacts:
-    """Resolve one step's contracts, ports, and profile from the authority.
-
-    The full semantic validation of the step is authoritative whenever it can
-    resolve; otherwise the shared contract/port resolution helpers supply the
-    port facts so a partially authored step can still be projected.  No port,
-    pairing, or adapter rule is re-implemented here.
-    """
+    """Resolve one step's contracts, ports, and profile from the authority."""
     run_resources, run_scheduler = _resolve_run_policy(definition)
     validated, diagnostics = _validate_step(
         step,
@@ -527,13 +505,7 @@ def describe_step(
     *,
     registry: ExecutionRegistry | None = None,
 ) -> dict[str, Any]:
-    """Return the projection of one step over the V4 authority.
-
-    The step must exist in a parse-clean document.  Contracts, port facts,
-    bindings, and the resolved resource/scheduler policy are projected from
-    the parser, execution registry, and validation authority; declared fields
-    are reported as declared, and absent fields stay absent (never defaulted).
-    """
+    """Return the projection of one step over the V4 authority."""
     mapping, problems = _coerce_document(document)
     if mapping is None:
         return _envelope("describe_step", False, None, None, problems)
@@ -580,11 +552,7 @@ class _CandidateSource:
 
 
 def _declared_dependencies(definition: WorkflowDefinition) -> dict[str, tuple[str, ...]]:
-    """Return the declared-bindings dependency adjacency.
-
-    Mirrors the adjacency ``build_binding_graph`` derives from bindings (the
-    compiler re-derives it for real when a trial document compiles).
-    """
+    """Return the declared-bindings dependency adjacency."""
     dependencies: dict[str, list[str]] = {step.id: [] for step in definition.steps}
     for step in definition.steps:
         for binding in step.bindings:
@@ -691,12 +659,7 @@ def _effective_edge_facts(
     binding: Binding,
     target_port: PortSpec,
 ) -> tuple[str, str]:
-    """Return (effective cardinality, pairing) from the resolved graph.
-
-    When the trial document compiles, the value comes from the real
-    ``build_binding_graph`` edge; otherwise the edge default rule applies
-    (binding override, else the target port contract).
-    """
+    """Return (effective cardinality, pairing) from the resolved graph."""
     if plan_graph is not None:
         for edge in plan_graph.edges:
             if (
@@ -718,16 +681,7 @@ def binding_candidates(
     action: str | None = None,
     registry: ExecutionRegistry | None = None,
 ) -> dict[str, Any]:
-    """Return legal candidate sources for one explicit target port.
-
-    Candidates are named run inputs and outputs of other enabled steps whose
-    registry port contract kind matches the target port; disabled, unknown,
-    self, and cycle-creating sources are excluded.  ``auto_wire`` is true only
-    for the single candidate that satisfies every conservative condition: an
-    explicit editor action, a fresh document digest, an explicit target port,
-    no selector/pairing ambiguity or grouping guess, all required ports
-    satisfiable, and a trial application that compiles.
-    """
+    """Return legal candidate sources for one explicit target port."""
     mapping, problems = _coerce_document(document)
     if mapping is None:
         return _envelope("binding_candidates", False, None, None, problems)
@@ -912,13 +866,7 @@ def _snapshot_step(
 
 
 def _allocate_step_id(preferred: Any, secondary: Any, existing: set[str]) -> tuple[str, bool]:
-    """Return a fresh legal V4 step id and whether one had to be allocated.
-
-    A legal requested id that is free is used as-is (``allocated=False``).
-    Otherwise a legal id is derived from the requested id, then from the
-    snapshot's own id, then from the fixed ``step`` stem, with a deterministic
-    numeric suffix on collision.
-    """
+    """Return a fresh legal V4 step id and whether one had to be allocated."""
     base = "step"
     for candidate in (preferred, secondary):
         if candidate is None:
@@ -994,15 +942,7 @@ def instantiate_card(
     *,
     registry: ExecutionRegistry | None = None,
 ) -> dict[str, Any]:
-    """Build one step from a card snapshot and validate the resulting document.
-
-    The requested step id is used when it is legal and fresh; otherwise a
-    unique legal V4 id is allocated deterministically.  The snapshot's
-    scientific payload is copied verbatim (no scientific interpretation), the
-    binding choices are normalized into the frozen binding wire, and the
-    resulting document is validated through the producer validator.  ``ok``
-    mirrors that validation.
-    """
+    """Build one step from a card snapshot and validate the resulting document."""
     context, context_problems = (
         _coerce_document(document_context) if document_context is not None else (None, [])
     )
@@ -1095,13 +1035,7 @@ def validate_document(
     *,
     registry: ExecutionRegistry | None = None,
 ) -> dict[str, Any]:
-    """Validate a document through the producer validator (thin wrapper).
-
-    Accepts the request's document mapping (serialized to canonical JSON) or
-    exact text/bytes; the answer is the producer
-    :class:`~confflow.producer.validation.ValidationReport` plus the frozen
-    response envelope.
-    """
+    """Validate a document through the producer validator (thin wrapper)."""
     if isinstance(document, Mapping):
         data, problems = _document_bytes(document)
         if data is None:
@@ -1139,13 +1073,7 @@ def _request_path(parts: Sequence[Any]) -> str:
 
 
 def dispatch_request(data: bytes | bytearray | str) -> dict[str, Any]:
-    """Parse and dispatch one ``confflow.authoring.v4`` request.
-
-    The request is validated against the published request schema; malformed
-    requests answer with a structured envelope and ``ok=False``.  Unknown or
-    unimplemented operations (``check_compatibility`` is PR-1 out of scope)
-    answer structured as well, never with a traceback.
-    """
+    """Parse and dispatch one ``confflow.authoring.v4`` request."""
     try:
         text = bytes(data).decode("utf-8") if isinstance(data, (bytes, bytearray)) else str(data)
         request = json.loads(text)

@@ -1,25 +1,13 @@
 #!/usr/bin/env python3
 
-"""Single formal V4 runtime authority (worker I).
+"""Single formal V4 runtime authority.
 
-Every formal execution entrypoint — plain ``confflow`` CLI, the application
-service (``run_workflow_through_service`` / ``build_workflow_service``), and
-the control worker — enters the ONE V4 application through this module::
-
-    formal entry -> V4 WorkflowDocument -> compile_workflow
-        -> V4RunApplication orchestration -> typed Binding -> WorkItem
-        -> executor -> WorkItemStore -> StepResult publication
-        -> downstream -> manifest.
-
-No formal path reaches the legacy engine (the historical workflow engine,
-its calculation runners and result stores, legacy workflow-state execution,
-legacy rerun glue, or program/task dispatch).  Legacy V1/V2/V3 documents fail
-closed with ``legacy_workflow_not_executable`` plus ``migration required``;
-when the document's outermost version discriminator is a schema id that was
-published once and then retired, the message also carries the stable
-``unsupported_workflow_version`` code so a caller can classify it without
-parsing prose.  Rejection happens before any filesystem or durable side
-effect.
+All formal entrypoints (plain CLI, application service, control worker) enter the one V4
+application; no formal path reaches the legacy engine.
+Legacy V1/V2/V3 documents fail closed with `legacy_workflow_not_executable` plus migration
+required; retired/unknown schema ids also carry stable `unsupported_workflow_version` so callers
+can classify without parsing prose.
+Rejection happens before any filesystem or durable side effect.
 """
 
 from __future__ import annotations
@@ -136,23 +124,7 @@ def run_v4_document(
 
 
 def terminalize_generation_for_durable_cancel(*, run_root: str, reason: str) -> str:
-    """Publish the run root's terminal generation truth for a confirmed cancel.
-
-    A restarting controller that proved the prior producer process is gone
-    and holds a durable cancellation intent must bring the JobDesk-visible
-    generation record to its terminal truth instead of leaving a crashed
-    attempt's ``running`` record current forever.
-
-    Terminal ownership is decided by the run root's arbitration authority
-    (:mod:`confflow.persistence.arbitration`): a confirmed same-generation
-    terminal manifest means completion (or the scientific failure)
-    linearized before the cancel and its status is returned unchanged;
-    otherwise the durable cancel wins and the current generation is
-    terminalized as ``cancelled`` with no manifest pointer and an explicit
-    failure note.  A run root with no generation returns ``"cancelled"``
-    without inventing a record.  Returns the effective terminal status
-    (``completed``/``partial``/``failed``/``cancelled``).
-    """
+    """Publish the run root's terminal generation truth for a confirmed cancel."""
     from ..persistence import arbitration
 
     if not isinstance(reason, str) or not reason.strip():

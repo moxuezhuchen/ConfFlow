@@ -2,68 +2,18 @@
 
 """V4 structure-transform executor: explicit pure set operations.
 
-Pure executor: never shells to Gaussian/ORCA, never calls the calculation
-pipeline, never imports legacy runner code.  One :class:`WorkItem` carries
-the whole structure set on the ``structure`` port (``ONE_OR_MORE SINGLE``)
-and the step declares ``scientific.transform`` in
-``{refine, deduplicate, filter}``.
-
-Science provenance (extracted, not invented)
---------------------------------------------
-The geometry comparison science lives in :mod:`confflow.science`
-(exclusive V4 ownership, no legacy orchestration transitives):
-
-- bond perception ``d < bond_scale * (r_i + r_j)`` with the 0.4 A minimum
-  and GaussView covalent radii via :mod:`confflow.science.bonds` (edge
-  over the centralised :mod:`confflow.science.bonding` authority);
-- default ``bond_scale = 1.15`` matches the ConfGen perception default
-  (``tolerances.bond_scale``); ``topology_mapping.BOND_SCALE_FACTOR`` (1.2)
-  remains the default of the generic graph helpers, not of refine;
-- default ``rmsd_threshold_angstrom = 0.25`` is
-  ``RefineOptions.threshold``;
-- duplicate comparison is :func:`confflow.science.frame_compare.compare_frames`:
-  RMSD is only evaluated under a legal element/edge-preserving mapping
-  found by the budgeted exact search of
-  :mod:`confflow.science.topology_mapping` (so atoms that differ only by
-  symmetry-equivalent labels, such as the hydrogens of a methyl group, are
-  recognised as duplicates).  This module only wires those algorithms to
-  typed V4 domain records.
-
-What is NOT carried over: XYZ file I/O, multiprocessing pools, CLI
-progress, and MMFF optimization. Energy-window / imaginary-frequency
-filtering is ``filter``-only via the bound ``results`` port (N3, see
-:mod:`confflow.execution.energy_filter`); ``refine`` applies none.
-
-Kinds:
-
-- ``deduplicate``: collapse content-identical records (equal
-  ``geometry_digest``) strictly within one scientific-identity group
-  ``(charge, multiplicity, group_key, role)``.  Records differing in any
-  of those fields are never collapsed.  The representative is the lowest
-  canonical id, so selection is reorder-invariant.
-- ``refine``: topology-grouped RMSD dedup.  Same scientific-identity
-  grouping as above plus element signature; within a group, candidates
-  in canonical id order are compared against retained representatives
-  and dropped only on a proven RMSD witness at or below the threshold.
-  A candidate is a duplicate when some legal mapping gives an RMSD
-  strictly below the threshold.  When the mapping search exhausts its node
-  budget (``mapping_budget``, default 1000 nodes per pair) the pair is
-  *unresolved*: both structures are kept and the step notes say so.
-  ``topology_bonds`` (optional) declares the bonding topology exactly as a
-  ConfGen v3 ``topology`` does (``bonds`` or ``add_bond``/``del_bond``, typed
-  ``COVALENT``/``COORDINATION``/``FORMING``/``BREAKING`` edges, ``atoms``,
-  ``index_base``, plus ``coordination`` and ``bond_scale``) and is built by the
-  very function ConfGen uses (``planner.build_typed_graph``); typed
-  non-covalent edges must be preserved by every mapping.  Without it the
-  topology is perceived from geometry as before.
-  Optional ``max_structures`` truncates in id order.
-- ``filter``: explicit ``min_atoms`` / ``max_atoms`` / ``max_structures``
-  selection in canonical id order, plus N3 energy selection from the
-  bound ``results`` port. Unknown native keys fail closed.
-
-All results bind output entities; no native syntax is interpreted beyond
-the documented transform-native vocabulary.  The executor never raises:
-every failure is a typed ``FAILED`` result.
+Pure executor: never shells to Gaussian/ORCA, calls no calculation pipeline, imports no
+legacy runner code. One WorkItem carries the whole set on the ``structure`` port
+(``ONE_OR_MORE SINGLE``); the step declares ``scientific.transform`` in ``{refine, deduplicate, filter}``.
+Deduplicate collapses equal ``geometry_digest`` strictly within
+``(charge, multiplicity, group_key, role)``; differing records are never
+collapsed; lowest canonical id wins so selection is reorder-invariant.
+Refine is topology-grouped RMSD dedup (plus element signature), dropped
+only on a proven witness at/below threshold; budget-exhausted pairs are
+unresolved and both kept with a note; typed non-covalent edges are
+preserved by every mapping. Filter is id-ordered atom-count/energy
+selection; unknown native keys fail closed. Never raises: every failure
+is a typed ``FAILED`` result.
 """
 
 from __future__ import annotations
@@ -134,13 +84,7 @@ REFINE_NATIVE_KEYS = frozenset(
 
 
 def _topology_identity(record: StructureRecord) -> tuple[Any, ...]:
-    """Return the topology half of the scientific-identity grouping key.
-
-    A nonempty patch contributes its semantic payload (provenance
-    excluded); a persisted working graph contributes its adjacency rows.
-    Pure-legacy records contribute ``(None, None)`` so legacy grouping
-    never moves.
-    """
+    """Return the topology half of the scientific-identity grouping key."""
     patch = record.topology_patch
     patch_key = None
     if patch is not None and not patch.is_empty:
@@ -155,13 +99,7 @@ def _topology_identity(record: StructureRecord) -> tuple[Any, ...]:
 
 
 def _scientific_group(record: StructureRecord) -> tuple[Any, ...]:
-    """Return the scientific-identity grouping key for one record.
-
-    Records collapse only within one group: charge, multiplicity,
-    group key, role, element signature, and intended topology must all
-    agree.  Geometry content alone never merges distinct scientific
-    entities.
-    """
+    """Return the scientific-identity grouping key for one record."""
     return (
         record.charge,
         record.multiplicity,
@@ -198,13 +136,7 @@ def _bond_labels(bonds: Sequence[tuple[int, int]], atoms: Sequence[str]) -> str:
 def _connectivity_notes(
     ordered: Sequence[StructureRecord], frames: Mapping[str, Mapping[str, Any]]
 ) -> list[str]:
-    """Report structures whose bonding graph differs from the majority of their group.
-
-    Report only: nothing is dropped, merged or reordered.  Within one scientific
-    group the most common bond set is the reference (ties go to the set held by
-    the structure with the smallest id); every structure with a different bond
-    set gets one note naming the bonds it gained and lost.
-    """
+    """Report structures whose bonding graph differs from the majority of their group."""
     bond_sets = {record.id: _graph_bonds(frames[record.id]) for record in ordered}
     counts: dict[frozenset[tuple[int, int]], int] = {}
     first_seen: dict[frozenset[tuple[int, int]], str] = {}
@@ -334,12 +266,7 @@ class TransformExecutor:
     def _deduplicate(
         members: list[StructureRecord],
     ) -> tuple[list[StructureRecord], list[str]]:
-        """Collapse content-identical records within scientific groups.
-
-        Grouping is ``(charge, multiplicity, group_key, role, elements)``
-        plus equal ``geometry_digest``; the lowest canonical id wins, so
-        representative selection is invariant under input reordering.
-        """
+        """Collapse content-identical records within scientific groups."""
         best: dict[tuple[Any, ...], StructureRecord] = {}
         notes: list[str] = []
         for record in sorted(members, key=lambda item: item.id):
@@ -361,12 +288,7 @@ class TransformExecutor:
         members: list[StructureRecord],
         native: Mapping[str, Any],
     ) -> tuple[list[StructureRecord], list[str]]:
-        """Topology-grouped RMSD dedup with an explicit threshold.
-
-        Energy-window and imaginary-frequency filtering from the legacy
-        refine block have no input data on transform ports (structures
-        only) and are therefore not applied.
-        """
+        """Topology-grouped RMSD dedup with an explicit threshold."""
         unknown = sorted(set(native) - REFINE_NATIVE_KEYS)
         if unknown:
             raise DomainError(
@@ -444,12 +366,7 @@ class TransformExecutor:
 
     @staticmethod
     def _adjacency(record: StructureRecord, bond_scale: float) -> list[list[int]]:
-        """Resolve the intended bond adjacency of one record.
-
-        The single working-topology authority: a persisted graph wins
-        verbatim, otherwise perception plus the record patch.  Refine
-        comparisons therefore see the same intended graph ConfGen used.
-        """
+        """Resolve the intended bond adjacency of one record."""
         try:
             numbers = [atomic_number(symbol) for symbol in record.atoms]
         except Exception as exc:
@@ -467,14 +384,7 @@ class TransformExecutor:
     def _declared_topology(
         native: Mapping[str, Any], *, registry: Any | None = None
     ) -> dict[str, Any] | None:
-        """Resolve ``topology_bonds`` into the normalised ConfGen spec, or ``None``.
-
-        A4a: optional ``registry`` passthrough (default keeps existing calls).
-        AG2 generic: allowed members are the six generic keys plus each
-        descriptor's explicit ``topology_input_keys`` (only the built-in
-        overlay contributor declares one; customs default to empty so no
-        future component auto-authorizes new inputs).
-        """
+        """Resolve ``topology_bonds`` into the normalised ConfGen spec, or ``None``."""
         raw = native.get("topology_bonds")
         if raw is None:
             return None
@@ -533,10 +443,7 @@ class TransformExecutor:
         *,
         registry: Any | None = None,
     ) -> dict[str, Any]:
-        """Return the comparison frame (atoms, coordinates, bonding graph) of one record.
-
-        A4a: optional ``registry`` passthrough (default keeps existing calls).
-        """
+        """Return the comparison frame (atoms, coordinates, bonding graph) of one record."""
         from ..science.topology_mapping import graph_from_adjacency, with_typed_edges
 
         if declared is None:
@@ -575,14 +482,7 @@ class TransformExecutor:
         mapping_budget: int,
         notes: list[str],
     ) -> tuple[StructureRecord, float] | None:
-        """Return the retained duplicate witness for *record*, if proven.
-
-        Proof requires a legal element/edge-preserving mapping under which
-        the Kabsch RMSD is strictly below the threshold.  A pair whose
-        mapping search runs out of budget is unresolved and is kept, never
-        collapsed; anything else (different topology, distinct geometry) is
-        kept too.
-        """
+        """Return the retained duplicate witness for *record*, if proven."""
         from ..science.frame_compare import compare_frames
 
         for other in retained:

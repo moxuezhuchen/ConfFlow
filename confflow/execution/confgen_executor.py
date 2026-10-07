@@ -2,28 +2,17 @@
 
 """V4 confgen executor: conformer-generation ensemble production.
 
-Pure executor: never shells to Gaussian/ORCA, never calls the calculation
-pipeline, never imports legacy runner code.
-
-The only science path is the typed v3 scope; a scope without
-``schema_version: 3`` fails closed.
-
-Typed v3 scopes (``native.schema_version == 3``) run the
-Declare -> Enumerate -> Realize -> Perceive -> Account engine over the
-normalized wire in ``ScientificDefinition.native``: resolve inputs to a
-typed spec/context, expand the conditional C->R->T tree, publish
-leaf-only structures, stamp ``confgen_state`` results, and write the
-``ensemble_report`` plus canonical gzip JSONL target records. The v3 path
-is deterministic by default; a seed is required only when ``sampling``
-requests a capped subset.
-
-Identity: members use the frozen
-:func:`confflow.execution.output_identity.conformer_output_id` authority
-with the stable leaf ordinal as the native member index. Lineage is
-single-parent from the seed structure. Confgen emits structures and state
-results only (no energies are invented, no C or C-R intermediates are
-published). Artifacts carry run-relative locators plus checksums. The
-executor never raises.
+Pure executor: never shells to Gaussian/ORCA, calls no calculation pipeline,
+imports no legacy runner code. Only the typed v3 scope runs; any scope
+without ``schema_version: 3`` fails closed. The v3 path runs Declare,
+Enumerate, Realize, Perceive, Account over ``ScientificDefinition.native``,
+publishing leaf-only structures with ``confgen_state`` results plus the
+``ensemble_report`` and canonical gzip JSONL targets; deterministic by
+default, with a seed required only when ``sampling`` requests a capped
+subset. Members use frozen ``conformer_output_id`` with stable leaf ordinal
+as index and single-parent lineage from the seed; no energies are invented
+and no C or C-R intermediates are published. Artifacts carry run-relative
+locators plus checksums. The executor never raises.
 """
 
 from __future__ import annotations
@@ -153,11 +142,7 @@ class ConfgenExecutor:
         *,
         registry: Any | None = None,
     ) -> WorkItemResult:
-        """Run the typed v3 engine path (deterministic unless sampling).
-
-        A4a: optional ``registry`` passthrough to the CORE boundary
-        (default ``None`` keeps the existing call form).
-        """
+        """Run the typed v3 engine path (deterministic unless sampling)."""
         from confflow.science.confgen.accounting import stamp_production_results
         from confflow.science.confgen.engine import (
             AtomOrderViolationError,
@@ -382,12 +367,7 @@ class ConfgenExecutor:
     def _no_realized_structure_diagnostic(
         work_item: WorkItem, report: Mapping[str, Any]
     ) -> Diagnostic:
-        """Explain a run that published no structure, from the enumeration ledger.
-
-        Uses the terminal-status vocabulary of the report's ``target_categories``
-        (REALIZED / UNRESOLVED / DRIFTED / ...): a run with no REALIZED target
-        is a failure, never a completed empty ensemble.
-        """
+        """Explain a run that published no structure, from the enumeration ledger."""
         counts = report.get("counts", {})
         categories = {
             name: int(value)
@@ -429,15 +409,7 @@ class ConfgenExecutor:
         leaves: list[Any],
         context: Any,
     ) -> ResultSet:
-        """Attach resolved scope descriptors for downstream chaining.
-
-        Traverses the registry calling each component's
-        ``serialize_inherited_state`` (state slices from the generic key,
-        never ``context.input_state_key`` attributes); the v3 wire
-        adapter assembles the legacy mapping byte-identically
-        (torsions/rings/coordination order, empties, label verbatim).
-        Scope lives in domain-semantic ``Provenance`` metadata only.
-        """
+        """Attach resolved scope descriptors for downstream chaining."""
         import dataclasses
 
         from confflow.science.confgen.wire_v3 import (
@@ -536,18 +508,7 @@ class ConfgenExecutor:
     def _chained_input_state(
         self, work_item: WorkItem, driving: StructureRecord
     ) -> tuple[Any | None, dict[str, Any]]:
-        """Resolve the optional upstream confgen_state result (strict).
-
-        The ``confgen_state`` result port is matched by subject at assembly;
-        here the selection is strict: zero or one result, exactly one
-        candidate whose subject is exactly the driving structure id
-        (``None`` or mismatched subjects are rejected, never guessed), kind
-        ``confgen_state``, value parsed as a labeled StateKey. The value
-        alone carries state authority (never metadata); the upstream
-        certificate digest is inherited from semantic result provenance
-        metadata alongside the key. Returns ``(input_key, upstream)`` where
-        upstream records the inherited result identity and certificate.
-        """
+        """Resolve the optional upstream confgen_state result (strict)."""
         from confflow.science.confgen.model import ConfgenStateKey
 
         empty = {
@@ -820,15 +781,7 @@ class ConfgenExecutor:
     def _component_diagnostic_warnings(
         report: Mapping[str, Any], work_item: WorkItem
     ) -> tuple[Diagnostic, ...]:
-        """Expose engine component diagnostics as visible ensemble warnings.
-
-        Generic over component ids (never names one); distorted rows become
-        WARNING diagnostics, explicit hook errors become ERROR diagnostics.
-        Atom ids are global 0-based (``index_base`` 0, stated in the message
-        and details so readers never mistake them for 1-based labels).
-        Empty or absent input yields no diagnostics so existing outputs
-        stay byte-identical.
-        """
+        """Expose engine component diagnostics as visible ensemble warnings."""
         raw = report.get("component_diagnostics") if isinstance(report, Mapping) else None
         if not isinstance(raw, Mapping) or not dict(raw):
             return ()
@@ -896,13 +849,7 @@ class ConfgenExecutor:
     def _serialized_component_lists(
         report: Mapping[str, Any], work_item: WorkItem
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Serialize component warnings/errors for the ensemble artifact.
-
-        Built from the same ``_component_diagnostic_warnings`` objects as
-        the runtime diagnostics so artifact and runtime stay consistent.
-        WARNING rows and ERROR rows are returned separately; errors stay
-        explicitly visible and are never relabeled as normal warnings.
-        """
+        """Serialize component warnings/errors for the ensemble artifact."""
         warn_rows: list[dict[str, Any]] = []
         err_rows: list[dict[str, Any]] = []
         for diag in ConfgenExecutor._component_diagnostic_warnings(report, work_item):

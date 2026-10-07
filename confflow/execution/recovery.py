@@ -113,12 +113,7 @@ class RescueDriver(Protocol):
         *,
         stage: str,
     ) -> tuple[NativeExecutionResult, NativeResult | None]:
-        """Execute one native calculation and parse its result.
-
-        Returns the execution result plus the parsed native result, or
-        ``None`` when parsing itself failed.  Cancellation and walltime
-        handling match the primary execution path.
-        """
+        """Execute one native calculation and parse its result."""
         ...
 
 
@@ -141,10 +136,5 @@ class RecoveryPolicy(Protocol):
         ...
 
     def execute(self, context: RecoveryContext, driver: RescueDriver) -> RecoveryExecution | None:
-        """Perform recovery work through *driver*.
-
-        Returns the recovery execution, or ``None`` when recovery produced
-        nothing usable.  Returning ``None`` is itself a recorded outcome,
-        never a silent skip.
-        """
+        """Perform recovery work through *driver*."""
         ...

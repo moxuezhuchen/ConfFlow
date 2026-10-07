@@ -2,76 +2,12 @@
 
 """Producer checkpoint/Hessian reuse helper (Phase 6 input simplification).
 
-:func:`wire_checkpoint_reuse` adds one semantic checkpoint edge to a strict
-V4 document: the target step gains a ``checkpoint`` input binding fed by the
-source step's ``artifacts`` output with the ``checkpoint`` role selector,
-promised with binding cardinality ``one``.  It is a pure authoring helper:
-every rule it applies comes from an existing authority, and it creates no
-second runtime.
-
-Authorities consulted (imported, never copied):
-
-- :mod:`confflow.execution.registry` -- executor contracts, the ``standard``
-  adapter's ``checkpoint`` input port (``optional``/``by_subject`` with the
-  ``checkpoint`` role) and the calculation ``artifacts`` output port roles;
-- :func:`confflow.programs.gaussian.rendering.resolve_write_chk` -- whether
-  the source natively writes a checkpoint file;
-- :func:`confflow.programs.gaussian.energy_semantics.unsupported_method_finding`
-  -- method families whose final energy ConfFlow cannot publish;
-- :mod:`confflow.workflow.v4.graph` -- binding cardinality strengthening
-  (``optional`` ports accept a required ``one`` binding), selector/role
-  checks, and cycle detection;
-- :func:`confflow.workflow.v4.compiler.compile_workflow` -- the full
-  document is compiled through the existing compiler, so cycles, unknown
-  steps, ORCA/QST misuse, and every semantic rule reject exactly as
-  hand-written documents do;
-- :class:`confflow.programs.gaussian.adapter.GaussianProgramAdapter` (in
-  tests) -- the current renderer proving ``%Chk``/``%OldChk`` output and
-  the scope cardinality of the checkpoint edge.
-
-Consumption promise
--------------------
-The emitted binding declares cardinality ``one`` (which the graph
-authority permits on the ``optional`` checkpoint port).  At assembly the
-``one`` contract requires exactly one subject-matched artifact, so a
-missing checkpoint fails through the existing ``artifact_flow`` guard
-(``artifact_subject_missing``) instead of silently running without restart
-data.  Atom matching stays with the existing ``by_subject`` pairing: the
-helper never sets a pairing, so no path or order guessing is introduced.
-
-Method compatibility (no chemistry guessing)
---------------------------------------------
-The helper retains each calculation's native method verbatim and records
-the source relationship in the digest-covered binding (bindings are part
-of the definition digest).  Two checks are decidable at authoring time
-without guessing chemistry and therefore refuse loudly:
-
-- charge/spin compatibility: explicit step overrides and declared bound
-  structure state propagate along structure bindings. Known unequal values
-  refuse. Unknown values are compatible only when the target inherits the
-  checkpoint source's state without a field override. Run defaults remain
-  fallbacks and never replace inherited state. An explicit target override
-  against an unknown source fails closed;
-- effective route method: the route keywords, after removing only the
-  helper-managed job-type items (``Opt(...)``, ``IRC(...)``, ``Freq``,
-  standalone ``SP``), must agree token-for-token, and the remaining native scientific
-  payload (basis/ECP/extra sections, ``modredundant``, atom mapping --
-  everything except the helper-managed ``keyword``/``write_chk``/
-  ``link0`` keys) must agree exactly; any other difference is a known
-  differing method for Hessian reuse and is refused by default.  The
-  comparison is conservative exact equality: no chemistry equivalence is
-  ever guessed.
-
-Everything else is deferred to runtime and documented as such: structure
-atom counts (structures are runtime data; ``by_subject`` pairing plus the
-executor's atom-sequence gate own them), basis/method equivalence beyond
-token identity, and checkpoint file presence (owned by staging and the
-``one`` cardinality guard).  A user-intended method change (for example a
-deliberate Hessian transfer across levels of theory) is accepted only
-with the explicit advanced override ``allow_method_change=True``, which
-is recorded in the authoring-layer provenance annotation on the target
-step (annotations are digest-excluded by design; the binding itself stays
-digest-covered).
+Adds one ``checkpoint`` binding (cardinality ``one``) from source ``artifacts`` output with ``checkpoint`` role selector; pure authoring helper, full document compiled through the existing compiler.
+Missing checkpoint fails through the ``artifact_flow`` guard (``artifact_subject_missing``); ``by_subject`` pairing is never set, so no path/order guessing.
+Bindings are digest-covered; ``allow_method_change=True`` records only in the digest-excluded provenance annotation, native method retained verbatim.
+Charge/spin refuse loudly: known unequal values refuse; unknown accepts only when target inherits source state verbatim without override (run defaults are fallbacks only); explicit target override against unknown source fails closed.
+Route keywords minus helper-managed job-type items (Opt/IRC/Freq/SP) must agree token-for-token and remaining native payload (basis/ECP/extra, modredundant, atom mapping; excluding keyword/write_chk/link0) must agree exactly; conservative exact equality, no chemistry equivalence guessed, differing method refused by default.
+Atom counts, basis equivalence beyond token identity, and file presence defer to runtime (by_subject pairing, atom-sequence gate, staging plus ``one`` guard).
 """
 
 from __future__ import annotations
@@ -202,18 +138,7 @@ def _check_gaussian_sides(
     source: Mapping[str, Any],
     target: Mapping[str, Any],
 ) -> tuple[str, str]:
-    """Enforce the Gaussian/standard-adapter/IRC requirements, or refuse.
-
-    Returns the ``(source_keyword, target_keyword)`` pair for the route
-    layer.  Both ends must resolve through the program registry to
-    Gaussian, both must use the ``standard`` execution adapter (which owns
-    the ``checkpoint`` input port), and neither route may carry a QST
-    item: the Gaussian adapter declares no checkpoint vocabulary for QST
-    rendering and refuses staged-but-unused success at render time.
-
-    Generic shape/registry I/O stays here in original row order; Gaussian
-    decisions delegate to ``checkpoint_policy`` stages with data values.
-    """
+    """Enforce the Gaussian/standard-adapter/IRC requirements, or refuse."""
     for step in (source, target):
         step_id = str(step.get("id"))
         block = _calculation_block(step)
@@ -305,12 +230,7 @@ def _native_scientific_core(native: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _step_override_value(step: Mapping[str, Any], field: str) -> Any:
-    """Return the explicit step scientific override for *field*, if declared.
-
-    Only ``calculation.overrides`` and ``confgen.overrides`` count.
-    Transform steps carry no scientific overrides.  ``None`` means no
-    explicit declaration (unknown at this layer).
-    """
+    """Return the explicit step scientific override for *field*, if declared."""
     for block_name in ("calculation", "confgen"):
         block = step.get(block_name)
         if isinstance(block, Mapping):
@@ -432,27 +352,7 @@ def _declared_lineage_value(
     registry: ExecutionRegistry,
     seen: frozenset[str],
 ) -> tuple[bool, Any]:
-    """Return the bound-lineage DECLARED VALUE for *field* on *step_id*.
-
-    Conservative proof only (no chemistry guessing, no second runtime):
-
-    - an explicit step scientific override wins when present;
-    - otherwise every bound STRUCTURE input root must prove the same
-      declared value: run-input declarations carrying the field explicitly,
-      or producer steps proven recursively through their own override or
-      structure lineage (transform/ConfGen passthrough propagates when the
-      registry declares structure ports on both ends);
-    - only STRUCTURE input bindings and STRUCTURE output ports are
-      followed (artifact/checkpoint edges are skipped, never chosen);
-    - cycles, disabled producers, unknown producers/ports/contracts, and
-      ambiguous differing values across roots are unknown (not picked).
-
-    Run ``global.scientific_defaults`` are deliberately NOT consulted
-    here: a default is a fallback for rendering, never proof of the
-    absolute actual charge when a runtime-imported structure may carry its
-    own value.  ``(False, None)`` means unknown/deferred-or-refused by the
-    caller; ``(True, value)`` is a proven declared value.
-    """
+    """Return the bound-lineage DECLARED VALUE for *field* on *step_id*."""
     step = steps_by_id.get(step_id)
     if step is None:
         return False, None

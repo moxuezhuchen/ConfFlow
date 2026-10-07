@@ -65,29 +65,7 @@ def run_control_worker(
     workflow_runner: Callable[..., dict[str, Any] | None] = _formal_v4_runner,
     sleep: Callable[[float], None] = time.sleep,
 ) -> RunState:
-    """Consume one prepared queued token and run the bound workflow.
-
-    A paused attempt remains under this worker's supervision until a formal
-    producer ``resume`` changes it back to ``queued``.  Rebuilding the local
-    adapter for each attempt is intentional: every attempt gets the producer's
-    current token, identity check, and lifecycle callbacks.
-
-    Terminal branching (D2) follows the durable service aggregate, which the
-    adapter commits from the formal V4 status: only V4 ``completed`` yields
-    service COMPLETED; V4 ``failed`` and V4 ``partial`` (as FAILED with a
-    ``v4.status.partial`` marker) yield service FAILED; V4 ``cancelled``
-    yields service CANCELLED. The worker never treats "runner returned
-    without exception" as success — the V4 status-owned aggregate decides.
-
-    Cancellation recovery is manifest-aware: a confirmed durable cancel for
-    a crashed attempt terminalizes the run root's generation record and
-    commits the service aggregate to the SAME terminal status the run root
-    already proves (a same-generation terminal manifest is the completion
-    linearization point and is never downgraded to cancelled).  Without
-    this, a crash between native work and terminal publication left the
-    JobDesk-visible generation ``running`` forever while the service said
-    cancelled.
-    """
+    """Consume one prepared queued token and run the bound workflow."""
     root = StateRoot.resolve(state_root)
     payload, config_path, tasks = _load_handoff(handoff_path, run_id, root)
     repository = SQLiteExecutionRepository(root)
@@ -319,15 +297,7 @@ def _commit_cancel_or_manifest_winner(
     *,
     work_dir: str,
 ) -> RunState:
-    """Terminalize the run root and commit the matching service aggregate.
-
-    The producer-side completion linearization point is the durable
-    same-generation ``run_result.json``.  When it exists, the run already
-    terminated (scientifically) before the cancel and the service commits
-    that status; otherwise the durable cancel wins and the generation
-    record is terminalized as cancelled.  Either way the JobDesk-visible
-    generation record and the durable service aggregate end consistent.
-    """
+    """Terminalize the run root and commit the matching service aggregate."""
     from .application.execution.workflow_adapter import (
         ExecutionLifecycle,
         _terminal_artifacts_for_status,
@@ -430,12 +400,7 @@ def _worker_workflow_runner(
     root: StateRoot,
     work_dir: str,
 ) -> Callable[..., dict[str, Any] | None]:
-    """Run the single V4 application while preserving the public report sidecar.
-
-    The interactive CLI owns this redirect for direct runs.  The external
-    worker crosses the service boundary without invoking that CLI, so it must
-    create the same ``<input-stem>.txt`` artifact itself.
-    """
+    """Run the single V4 application while preserving the public report sidecar."""
 
     def _run(**kwargs: Any) -> dict[str, Any] | None:
         with cli_output_to_txt(original_input):

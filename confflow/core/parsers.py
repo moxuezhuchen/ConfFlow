@@ -163,25 +163,7 @@ def parse_memory(mem_str: Any, unit: str = "MB") -> int:
 
 
 def parse_index_spec(value: Any) -> list[int]:
-    """Parse a 1-based index specification (supports list / string / ranges).
-
-    Used for ``freeze`` and other atom-index configuration fields.
-
-    Accepted formats:
-
-    - ``0`` / ``None`` / ``"0"`` → empty list
-    - ``"1,2,5-7"`` / ``"1 2 5-7"`` / ``[1, 2, "5-7"]``
-
-    Parameters
-    ----------
-    value : Any
-        Index specification.
-
-    Returns
-    -------
-    list[int]
-        Sorted, deduplicated list of 1-based indices.
-    """
+    """Parse a 1-based index specification (supports list / string / ranges)."""
     if value is None:
         return []
     if isinstance(value, (int, float)) and int(value) == 0:

@@ -59,12 +59,7 @@ def _resolve_field(
     override: int | None,
     default: int | None,
 ) -> tuple[int | None, str | None]:
-    """Resolve one scientific field.
-
-    An explicit step override outranks an inherent structure property so that
-    an operator declaration is never silently ignored; callers emit a
-    diagnostic when the two explicitly disagree.
-    """
+    """Resolve one scientific field."""
     if override is not None:
         return override, "step_override"
     if inherent is not None:
@@ -80,22 +75,7 @@ def resolve_scientific_parameters(
     overrides: FrozenDict | dict[str, Any],
     defaults: Any,
 ) -> tuple[EffectiveScientificParameters, tuple[Diagnostic, ...]]:
-    """Resolve effective charge/multiplicity for *structure* in one step.
-
-    Parameters
-    ----------
-    structure : StructureRecord
-        Structure whose inherent properties are the highest-priority source.
-    overrides : FrozenDict | dict[str, Any]
-        Explicit step scientific overrides.
-    defaults : ScientificDefaults
-        Explicit run-level scientific defaults.
-
-    Returns
-    -------
-    tuple[EffectiveScientificParameters, tuple[Diagnostic, ...]]
-        Effective parameters plus any conflict/parity diagnostics.
-    """
+    """Resolve effective charge/multiplicity for *structure* in one step."""
     override_charge = overrides.get("charge")
     override_multiplicity = overrides.get("multiplicity")
     default_charge = getattr(defaults, "charge", None)

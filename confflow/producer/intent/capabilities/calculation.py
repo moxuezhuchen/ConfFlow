@@ -107,16 +107,7 @@ _wire_calculation.__module__ = "confflow.producer.intent.compiler"
 def require_recipe_assignment(
     user: Mapping[str, Any], base: Mapping[str, Any], step_id: str
 ) -> None:
-    """Require explicit science for a recipe calculation assignment (L1-A2b1).
-
-    Capability-owned verbatim of the old ``compiler._require_recipe_assignment``:
-    reviewed recipes ship demo program/native placeholders so the catalog stays
-    compilable; an intent selecting a recipe must replace them on every
-    calculation step with the user's own explicit program and native mapping.
-    Non-calculation bases return silently (old early-return preserved).
-    Keywords are never transformed or guessed.  Real ``__module__`` is kept
-    (no old-path masquerade).
-    """
+    """Require explicit science for a recipe calculation assignment (L1-A2b1)."""
     if not isinstance(base.get("calculation"), Mapping):
         return
     if user.get("program") is None or user.get("native") is None:
@@ -130,17 +121,7 @@ def require_recipe_assignment(
 def patch_recipe_block(
     calculation_block: Mapping[str, Any], user: Mapping[str, Any], step_id: str
 ) -> dict[str, Any]:
-    """Patch one calculation wire block with user assignments (L1-A2b1, pure).
-
-    Capability-owned verbatim of the old ``compiler._patch_recipe_step``
-    calculation-mapping section (``program`` via ``_resolve_program``,
-    ``native`` whole-replace, ``role``/``adapter``/``profile``/``checks``/
-    ``check_params``/``recovery(+params)``/``seed``/``overrides``).
-    Takes the block mapping (not the whole step), returns a new dict.
-    Outer step fields (``_expanded``/resources/scheduler/annotations) stay in
-    the generic orchestrator ``producer/intent/recipes.py``.  Real
-    ``__module__`` is kept.
-    """
+    """Patch one calculation wire block with user assignments (L1-A2b1, pure)."""
     calculation = copy.deepcopy(dict(calculation_block))
     if user.get("program") is not None:
         calculation["program"] = _resolve_program(user["program"], step_id=step_id)
@@ -179,12 +160,7 @@ REJECTED_STEP_KEYS: frozenset = frozenset({"preset"})
 def calculation_fragment(
     step: Mapping[str, Any], card: dict[str, Any] | Mapping[str, Any], step_id: str
 ) -> dict[str, Any]:
-    """Complete capability-owned fragment for calculation cards (NEW adapter).
-
-    Keeps :func:`_wire_calculation` return shape verbatim and wraps it as
-    ``{"calculation": payload}`` so the compiler merges without knowing the
-    slot name.  Declared fragment keys: ``("calculation",)``.
-    """
+    """Complete capability-owned fragment for calculation cards (NEW adapter)."""
     return {"calculation": _wire_calculation(step, card, step_id)}
 
 

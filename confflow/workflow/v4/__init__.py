@@ -2,24 +2,13 @@
 
 """ConfFlow Workflow V4 — greenfield core.
 
-V4 is an independent workflow engine.  It shares only the dependency-free
-:mod:`confflow.domain` semantic core and the :mod:`confflow.execution`
-capability registry; it never imports the V2/V3 workflow runtime, the legacy
-``confflow.config`` models, or the calc subsystem.
-
-Pipeline::
-
-    WorkflowDocument V4
-        -> parse            (confflow.workflow.v4.parser)
-        -> canonical definition
-        -> semantic validation
-        -> typed BindingGraph
-        -> deterministic compiler
-        -> ExecutionPlan
-        -> synthetic WorkItems (assembly)
-
-This milestone (V4-1) does not execute native programs; it establishes the
-domain model, compiler, digest axes, and architecture gates.
+Independent engine sharing only dependency-free :mod:`confflow.domain`
+and :mod:`confflow.execution` registry; it never imports the V2/V3
+runtime, legacy ``confflow.config`` models, or the calc subsystem.
+Pipeline: parse -> canonical definition -> validation -> BindingGraph
+-> compiler -> ExecutionPlan -> WorkItems (assembly). V4-1 establishes
+the domain model, compiler, digest axes, and gates without executing
+native programs.
 """
 
 from __future__ import annotations

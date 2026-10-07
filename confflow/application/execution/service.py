@@ -101,13 +101,7 @@ class ExecutionService:
         return self._terminal_arbiter(run_id)
 
     def _admit_cancellation(self, run_id: str) -> str | None:
-        """Durably claim cancellation admission; return a losing winner.
-
-        ``None`` means the cancel claim is durable (or there is no
-        generation to arbitrate yet).  A non-``None`` value is the terminal
-        status that already owns the generation: the caller must refuse the
-        cancel without touching any service state.
-        """
+        """Durably claim cancellation admission; return a losing winner."""
         if self._cancel_arbiter is None:
             return None
         return self._cancel_arbiter(run_id)
@@ -137,13 +131,7 @@ class ExecutionService:
         return self._ensure_launch(record)
 
     def consume_queued_launch(self, run_id: str) -> RunSnapshot:
-        """Consume one existing queued launch intent without creating an attempt.
-
-        This is the explicit agent/launcher hand-off for callers that must not
-        claim ``PREPARED`` or resume ``PAUSED`` state.  Terminal calls attach
-        to the durable result; only a queued aggregate with its existing,
-        non-empty token reaches the executor port.
-        """
+        """Consume one existing queued launch intent without creating an attempt."""
         record = self._require(run_id)
         if record.state in TERMINAL_STATES:
             return record.snapshot()
@@ -160,13 +148,7 @@ class ExecutionService:
         return self._ensure_launch(record)
 
     def recover_abandoned_launch(self, run_id: str, *, token: str) -> RunSnapshot:
-        """Requeue a running token after its external worker lease disappeared.
-
-        The control worker owns the kernel lease that proves the prior process
-        is gone before calling this method.  The service still performs the
-        durable compare-and-swap and creates a fresh attempt token, so an old
-        lifecycle callback cannot finish the recovered attempt.
-        """
+        """Requeue a running token after its external worker lease disappeared."""
         record = self._require(run_id)
         if record.state is not RunState.RUNNING or record.launch_token != token:
             return record.snapshot()
@@ -202,13 +184,7 @@ class ExecutionService:
             raise ExecutionServiceError(ErrorCode.INTERNAL, str(error), retryable=True) from error
 
     def validate_launch_request(self, request: LaunchRequest) -> RunSnapshot:
-        """Validate a formal hand-off against the current durable run facts.
-
-        Executors use this service-level check instead of reaching into the
-        repository.  A matching non-queued state is attach-only; a matching
-        queued state is launchable.  Every other token, run, attempt,
-        checkpoint, identity, or cancellation-pending combination is rejected.
-        """
+        """Validate a formal hand-off against the current durable run facts."""
         record = self._require(request.run_id)
         if (
             record.launch_token != request.token
@@ -250,13 +226,7 @@ class ExecutionService:
         return EventPage(snapshot=record.snapshot(), events=page, next_cursor=next_cursor)
 
     def cancel(self, run_id: str) -> RunSnapshot:
-        """Persist cancellation intent before asking an executor to confirm it.
-
-        Admission is arbitrated first: when the run root's generation
-        already has a terminal winner, the cancel is refused before any
-        service-state mutation, so ``cancel_requested`` is never recorded
-        for a cancellation that lost the ordering.
-        """
+        """Persist cancellation intent before asking an executor to confirm it."""
         record = self._require(run_id)
         if record.state in TERMINAL_STATES:
             raise _terminal_error(run_id)
@@ -313,13 +283,7 @@ class ExecutionService:
         )
 
     def lifecycle_checkpoint(self, run_id: str, token: str, checkpoint_id: str) -> RunSnapshot:
-        """Apply a token-bound checkpoint callback.
-
-        Checkpoints are best-effort progress projections, so a callback that
-        arrives after a durable cancellation is idempotently dropped instead of
-        failing the run; the engine already reports the stop through the
-        dedicated cancellation callback.
-        """
+        """Apply a token-bound checkpoint callback."""
         if not checkpoint_id:
             raise ExecutionServiceError(
                 ErrorCode.INVALID_REQUEST, "Checkpoint ID must not be empty"
@@ -346,13 +310,7 @@ class ExecutionService:
     def lifecycle_terminal(
         self, run_id: str, token: str, state: RunState, artifacts: Sequence[Artifact]
     ) -> RunSnapshot:
-        """Commit terminal state and path-validated manifest in one CAS mutation.
-
-        When the run root's terminal arbiter is wired, the callback must
-        project the arbitration winner: a competing terminal transition
-        (e.g. a completed callback after cancellation claimed the run) is
-        rejected instead of overwriting the winner.
-        """
+        """Commit terminal state and path-validated manifest in one CAS mutation."""
         if state not in {RunState.COMPLETED, RunState.FAILED}:
             raise ValueError("Executor callbacks may only complete or fail a run")
         winner = self._arbitration_winner(run_id)
@@ -387,13 +345,7 @@ class ExecutionService:
         )
 
     def lifecycle_cancelled(self, run_id: str, token: str) -> RunSnapshot:
-        """Commit cancellation only from the current token after work has stopped.
-
-        When the run root's terminal arbiter is wired, a cancellation
-        callback that contradicts the arbitration winner (completion or a
-        scientific failure claimed first) is rejected; the winner is never
-        reverted.
-        """
+        """Commit cancellation only from the current token after work has stopped."""
         winner = self._arbitration_winner(run_id)
         if winner is not None and winner != "cancelled":
             raise ExecutionServiceError(
@@ -636,15 +588,7 @@ class ExecutionService:
         allow_cancel_pending: bool = False,
         ignore_cancel_pending: bool = False,
     ) -> RunSnapshot:
-        """CAS a lifecycle callback only while its token remains current and legal.
-
-        ``allow_cancel_pending`` lets a callback keep mutating while a cancel
-        intent is pending (terminal completion/failure).  ``ignore_cancel_pending``
-        instead drops the callback entirely once cancellation owns the run, by
-        returning the current durable snapshot without any mutation.  Both paths
-        still require the current launch token first, so stale writers keep
-        failing closed.
-        """
+        """CAS a lifecycle callback only while its token remains current and legal."""
         while True:
             record = self._require(run_id)
             if record.launch_token != token:

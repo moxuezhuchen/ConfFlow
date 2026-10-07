@@ -1,39 +1,18 @@
 #!/usr/bin/env python3
 """V4-owned native process boundary for launching supervised programs.
 
-This module owns the mechanics of spawning an argv vector without a shell,
-observing it, and cancelling it with proof that the whole process boundary
-stopped.  It carries no workflow, program, policy, or configuration knowledge:
-callers pass a :class:`NativeExecutionRequest` and receive opaque handles,
-poll observations, cancellation verdicts, and reaped results.
-
-Lifecycle
----------
-``submit`` launches the process and returns a :class:`NativeHandle` whose key
-addresses supervisor-private state held in a dict guarded by a re-entrant
-lock.  ``poll`` reports whether the boundary is quiet.  ``cancel`` signals
-``SIGTERM``, waits a bounded grace window, escalates to ``SIGKILL``, and only
-then reports ``confirmed=True`` when liveness probes prove the boundary is
-dead.  ``collect`` reaps a terminal handle, reports wall time measured from a
-monotonic start stamp, and prunes the handle state.  Timeout policy stays with
-the caller (walltime plus ``cancel``); ``collect`` never synthesizes it.
-
-Provenance
-----------
-The boundary algorithms (POSIX session/process-group isolation, pid plus
-creation-time identity tokens, never signalling the supervisor's own group,
-``SIGTERM``-then-``SIGKILL`` escalation with proof, nonterminal polling while
-descendants live, stdout/stderr routed to files in the work directory) are
-ported from the proven legacy local-process mechanics and retyped to the
-frozen V4 interface.  Nothing is imported from the legacy subsystem; the small
-helpers needed here are vendored into this module.
-
-Thread safety
--------------
-All public methods hold an internal :class:`threading.RLock` for their whole
-operation, including the bounded waits inside ``cancel``.  Concurrent ``poll``
-calls therefore serialize against ``cancel``/``collect`` instead of observing
-half-updated boundary state.
+Spawns an argv vector without a shell and supervises it with proof the whole
+boundary stopped; carries no workflow/program/policy/config knowledge.
+``submit``/``poll``/``cancel``/``collect`` own handles, quiet checks, proven
+cancellation, and reaping; ``cancel`` is SIGTERM, bounded grace, then SIGKILL,
+reporting ``confirmed=True`` only when liveness probes prove the boundary
+dead. Timeout policy stays with the caller; ``collect`` never synthesizes it
+and reports wall time from a monotonic stamp. Isolation is POSIX
+session/process-group with pid plus creation-time tokens, never signalling
+the supervisor's own group; a boundary with live descendants stays
+nonterminal; stdout/stderr go to work-dir files. All public methods hold the
+internal ``RLock`` for the whole operation, so ``poll`` serializes against
+``cancel``/``collect`` instead of observing half-updated state.
 """
 
 from __future__ import annotations
@@ -105,14 +84,7 @@ _DETAIL_BOUNDARY_STILL_LIVE = "process boundary is still live"
 
 
 class NativeProcessError(Exception):
-    """Report an inoperable native process boundary.
-
-    Raised for submit-time problems (empty argv, non-string environment,
-    unusable work directory, spawn ``OSError``), unknown handle keys,
-    collect-before-terminal, and OS-level signalling failures.  The executor
-    layer maps this error to a typed native failure; every message carries a
-    stable detail string.
-    """
+    """Report an inoperable native process boundary."""
 
 
 def _popen_process_boundary_kwargs() -> dict[str, Any]:
@@ -184,27 +156,7 @@ class _ProcessRecord:
 
 
 class NativeProcessSupervisor:
-    """Launch argv vectors without a shell and supervise their boundary.
-
-    A submitted native process owns a dedicated process boundary.  POSIX uses
-    a new session/process group and psutil supplements it for descendants that
-    deliberately escape into a new session.  Polling therefore stays
-    nonterminal while a descendant of the launched root survives it.
-
-    Parameters
-    ----------
-    terminate_timeout : float
-        Bounded seconds to wait for the boundary to go quiet after
-        ``SIGTERM`` before escalating to ``SIGKILL``.  Must be finite and
-        non-negative.
-    kill_timeout : float
-        Bounded seconds to wait for the parent to be reaped and for the
-        boundary to go quiet after ``SIGKILL``.  Must be finite and
-        non-negative.
-    poll_interval : float
-        Sleep quantum in seconds used while waiting for the boundary to go
-        quiet.  Must be finite and non-negative.
-    """
+    """Launch argv vectors without a shell and supervise their boundary."""
 
     def __init__(
         self,

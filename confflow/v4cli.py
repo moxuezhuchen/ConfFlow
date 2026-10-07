@@ -1,29 +1,13 @@
 #!/usr/bin/env python3
 
-"""V4 production command surface (V4-6, main-owned).
+"""V4 production command surface.
 
-``confflow v4 ...`` is the formal V4 runtime path.  It never falls back
-to the legacy engine: unknown/legacy workflows fail closed with
-``legacy_workflow_not_executable`` and a migration-required message.
-
-Commands
---------
-- ``v4 contract --json`` — print the V4 producer contract bytes.
-- ``v4 boundary --json`` — print the P0 boundary protocol document
-  (canonicalization vectors, identities, compatibility vocabulary, schemas).
-- ``v4 canonical --stdin --json`` — canonicalize JSON bytes with RFC 8785
-  (JCS); duplicate keys and non-finite numbers are rejected structurally.
-- ``v4 validate (--workflow FILE | --stdin) --json`` — validate exact
-  workflow bytes through the producer validator.
-- ``v4 authoring --stdin --json`` — dispatch one ``confflow.authoring.v4``
-  request (describe_step, binding_candidates, instantiate_card,
-  validate_document) and print the structured response envelope.
-- ``v4 run --workflow FILE --inputs NAME=FILE ... --run-root DIR
-  --executable PROG=PATH ...`` — run a whole V4 workflow.
-
-All machine output is JSON on stdout; logs go to stderr.  Exit codes:
-0 success (or valid workflow), 1 structured failure (invalid workflow,
-failed run), 2 usage error.
+Formal `confflow v4 ...` runtime path; never falls back to legacy engine: unknown/legacy
+workflows fail closed with `legacy_workflow_not_executable` plus migration-required message.
+Commands: contract/boundary/canonical/validate/authoring/run (whole-workflow run).
+Canonicalize JSON via RFC 8785 (JCS); duplicate keys and non-finite numbers rejected structurally.
+Machine output is JSON on stdout, logs on stderr; exit 0 success/valid, 1 structured
+failure/invalid/failed run, 2 usage error.
 """
 
 from __future__ import annotations
@@ -108,12 +92,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _contract(args: argparse.Namespace) -> int:
-    """Print the V4 producer contract bytes.
-
-    Machine-readable stdout is the only output on purpose: building the
-    envelope defines pydantic models whose field-shadowing warnings are
-    not part of the contract.
-    """
+    """Print the V4 producer contract bytes."""
     import warnings
 
     import confflow
@@ -270,13 +249,7 @@ def _run(args: argparse.Namespace) -> int:
 
 
 def _report_run_failure(args: argparse.Namespace, exc: Exception) -> int:
-    """Report a run that failed with a domain error as a structured failure.
-
-    The application has already published the failed generation's terminal
-    truth (``run_result.json``) before the exception reaches this point; the
-    report reuses its steps and digest and names the reason, so ``--json``
-    always carries a report and the process exits non-zero without a traceback.
-    """
+    """Report a run that failed with a domain error as a structured failure."""
     import os
 
     run_id = os.path.basename(str(args.run_root).rstrip(os.sep)) or "run"
@@ -317,11 +290,7 @@ def _report_run_failure(args: argparse.Namespace, exc: Exception) -> int:
 
 
 def _step_failures(manifest: dict[str, Any]) -> list[dict[str, Any]]:
-    """List the error diagnostics of the failed steps of a run manifest.
-
-    One entry per error diagnostic: ``step_id``, the diagnostic ``code`` and its
-    ``message``.  This is the machine-readable reason a run did not complete.
-    """
+    """List the error diagnostics of the failed steps of a run manifest."""
     failures: list[dict[str, Any]] = []
     for step in manifest.get("steps", ()):
         if not isinstance(step, dict) or step.get("status") != "failed":
