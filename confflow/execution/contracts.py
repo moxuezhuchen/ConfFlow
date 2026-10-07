@@ -35,6 +35,7 @@ __all__ = [
     "RecoverySpec",
     "ResultProfileSpec",
     "allowed_port_pairings",
+    "port_by_name",
 ]
 
 
@@ -141,6 +142,14 @@ class PortSpec:
         }
 
 
+def port_by_name(ports: tuple[PortSpec, ...], name: str) -> PortSpec | None:
+    """Return the port named *name*, or ``None``."""
+    for port in ports:
+        if port.name == name:
+            return port
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class ExecutorContract:
     """Capability contract of a step executor.
@@ -218,17 +227,11 @@ class ExecutorContract:
 
     def input_port(self, name: str) -> PortSpec | None:
         """Return the declared input port *name*, or ``None``."""
-        for port in self.input_ports:
-            if port.name == name:
-                return port
-        return None
+        return port_by_name(self.input_ports, name)
 
     def output_port(self, name: str) -> PortSpec | None:
         """Return the declared output port *name*, or ``None``."""
-        for port in self.output_ports:
-            if port.name == name:
-                return port
-        return None
+        return port_by_name(self.output_ports, name)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a canonical, JSON-compatible representation."""
@@ -275,10 +278,7 @@ class ExecutionAdapterSpec:
 
     def input_port(self, name: str) -> PortSpec | None:
         """Return the declared input port *name*, or ``None``."""
-        for port in self.input_ports:
-            if port.name == name:
-                return port
-        return None
+        return port_by_name(self.input_ports, name)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a canonical, JSON-compatible representation."""

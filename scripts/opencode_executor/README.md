@@ -74,7 +74,7 @@ scripts/opencode_executor/run_task.sh \
 | Profile | Command | Notes |
 | --- | --- | --- |
 | `none` | (skip) | Smoke/setup runs |
-| `fast` | `./scripts/test.sh -q -m "not integration" --ignore=tests/test_install_release_wheel.py` | Excludes installer-pinned test like CI's non-3.12 matrix |
+| `fast` | `./scripts/test.sh -q -m "not integration"` | Non-integration suite (offline release/installer pipeline retired; CI runs unconditionally) |
 | `full` | `./scripts/test.sh -q` | Whole suite (2474 tests at time of writing) |
 | `integration` | `./scripts/test.sh -q -m integration` | `@pytest.mark.integration` only |
 | `gui` | (error) | No GUI suite exists → explicit failure, never silent skip |

@@ -14,8 +14,6 @@ import sys
 
 SUPPORTED_PROFILES = ("none", "fast", "full", "gui", "integration")
 
-_RELEASE_WHEEL_TEST = "tests/test_install_release_wheel.py"
-
 
 class UnsupportedProfileError(ValueError):
     """Raised when a profile cannot be honestly implemented in this repo."""
@@ -30,16 +28,14 @@ def resolve_profile(name: str) -> list[str] | None:
     if name == "none":
         return None
     if name == "fast":
-        # Unit + non-integration suite, skipping the release-installer test
-        # that requires a pinned Python (see .github/workflows/ci.yml: the
-        # 3.12-only installer job). Matches CI's "matrix excluding
-        # release installer lock-dependent tests" behaviour.
+        # Unit + non-integration suite through the repo's canonical runner
+        # (CI parity: the full matrix runs the same command unconditionally
+        # since the offline release/installer pipeline was retired).
         return [
             "./scripts/test.sh",
             "-q",
             "-m",
             "not integration",
-            f"--ignore={_RELEASE_WHEEL_TEST}",
         ]
     if name == "full":
         # Entire suite through the repo's canonical runner (CI parity:

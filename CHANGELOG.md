@@ -31,6 +31,16 @@ published boundary (`confflow.boundary.v4`) byte-identical.
 - **Producer boundary members and digests no consumer reads.** `e5c3032` (C3.2).
 - **The retired-runtime stubs and the `run_workflow` lazy export.** `8eda87f`
   (C1.2).
+- **The offline release/install pipeline** (`.github/workflows/release.yml`,
+  `scripts/install_release_wheel.py`,
+  `scripts/generate_dependency_locks.py`,
+  `confflow/release_dependencies.py`, `release/` locks and wheelhouse
+  manifests, and the `tests/test_install_release_wheel.py` /
+  `tests/test_release_dependencies.py` suites). Server installs use source
+  installation per `docs/USAGE.md` (`git clone` / `git pull && pip install .`).
+  Build provenance (`setup.py` → `confflow/__build__.py`) and the
+  install-provenance record schema (`confflow/install_provenance.py`) are
+  retained. `e4bd4ad` (R1.3).
 
 ### Added
 
