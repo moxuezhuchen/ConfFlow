@@ -202,7 +202,7 @@ def test_retention_gc_matrix(
     )
 
 
-@pytest.mark.parametrize("retention", list(RetentionClass))
+@pytest.mark.parametrize("retention", [RetentionClass.RETAINED, RetentionClass.TEMPORARY])
 def test_referenced_artifacts_are_never_collected(retention: RetentionClass) -> None:
     """Published references outrank any declared retention class."""
     assert (

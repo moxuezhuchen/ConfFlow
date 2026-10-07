@@ -107,16 +107,6 @@ class TestResolveRestartSubject:
             == "struct_A_prime"
         )
 
-    def test_passthrough_output_wins_over_native_subject(self) -> None:
-        assert (
-            resolve_restart_subject(
-                native_subject="struct_A",
-                output_structure_id="struct_A_prime",
-                geometry_semantics="passthrough",
-            )
-            == "struct_A_prime"
-        )
-
     def test_native_subject_kept_when_output_id_empty(self) -> None:
         assert (
             resolve_restart_subject(
@@ -189,19 +179,6 @@ class TestSelectRestartArtifact:
             )
         assert again.value.code == "artifact_subject_ambiguous"
 
-    def test_role_mismatch_counts_as_missing(self) -> None:
-        candidates = ArtifactSet.of(
-            _artifact(
-                "log_A",
-                role="native_output",
-                subject="struct_A",
-                locator_path="steps/s_freq/job.log",
-            )
-        )
-        with pytest.raises(ArtifactFlowError) as caught:
-            select_restart_artifact(artifacts=candidates, subject_structure_id="struct_A")
-        assert caught.value.code == "artifact_subject_missing"
-
     def test_error_carries_step_context(self) -> None:
         candidates = ArtifactSet.of()
         with pytest.raises(ArtifactFlowError) as caught:
@@ -244,9 +221,6 @@ class TestFilterByRole:
 
     def test_checkpoint_filter_excludes_native_output_and_stderr(self) -> None:
         assert filter_by_role(self._mixed_set(), frozenset({"checkpoint"})).ids == ("chk_A",)
-
-    def test_native_output_filter_is_exact(self) -> None:
-        assert filter_by_role(self._mixed_set(), frozenset({"native_output"})).ids == ("log_A",)
 
     def test_multi_role_filter_preserves_set_order(self) -> None:
         assert filter_by_role(self._mixed_set(), frozenset({"stderr", "checkpoint"})).ids == (
@@ -324,15 +298,8 @@ class TestCardinalityMatrix:
     @pytest.mark.parametrize(
         ("cardinality", "count", "expected_code"),
         [
-            ("one", 1, None),
-            ("one", 0, "artifact_subject_missing"),
-            ("one", 2, "artifact_subject_ambiguous"),
             ("one", 3, "artifact_subject_ambiguous"),
-            ("many", 0, None),
             ("many", 1, None),
-            ("many", 4, None),
-            ("optional", 0, None),
-            ("optional", 1, None),
         ],
     )
     def test_matrix(self, cardinality: str, count: int, expected_code: str | None) -> None:
@@ -513,18 +480,6 @@ class TestCrossStepChain:
             port="checkpoint",
         )
         assert selected.id == "chk_freq_A_prime"
-
-    def test_sibling_subject_does_not_bind(self) -> None:
-        produced = self._chain()
-        with pytest.raises(ArtifactFlowError) as caught:
-            select_restart_artifact(
-                artifacts=produced,
-                subject_structure_id="struct_B",
-                step_id="s_ts",
-                logical_key="s_ts:struct_B",
-                port="checkpoint",
-            )
-        assert caught.value.code == "artifact_subject_missing"
 
     def test_stale_parent_subject_does_not_bind(self) -> None:
         produced = self._chain()

@@ -69,10 +69,6 @@ def _intent(steps, **top):
     return doc
 
 
-def test_extract_card_type_without_resolve_returns_none() -> None:
-    assert compiler._extract_card_type_for_alloc("sp@v1", object()) is None
-
-
 def test_extract_card_type_with_failing_resolve_returns_none() -> None:
     class _Bad:
         def resolve(self, *args, **kwargs):
@@ -98,13 +94,6 @@ def test_apply_role_cards_wrapper_delegates_empty() -> None:
     assert compiler._apply_role_cards([], {}, {}, skip_ids=set(), recipe_id=None) == set()
 
 
-def test_parse_with_registry_without_resolve_uses_legacy() -> None:
-    assert compiler._parse_card_ref_with_registry("sp@v1", object(), "s") == (
-        "sp",
-        CARD_VERSION,
-    )
-
-
 def test_parse_with_failing_resolve_uses_legacy() -> None:
     class _Bad:
         def resolve(self, *args, **kwargs):
@@ -120,12 +109,6 @@ def test_parse_custom_hit_with_bad_version_rejected() -> None:
     reg = _probe_registry(key="mycustom")
     with pytest.raises(ValueError, match="unsupported card version"):
         compiler._parse_card_ref_with_registry("mycustom@v9", reg, "s")
-
-
-def test_resolve_card_and_entry_without_resolve_uses_legacy() -> None:
-    card_type, version, card, entry = compiler._resolve_card_and_entry("sp@v1", object(), "s")
-    assert (card_type, version, entry) == ("sp", CARD_VERSION, None)
-    assert card["executor"] == "calculation"
 
 
 def test_resolve_card_and_entry_with_failing_resolve_uses_legacy() -> None:

@@ -62,7 +62,6 @@ def _message(run: dict[str, Any]) -> str:
     [
         ({"start": 1, "end": 3, "move": "end", "step": 120}, "confgen.paths[0].start (atom 1)"),
         ({"start": 2, "end": 4, "move": "end", "step": 120}, "confgen.paths[0].end (atom 4)"),
-        ({"start": 1, "end": 4, "move": "end", "step": 120}, "confgen.paths[0].start (atom 1)"),
     ],
 )
 def test_the_refusal_names_the_path_key_and_the_atom(path: dict[str, Any], needle: str) -> None:

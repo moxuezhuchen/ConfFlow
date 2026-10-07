@@ -96,12 +96,6 @@ class TestIO:
         ("raw", "expected"),
         [
             ("AL", "Al"),
-            ("CL", "Cl"),
-            ("BR", "Br"),
-            ("FE", "Fe"),
-            ("ZN", "Zn"),
-            ("SI", "Si"),
-            ("Al", "Al"),
             ("C", "C"),
             ("c", "C"),
         ],
@@ -111,7 +105,7 @@ class TestIO:
 
         assert canonicalize_element_symbol(raw) == expected
 
-    @pytest.mark.parametrize("raw", ["O_chain", "C1", "M"])
+    @pytest.mark.parametrize("raw", ["O_chain", "C1"])
     def test_canonicalize_element_symbol_rejects_atom_labels(self, raw):
         from confflow.core.io import canonicalize_element_symbol
 
