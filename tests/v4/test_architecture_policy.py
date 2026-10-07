@@ -46,7 +46,6 @@ V46_STRICT_CANDIDATES = [
     "producer",
     "persistence",
     "programs",
-    "remote",
 ]
 NON_SCAN_KINDS = {"const", "meta_case", "metric"}
 SCAN_IDS = sorted(r["id"] for r in RULES if r["kind"] not in NON_SCAN_KINDS)
@@ -351,10 +350,6 @@ _RT065_MODULES = [
 _RT096_CLEAN: dict[str, str] = {}
 
 RUNTIME_SCENARIOS: dict[str, dict[str, dict[str, str]]] = {
-    "RT-016": {
-        "clean": {"confflow/remote/__init__.py": INIT},
-        "mutant": {"confflow/remote/__init__.py": "__all__ = ['lease']\nlease = 1\n"},
-    },
     "RT-017": {
         "clean": {"confflow/domain/__init__.py": INIT, "confflow/core/__init__.py": INIT},
         "mutant": {"confflow/domain/__init__.py": "import confflow.core\n"},
@@ -367,15 +362,6 @@ RUNTIME_SCENARIOS: dict[str, dict[str, dict[str, str]]] = {
         "mutant": {
             "confflow/workflow/v4/__init__.py": "import confflow.calc\n",
             "confflow/calc/__init__.py": INIT,
-        },
-    },
-    "RT-019": {
-        "clean": {
-            "confflow/remote/envelope.py": INIT,
-        },
-        "mutant": {
-            "confflow/remote/envelope.py": "import confflow.remote.lease\n",
-            "confflow/remote/lease.py": INIT,
         },
     },
     "RT-020": {
@@ -530,30 +516,30 @@ def test_runtime_fixture_isolated_from_absolute_host_pythonpath(
     host = tmp_path / "host"
     (host / "confflow/remote").mkdir(parents=True)
     (host / "confflow/__init__.py").write_text("")
-    (host / "confflow/remote/__init__.py").write_text("__all__ = ['lease']\nlease = 1\n")
+    (host / "confflow/remote/__init__.py").write_text("")
     host_abs = str(host.resolve())
     monkeypatch.setenv(
         "PYTHONPATH",
         host_abs + (os.pathsep + os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else ""),
     )
-    rule = next(r for r in policy.RUNTIME_RULES if r["id"] == "RT-016")
+    rule = next(r for r in policy.RUNTIME_RULES if r["id"] == "RT-021")
     monkeypatch.setattr(policy, "RUNTIME_RULES", [rule])
-    scenario = RUNTIME_SCENARIOS["RT-016"]
+    scenario = RUNTIME_SCENARIOS["RT-021"]
     clean_root = tmp_path / "clean"
     clean_root.mkdir()
-    _materialise(clean_root, scenario["clean"], "RT-016")
+    _materialise(clean_root, scenario["clean"], "RT-021")
     clean = scan_runtime(clean_root)
     assert clean == [], f"clean leaked to absolute host {host_abs}: {clean}"
     mutant_root = tmp_path / "mutant"
     mutant_root.mkdir()
-    _materialise(mutant_root, scenario["clean"], "RT-016")
-    _materialise(mutant_root, scenario["mutant"], "RT-016")
+    _materialise(mutant_root, scenario["clean"], "RT-021")
+    _materialise(mutant_root, scenario["mutant"], "RT-021")
     mutant = scan_runtime(mutant_root)
-    fired = [v for v in mutant if v["rule"] == "RT-016"]
-    assert fired, f"mutant did not fire RT-016: {mutant}"
+    fired = [v for v in mutant if v["rule"] == "RT-021"]
+    assert fired, f"mutant did not fire RT-021: {mutant}"
     assert not [v for v in fired if "source_binding" in str(v)], fired
-    assert all(v.get("op") == "export_absent" for v in fired), fired
-    assert not [v for v in fired if "error" in v], fired
+    assert all(v.get("op") == "require_import_fail" for v in fired), fired
+    assert not [v for v in fired if "error" in v and v.get("error") != "importable"], fired
 
 
 @pytest.mark.parametrize("rule_id", sorted(RUNTIME_SCENARIOS))
@@ -930,15 +916,12 @@ def test_ap035_current_protocol_majors_are_not_retired() -> None:
         RECIPE_CATALOG_SCHEMA,
     )
     from confflow.producer.contract import ANALYSIS_REACTION_PROFILE_CONTRACT
-    from confflow.remote.envelope import HANDOFF_SCHEMA_V3, RESULT_SCHEMA_V3
 
     current = (
         CONFIGURATION_VALIDATION_SCHEMA,
         EDITOR_MANIFEST_SCHEMA,
         RECIPE_CATALOG_SCHEMA,
         ANALYSIS_REACTION_PROFILE_CONTRACT,
-        HANDOFF_SCHEMA_V3,
-        RESULT_SCHEMA_V3,
     )
     banned = sorted(item for item in current if item in RETIRED_V1_V2_WIRE_TOKENS)
     assert banned == []
@@ -1072,8 +1055,10 @@ def test_rule_count_matches_the_inventory() -> None:
     # honestly from the disk half AP-033 per the v3 root ruling) + 6 A6
     # G13/G14 confgen purity rules (AP-100..AP-105) + 1 L1-A3c intent
     # science isolation rule (AP-106, tool guard only) + 2 DIET-2 P0.2 rules
-    # (AP-107 LOC budget, AP-108 G16 new-filename guard).
-    assert RULE_COUNT == 79
+    # (AP-107 LOC budget, AP-108 G16 new-filename guard) − 2 R2.3f-retired
+    # remote-scope rules (AP-014 vocab, AP-015 imports: the confflow/remote
+    # scope no longer exists; regrowth is guarded by AP-022/AP-023/RT-021).
+    assert RULE_COUNT == 77
 
 
 def test_rule_ids_are_unique_and_sources_pinned() -> None:
@@ -1230,9 +1215,6 @@ _REAL_ROOT = Path(__file__).resolve().parents[2]
 INIT = ""
 
 RUNTIME_NEGATIVE_FIXTURES: dict[str, dict[str, str]] = {
-    "RT-016": {
-        "confflow/remote/__init__.py": '__all__ = ["lease"]\nlease = 1\n',
-    },
     "RT-017": {
         "confflow/domain/__init__.py": "import confflow.core\n",
         "confflow/core/__init__.py": INIT,
@@ -1243,11 +1225,6 @@ RUNTIME_NEGATIVE_FIXTURES: dict[str, dict[str, str]] = {
         "confflow/workflow/v3_runtime/__init__.py": INIT,
         "confflow/execution/__init__.py": INIT,
         "confflow/config/__init__.py": INIT,
-    },
-    "RT-019": {
-        "confflow/remote/__init__.py": INIT,
-        "confflow/remote/envelope.py": "import confflow.remote.lease\n",
-        "confflow/remote/lease.py": INIT,
     },
     "RT-020": {
         "confflow/v4cli.py": "import confflow.fixture_agent\n",
@@ -1342,7 +1319,7 @@ RUNTIME_NEGATIVE_FIXTURES: dict[str, dict[str, str]] = {
     },
     "RT-096": {
         # The scanner gate only watches its SCOPE entry paths (v4cli,
-        # application, control, producer, remote, analysis) — not workflow/v4.
+        # application, control, producer, analysis) — not workflow/v4.
         "confflow/producer/__init__.py": INIT,
         "confflow/producer/evil.py": "x = TaskRunner\n",
     },
@@ -1389,7 +1366,7 @@ def _only(rt_id: str, monkeypatch) -> None:
 
 def test_runtime_normal_case_timeout_is_a_violation(tmp_path: Path, monkeypatch) -> None:
     _blank_tree(tmp_path)
-    _only("RT-016", monkeypatch)
+    _only("RT-021", monkeypatch)
 
     def boom(*a, **kw):
         raise _sp.TimeoutExpired(cmd=a[0], timeout=kw.get("timeout"))
@@ -1398,7 +1375,7 @@ def test_runtime_normal_case_timeout_is_a_violation(tmp_path: Path, monkeypatch)
     fired = scan_runtime(tmp_path)
     assert fired, "a case timeout must be reported, never skipped"
     for v in fired:
-        assert v["rule"] == "RT-016", v
+        assert v["rule"] == "RT-021", v
         assert v["stage"].startswith("case:"), v
         assert "timeout after" in v["detail"], v
 
@@ -1441,7 +1418,7 @@ def test_runtime_scanner_cli_timeout_is_a_violation(tmp_path: Path, monkeypatch)
 
 def test_runtime_launch_error_is_a_violation(tmp_path: Path, monkeypatch) -> None:
     _blank_tree(tmp_path)
-    _only("RT-016", monkeypatch)
+    _only("RT-021", monkeypatch)
 
     def boom(*a, **kw):
         raise OSError("no such interpreter")
@@ -1500,18 +1477,18 @@ def test_runtime_bad_payload_becomes_violation(
     tmp_path: Path, monkeypatch, stdout: str, label: str
 ) -> None:
     _blank_tree(tmp_path)
-    _only("RT-016", monkeypatch)
+    _only("RT-021", monkeypatch)
     monkeypatch.setattr(_policy.subprocess, "run", lambda *a, **kw: _FakeProc(stdout))
     fired = scan_runtime(tmp_path)
     assert fired, f"{label} must produce a violation, never a pass or a crash"
-    assert all(v["rule"] == "RT-016" for v in fired), fired
+    assert all(v["rule"] == "RT-021" for v in fired), fired
     assert all("stage" in v and v["detail"] for v in fired), fired
 
 
 def test_runtime_bad_payload_does_not_crash_scan(tmp_path: Path, monkeypatch) -> None:
     # The root counterexample: exit 0 with {"violations": null} raised TypeError.
     _blank_tree(tmp_path)
-    _only("RT-016", monkeypatch)
+    _only("RT-021", monkeypatch)
     monkeypatch.setattr(
         _policy.subprocess,
         "run",
@@ -1524,7 +1501,7 @@ def test_runtime_bad_payload_does_not_crash_scan(tmp_path: Path, monkeypatch) ->
 def test_runtime_normal_payload_semantics_preserved(tmp_path: Path, monkeypatch) -> None:
     # A well-formed empty payload stays a pass for the rule under test.
     _blank_tree(tmp_path)
-    _only("RT-016", monkeypatch)
+    _only("RT-021", monkeypatch)
     monkeypatch.setattr(
         _policy.subprocess,
         "run",
@@ -1536,7 +1513,7 @@ def test_runtime_normal_payload_semantics_preserved(tmp_path: Path, monkeypatch)
 def test_runtime_real_violation_payload_is_reported(tmp_path: Path, monkeypatch) -> None:
     # A well-formed payload that carries a violation still reports it.
     _blank_tree(tmp_path)
-    _only("RT-016", monkeypatch)
+    _only("RT-021", monkeypatch)
     monkeypatch.setattr(
         _policy.subprocess,
         "run",
@@ -1546,7 +1523,7 @@ def test_runtime_real_violation_payload_is_reported(tmp_path: Path, monkeypatch)
         ),
     )
     fired = scan_runtime(tmp_path)
-    assert [v for v in fired if v["rule"] == "RT-016" and v["op"] == "forbid"], fired
+    assert [v for v in fired if v["rule"] == "RT-021" and v["op"] == "forbid"], fired
 
 
 # --- #3 source binding (paired in-tree / outside-tree proof) ----------------
