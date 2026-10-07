@@ -85,7 +85,6 @@ _ORDINAL_WITHIN_ITEM_FILES = frozenset(
         "confflow/execution/native.py",
         "confflow/execution/output_identity.py",
         "confflow/execution/profile_ensemble.py",
-        "confflow/execution/profile_path_endpoints.py",
     }
 )
 

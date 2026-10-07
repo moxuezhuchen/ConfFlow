@@ -26,7 +26,6 @@ from tests.v4._builders import calc_step, v4_doc
 
 FAKES_DIR = Path(__file__).resolve().parent / "fakes"
 FAKE_ORCA = FAKES_DIR / "fake_orca.py"
-FAKE_IRC = FAKES_DIR / "fake_irc.py"
 
 WATER_XYZ = """3
 water

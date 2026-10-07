@@ -2,22 +2,20 @@
 
 """Gaussian checkpoint pure-route policy (L1-G1a mechanical move).
 
-Moved verbatim from :mod:`confflow.producer.checkpoints`: the 11 canonical
-route constants, the light refusal constructor :func:`_refuse`, and the three
-pure route helpers :func:`_add_opt_option`, :func:`_add_irc_rcfc`,
+Moved verbatim from :mod:`confflow.producer.checkpoints`: the 9 canonical
+route constants, the light refusal constructor :func:`_refuse`, and the duo
+of pure route helpers :func:`_add_opt_option`,
 :func:`_strip_managed_items` (bodies/signatures AST-exact).
 
 Authority notes (imported, never copied):
 
-- :mod:`confflow.programs.gaussian.path` (as ``_irc_path``) -- IRC option
-  validation via :func:`parse_irc_route`;
 - :mod:`confflow.programs.gaussian.rendering` (as ``_gaussian_rendering``) --
   keyword normalization via :func:`normalize_gaussian_keyword`;
 - :mod:`confflow.domain.errors` -- light refusal construction only.
 
 Science authority tables stay with their owners; G1b stages use
 ``ProgramName`` identity (``is not ProgramName.GAUSSIAN``) and the
-rendering/path/energy_semantics authorities via data-value delegation.
+rendering/energy_semantics authorities via data-value delegation.
 The canonical constant values mirror ``confflow.producer.checkpoints`` which
 re-exports the same objects (bidirectional mirror).
 """
@@ -31,7 +29,6 @@ from typing import Any, cast
 from ...domain.errors import DomainError, InvalidBindingError
 from ...execution.native import ProgramName
 from . import energy_semantics as _energy_semantics
-from . import path as _irc_path
 from . import rendering as _gaussian_rendering
 
 #: QST route token (mirrors ``named._QST_ITEM_PATTERN``; the compiler and
@@ -40,18 +37,12 @@ from . import rendering as _gaussian_rendering
 _QST_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])QST[23](?![0-9])", re.IGNORECASE)
 
 #: Managed IRC item in all its forms (bare ``IRC``, ``IRC(...)``,
-#: ``IRC=X``, ``IRC=(...)``), for the method comparison strip.  Option
-#: semantics stay with :func:`parse_irc_route`; this pattern only removes
-#: the item text.
+#: ``IRC=X``, ``IRC=(...)``), for the method comparison strip.  This
+#: pattern only removes the item text.
 _IRC_MANAGED_RE = re.compile(
     r"(?<![A-Za-z0-9])IRC(?![A-Za-z0-9])" r"(\s*=\s*\([^)]*\)|\s*\([^)]*\)|\s*=\s*[^\s,()]+)?",
     re.IGNORECASE,
 )
-
-#: Bare IRC route item locator for the ``RCFC`` edit span (option
-#: semantics stay with :func:`parse_irc_route`, which already validated
-#: the route before the edit span is located here).
-_IRC_ITEM_RE = re.compile(r"(?<![A-Za-z0-9])IRC(?![A-Za-z0-9])", re.IGNORECASE)
 
 #: Opt route item forms (mirrors ``rendering._OPT_PAREN_RE`` /
 #: ``_OPT_ASSIGN_RE`` / ``_OPT_BARE_RE``; the compiler and the adapter own
@@ -80,12 +71,6 @@ _SP_MANAGED_RE = re.compile(r"(?i)(?<!\S)sp(?=\s|$)")
 #: present ``ReadFC`` is the idempotent accept: a user card that already
 #: spells the option keeps its keyword verbatim.
 _READFC_CONFLICTS = frozenset({"rcfc", "calcfc", "calcall"})
-
-#: Force-constant options opposed to the ``RCFC`` vote inside one ``IRC``
-#: item: computing force constants (``CalcFC``/``CalcAll``) while voting
-#: the checkpoint-read form is ambiguous.  An already present ``RCFC`` is
-#: the idempotent accept.
-_RCFC_CONFLICTS = frozenset({"calcfc", "calcall"})
 
 #: User-managed checkpoint path directives: the adapter renders ``%Chk``
 #: and ``%OldChk`` itself, so a target that manages them by hand is
@@ -150,64 +135,6 @@ def _add_opt_option(keyword: str, option: str, *, step_id: str) -> str:
     )
 
 
-def _add_irc_rcfc(keyword: str, *, step_id: str) -> str:
-    """Insert the ``RCFC`` vote into the first ``IRC`` item of *keyword*.
-
-    Direction votes and unknown options are validated by the existing
-    :func:`parse_irc_route` authority first: an explicit
-    forward/reverse vote conflicts with the both-directions ``RCFC`` form,
-    and an already-present ``RCFC`` is refused instead of duplicated.  The
-    bare ``IRC`` form already means both directions, so spelling ``RCFC``
-    out is the explicit, digest-covered record of that intent.
-    """
-    try:
-        route = _irc_path.parse_irc_route(keyword)
-    except ValueError as exc:
-        raise _refuse(f"target step {step_id!r} has an invalid IRC route: {exc}") from exc
-    raw_options = tuple(str(item) for item in route.get("raw_options", ()))
-    lowered_options = {item.upper() for item in raw_options}
-    opposed = sorted(item for item in raw_options if item.lower() in _RCFC_CONFLICTS)
-    if opposed:
-        raise _refuse(
-            f"target step {step_id!r} already declares opposed IRC "
-            f"option(s) {opposed}: the checkpoint-read vote cannot be "
-            "combined with computed force constants"
-        )
-    if "RCFC" in lowered_options:
-        return keyword
-    if route.get("mode") != "both":
-        raise _refuse(
-            f"target step {step_id!r} votes an explicit IRC direction "
-            f"({route.get('mode')!r}): mode 'rcfc' needs both directions"
-        )
-    match = _IRC_ITEM_RE.search(keyword)
-    if match is None:  # Unreachable: parse_irc_route already found the item.
-        raise _refuse(f"target step {step_id!r} carries no IRC route item")
-    tail = keyword[match.end() :]
-    stripped = tail.lstrip()
-    if stripped.startswith("("):
-        closing = stripped.find(")")
-        if closing < 0:
-            raise _refuse(f"target step {step_id!r} has a malformed IRC option group")
-        inner = stripped[1:closing].strip()
-        replacement = f"IRC({inner},RCFC)" if inner else "IRC(RCFC)"
-        return keyword[: match.start()] + replacement + stripped[closing + 1 :]
-    if stripped.startswith("="):
-        after = stripped[1:].lstrip()
-        if after.startswith("("):
-            closing = after.find(")")
-            if closing < 0:
-                raise _refuse(f"target step {step_id!r} has a malformed IRC option group")
-            inner = after[1:closing].strip()
-            replacement = f"IRC=({inner},RCFC)" if inner else "IRC=(RCFC)"
-            return keyword[: match.start()] + replacement + after[closing + 1 :]
-        token = after.split(",")[0].strip().split()[0] if after.strip() else ""
-        if not token:
-            raise _refuse(f"target step {step_id!r} has a malformed IRC= option")
-        return keyword[: match.start()] + f"IRC=({token},RCFC)" + after[len(token) :]
-    return keyword[: match.start()] + "IRC(RCFC)" + tail
-
-
 def _strip_managed_items(keyword: str) -> str:
     """Remove helper-managed job-type items for the method comparison.
 
@@ -256,8 +183,8 @@ def require_standard_adapter(*, step_id: str, execution_adapter: object) -> None
     if execution_adapter != "standard":
         raise _refuse(
             f"step {step_id!r} uses execution adapter {execution_adapter!r}: "
-            "checkpoint reuse needs the 'standard' adapter (or an IRC route "
-            "on it); named-structure/QST shapes carry no checkpoint port"
+            "checkpoint reuse needs the 'standard' adapter; "
+            "named-structure/QST shapes carry no checkpoint port"
         )
 
 

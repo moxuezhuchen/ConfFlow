@@ -324,29 +324,22 @@ def _native_option(native: Any, key: str) -> Any:
         return None
 
 
-#: Native sub-mappings that select a path/ensemble execution mode.
-_NATIVE_MODES = ("irc", "neb", "goat")
+#: Native sub-mapping that selects the NEB ensemble execution mode.
+_NATIVE_MODES = ("neb",)
 
 
 def _active_native_modes(native: Any) -> list[str]:
-    """Return the native path/ensemble modes declared by *native*.
+    """Return the native NEB mode declared by *native*.
 
-    Mirrors the program-adapter rule: a mode is active exactly when its
+    Mirrors the program-adapter rule: the mode is active exactly when its
     sub-mapping is present (not ``None``).
     """
     return [mode for mode in _NATIVE_MODES if _native_option(native, mode) is not None]
 
 
-def _is_goat_native(native: Any) -> bool:
-    """Return whether *native* declares stochastic GOAT sampling."""
-    return "goat" in _active_native_modes(native)
-
-
-#: Result profiles each native path/ensemble mode can actually execute.
+#: Result profiles the NEB native mode can actually execute.
 _MODE_PROFILES: dict[str, tuple[str, ...]] = {
-    "goat": ("ensemble",),
-    "irc": ("path_endpoints",),
-    "neb": ("ensemble", "path_endpoints"),
+    "neb": ("ensemble",),
 }
 
 
@@ -355,9 +348,9 @@ def _native_mode_profile_mismatch(
 ) -> str | None:
     """Describe a native-mode/result-profile mismatch, or ``None``.
 
-    A GOAT ensemble rendered into a non-ensemble profile (or an IRC into a
-    non-endpoint profile) would silently drop computed structures, so the
-    combination fails closed at compile time.
+    An NEB ensemble rendered into a non-ensemble profile would silently
+    drop computed structures, so the combination fails closed at compile
+    time.
 
     Native-definition shape and mode exclusivity are the program adapter's
     requirement (``validate_native_definition``); when that path already
@@ -367,10 +360,6 @@ def _native_mode_profile_mismatch(
     fail-closed guard, so the accept/reject outcome never changes.
     """
     modes = _active_native_modes(native)
-    if len(modes) > 1:
-        if native_definition_reported:
-            return None
-        return f"native modes {modes} are mutually exclusive; one work item carries one native mode"
     if not modes:
         return None
     mode = modes[0]
@@ -780,22 +769,15 @@ def _validate_step(
                     },
                 )
             )
-    goat_stochastic = capability is ExecutorCapability.CALCULATION and _is_goat_native(
-        scientific.native
-    )
-    if (contract.stochastic or goat_stochastic) and scientific.seed is None:
+    if contract.stochastic and scientific.seed is None:
         diagnostics.append(
             error(
                 DiagnosticCode.CAPABILITY_ERROR,
                 DiagnosticReason.SEED_REQUIRED,
-                (
-                    "stochastic GOAT sampling requires an explicit seed"
-                    if goat_stochastic
-                    else f"stochastic executor {capability.value!r} requires an explicit seed"
-                ),
+                f"stochastic executor {capability.value!r} requires an explicit seed",
                 step_id=step.id,
                 field_path=f"{field_path}.seed",
-                details={"executor": capability.value, "goat": goat_stochastic},
+                details={"executor": capability.value},
             )
         )
     if capability is ExecutorCapability.CONFGEN and step.enabled:

@@ -85,7 +85,7 @@ _DEFAULT_INPUTS: dict[str, Any] = {
     "structures": {"kind": "structure", "cardinality": "many", "grouping": "each_entity"}
 }
 
-_CHECKPOINT_MODES: tuple[str, ...] = ("checkpoint", "readfc", "rcfc")
+_CHECKPOINT_MODES: tuple[str, ...] = ("checkpoint", "readfc")
 
 _STEP_KEYS = frozenset(
     {
