@@ -502,7 +502,9 @@ def test_gaussian_qst_rejects_checkpoints():
             }
         ),
     )
-    with pytest.raises(ValueError, match="artifact_unsupported"):
+    # R2.3d (G18): QST slots are retired, so the retired-slots gate fires
+    # before the old checkpoint-vocabulary gate; still fail-closed.
+    with pytest.raises(ValueError, match="retired"):
         GaussianProgramAdapter().materialize_native_input(resolved)
 
 

@@ -89,7 +89,7 @@ _ORDINAL_WITHIN_ITEM_FILES = frozenset(
 )
 
 
-_RANGE_ORDINAL_ALLOWLIST = frozenset({"confflow/execution/atom_mapping.py"})
+_RANGE_ORDINAL_ALLOWLIST: frozenset[str] = frozenset()
 
 
 _FILENAME_ATTRIBUTE_TOKENS = ("basename", "splitext", "stem", "suffix")
@@ -123,11 +123,8 @@ def _range_ordinal_pairing_offenders(source: str) -> list[tuple[str, int, str]]:
     """Flag ``range``-ordinal subscripts shared across distinct collections.
 
     The banned idiom is positional cross-set pairing (``a[i]`` matched with
-    ``b[i]`` for a ``range`` ordinal ``i``).  Dict/keyed access and the
-    documented explicit-permutation application in
-    ``confflow/execution/atom_mapping.py`` are not flagged by construction
-    (the former never shares a ``range`` ordinal; the latter is allowlisted
-    at the call site).
+    ``b[i]`` for a ``range`` ordinal ``i``).  Dict/keyed access never
+    shares a ``range`` ordinal and is not flagged by construction.
     """
     tree = ast.parse(source)
     offenders: list[tuple[str, int, str]] = []

@@ -278,21 +278,6 @@ def test_orca_neb_option_is_rejected_by_validation() -> None:
     _assert_native_rejection(report, "n_images")
 
 
-def test_orca_mode_with_matching_keyword_is_valid() -> None:
-    # R2.3b/e (G18): the matching-keyword vehicle is the retained NEB mode
-    # on the retained ensemble profile (IRC/GOAT native are retired).
-    report = validate_workflow_bytes(
-        _document_bytes(
-            _calculation_document(
-                {"keyword": "NEB", "neb": {"n_images": 5}},
-                program="orca",
-                profile="ensemble",
-            )
-        )
-    )
-    assert report.ok is True, report.diagnostics
-
-
 # -- runtime-rule consistency ------------------------------------------------
 
 
@@ -349,30 +334,18 @@ def test_adapters_expose_the_requirement_path_on_the_protocol() -> None:
 # -- P3: one defect, one diagnostic -------------------------------------------
 
 
-def test_orca_non_mapping_mode_section_yields_one_diagnostic() -> None:
-    report = validate_workflow_bytes(
-        _document_bytes(
-            _calculation_document(
-                {"keyword": "NEB", "neb": "not-a-mapping"},
-                program="orca",
-                profile="ensemble",
-            )
-        )
-    )
-    assert report.ok is False
-    errors = report.errors()
-    assert len(errors) == 1, errors
-    assert errors[0]["code"] == "scientific_parameter_conflict"
-    assert "must be a mapping" in errors[0]["message"]
-
-
 def test_orca_two_retired_modes_yield_one_diagnostic() -> None:
-    # R2.3b/e: retired ``irc``/``goat`` keys are unknown native keys; the
-    # defect still reports exactly once (P3 dedup unchanged).
+    # R2.3b/e + R2.3c/d: retired ``irc``/``goat``/``neb`` keys are unknown
+    # native keys; the defect still reports exactly once (P3 dedup unchanged).
     report = validate_workflow_bytes(
         _document_bytes(
             _calculation_document(
-                {"keyword": "GOAT", "goat": {"MaxIter": 5}, "irc": {"direction": "both"}},
+                {
+                    "keyword": "GOAT",
+                    "goat": {"MaxIter": 5},
+                    "irc": {"direction": "both"},
+                    "neb": {"n_images": 5},
+                },
                 program="orca",
                 profile="ensemble",
                 seed=11,
@@ -383,20 +356,3 @@ def test_orca_two_retired_modes_yield_one_diagnostic() -> None:
     errors = report.errors()
     assert len(errors) == 1, errors
     assert "unknown native keys" in errors[0]["message"]
-
-
-def test_orca_profile_mismatch_still_reports_its_own_rule() -> None:
-    report = validate_workflow_bytes(
-        _document_bytes(
-            _calculation_document(
-                {"keyword": "NEB", "neb": {"n_images": 5}},
-                program="orca",
-                profile="standard",
-            )
-        )
-    )
-    assert report.ok is False
-    errors = report.errors()
-    assert len(errors) == 1, errors
-    assert errors[0]["code"] == "capability_error"
-    assert "requires result profile" in errors[0]["message"]

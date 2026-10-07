@@ -84,21 +84,18 @@ def _input_error(message: str) -> ValueError:
 
 
 def _require_keyword_for_mode(keyword: str, mode: str) -> None:
-    """Require the job-type keyword matching the NEB path mode.
+    """Require the job-type keyword matching a path/ensemble mode.
 
-    Verified against the installed ORCA 6.1.1 binary: a ``%neb``
-    block under a plain ``Opt`` keyword runs a
-    plain optimization and silently ignores the block.  The keyword
-    must therefore name the job (``NEB`` / ``NEB-TS``);
-    otherwise rendering refuses instead of launching a
-    silently wrong job.
+    All path/ensemble modes (``%irc`` / ``%neb`` / ``%goat``) are
+    retired: a mode block under a plain ``Opt`` keyword would run a
+    plain optimization and silently ignore the block.  The table is
+    therefore empty and the check is a no-op retained for call-site
+    stability; retired modes fail closed at definition validation
+    (unknown native keys) and at materialization time.
     """
     tokens = keyword.split()
     upper = [token.upper() for token in tokens]
-    required = {
-        "neb": ("NEB",),
-        "neb_ts": ("NEB-TS",),
-    }.get(mode)
+    required: tuple[str, ...] | None = dict[str, tuple[str, ...]]().get(mode)
     if required is None:
         return
     if not any(token in upper for token in required):
@@ -113,15 +110,14 @@ def native_definition_errors(native: Any) -> tuple[str, ...]:
     """Return deterministic native-definition failures without rendering.
 
     The structure-independent half of ORCA native rendering: strict native
-    vocabulary, required non-empty keyword, NEB block option validation
-    (``neb`` section) and deterministic option values.
+    vocabulary, required non-empty keyword and deterministic option values.
     Semantic validation calls this through the adapter before a document can
     be submitted; the renderer refuses on the same render helpers, so the
     requirement is never stated twice.
 
     Structure-dependent requirements (charge/multiplicity resolution,
-    geometry, freeze indices, checkpoint consumption, the NEB product
-    structure slot) stay in the runtime rendering path.
+    geometry, freeze indices, checkpoint consumption) stay in the
+    runtime rendering path.
     """
     if not isinstance(native, Mapping):
         return ("native_input_error: ORCA native options must be a mapping",)
@@ -129,29 +125,17 @@ def native_definition_errors(native: Any) -> tuple[str, ...]:
     unknown = sorted(set(native) - set(ALLOWED_NATIVE_KEYS))
     if unknown:
         errors.append(f"native_input_error: ORCA unknown native keys: {', '.join(unknown)}")
-    keyword: str | None = None
     try:
-        keyword = resolve_keyword(native)
+        resolve_keyword(native)
     except ValueError as exc:
         errors.append(str(exc))
     try:
         resolve_blocks_text(native)
     except ValueError as exc:
         errors.append(str(exc))
-    section = native.get("neb")
-    if section is not None:
-        mode = "neb"
-        if not isinstance(section, Mapping):
-            errors.append(f"native_input_error: ORCA '{mode}' native options must be a mapping")
-        else:
-            errors.extend(_path_mode_option_errors(mode, section))
-            if keyword is not None:
-                if section.get("neb_ts", False) is True:
-                    mode = "neb_ts"
-                try:
-                    _require_keyword_for_mode(keyword, mode)
-                except ValueError as exc:
-                    errors.append(str(exc))
+    # All path/ensemble modes (irc/neb/goat) are retired: any such key
+    # is already reported as an unknown native key above.  No per-mode
+    # option validation remains.
     # A non-blank explicit override is deterministic; a blank value means
     # "absent" and the renderer derives %maxcore from resolved resources (a
     # runtime/resource concern), so it must not be refused here.
@@ -164,23 +148,13 @@ def native_definition_errors(native: Any) -> tuple[str, ...]:
 
 
 def _path_mode_option_errors(mode: str, section: Mapping[str, Any]) -> tuple[str, ...]:
-    """Validate the NEB mode section with the real render helper.
+    """Validate one retired path/ensemble mode section (no-op).
 
-    ``neb`` option validation is structure-independent, so
-    the definition validator exercises exactly the helper the renderer calls.
-    The NEB product endpoint name is a rendering decision, never a document
-    member; a neutral valid name is used here and the product *structure*
-    requirement stays in the runtime path.
+    All modes (``irc``/``neb``/``goat``) are retired; the definition
+    validator rejects their keys as unknown before this helper runs.
+    Retained for call-site stability; always returns no errors.
     """
-    from .neb import render_neb_blocks
-
-    try:
-        if mode == "neb":
-            render_neb_blocks(section, product_xyz_name="neb_endpoint.xyz")
-        else:  # pragma: no cover - the caller only passes "neb"
-            return ()
-    except ValueError as exc:
-        return (str(exc),)
+    del mode, section
     return ()
 
 
@@ -319,7 +293,7 @@ class OrcaProgramAdapter(ProgramAdapter):
                 "main_input_name": main_input_name,
                 "freeze": tuple(int(index) for index in freeze) if freeze else (),
                 "mode": mode,
-                "n_images": self._native_neb_images(native),
+                "n_images": 0,
                 "input_atoms": list(inputs.structure.atoms),
             }
         )
@@ -334,41 +308,25 @@ class OrcaProgramAdapter(ProgramAdapter):
     def _resolve_path_mode(
         inputs: ResolvedCalculationInputs, *, job: str
     ) -> tuple[str, str, tuple[InputFile, ...]]:
-        """Return ``(mode, extra_blocks, extra_files)`` for NEB jobs.
+        """Return ``(mode, extra_blocks, extra_files)`` for standard jobs.
 
-        At most the ``neb`` native sub-mapping may
-        be present; NEB additionally requires named reactant/product slots
-        and contributes the product endpoint XYZ file the ``%neb`` block
-        points at.  Anything else is standard single-structure rendering.
+        All path/ensemble modes (``irc``/``neb``/``goat``) are retired:
+        any work item carrying them fails closed here instead of
+        rendering.  Anything else is standard single-structure rendering.
         """
-        from .neb import render_neb_blocks
-
+        del job
         native = inputs.native
-        if native.get("neb") is None:
-            return "standard", "", ()
-        mode = "neb"
-        section = native.get(mode)
-        if not isinstance(section, Mapping):
-            raise _input_error(f"ORCA '{mode}' native options must be a mapping")
-        slots = inputs.extra_structures
-        product_set = slots.get("product") if hasattr(slots, "get") else None
-        if product_set is None or len(product_set) == 0:
-            raise _input_error("ORCA NEB rendering requires a product structure slot")
-        product = product_set[0]
-        product_xyz_name = f"{job}_neb_end.xyz"
-        blocks = render_neb_blocks(section, product_xyz_name=product_xyz_name)
-        neb_ts = section.get("neb_ts", False) is True
-        lines = [str(len(product.atoms)), "product endpoint for NEB"]
-        lines.extend(
-            f"{symbol} {point[0]:.8f} {point[1]:.8f} {point[2]:.8f}"
-            for symbol, point in zip(product.atoms, product.coordinates)
-        )
-        xyz_content = "\n".join(lines) + "\n"
-        return (
-            "neb_ts" if neb_ts else "neb",
-            blocks,
-            (InputFile(name=product_xyz_name, content=xyz_content),),
-        )
+        for retired in ("irc", "neb", "goat"):
+            try:
+                present = native.get(retired)
+            except Exception:
+                present = None
+            if present is not None:
+                raise _input_error(
+                    f"native_input_error: ORCA {retired} mode is retired; "
+                    f"native {retired!r} must not be declared"
+                )
+        return "standard", "", ()
 
     def build_execution_request(
         self,
@@ -473,15 +431,10 @@ class OrcaProgramAdapter(ProgramAdapter):
 
         energies = parse_energies(text)
         terminated = termination_reached(text)
-        if mode in ("neb", "neb_ts"):
-            return self._parse_neb_result(
-                text,
-                mode=mode,
-                work_dir=work_dir,
-                log_file_name=log_file_name,
-                log_base=os.path.splitext(log_file_name)[0],
-                materialized=materialized,
-                terminated=terminated,
+        if mode in ("irc", "neb", "neb_ts", "goat"):
+            raise ValueError(
+                "native_parse_error: ORCA path/ensemble mode "
+                f"{mode!r} is retired; materialized mode must not be parsed"
             )
         committed = parse_frequencies(text)
         modes = true_vibrational_modes(committed)
@@ -559,133 +512,6 @@ class OrcaProgramAdapter(ProgramAdapter):
             parser_diagnostics=tuple(parser_diagnostics),
             log_file_name=log_file_name,
         )
-
-    def _parse_neb_result(
-        self,
-        text: str,
-        *,
-        mode: str,
-        work_dir: str,
-        log_file_name: str,
-        log_base: str,
-        materialized: MaterializedNativeInput,
-        terminated: bool,
-    ) -> NativeResult:
-        """Parse NEB output into ensemble facts.
-
-        Members come exclusively from explicit native
-        member markers; a missing marker is a parse error, never
-        an inference.  NEB images ride as ensemble
-        members with their semantic roles; an NEB-TS candidate appears only
-        when the output explicitly reports an optimized TS.
-        """
-        from ...execution.native import NativeEnsembleMember
-        from .neb import parse_neb_images
-
-        raw_atoms = materialized.metadata.get("input_atoms", [])
-        atoms = tuple(str(symbol) for symbol in raw_atoms)
-        members: tuple[NativeEnsembleMember, ...] = ()
-        extra_metadata: dict[str, Any] = {"mode": mode}
-        if mode in ("neb", "neb_ts"):
-            import dataclasses as _dataclasses
-
-            from .neb import parse_neb_ts_candidate as _parse_neb_ts_candidate
-
-            mep_path = os.path.join(work_dir, f"{log_base}_MEP_trj.xyz")
-            try:
-                with open(mep_path, encoding="utf-8") as handle:
-                    mep_xyz_text = handle.read()
-            except OSError as exc:
-                raise ValueError(
-                    "native_parse_error: NEB run produced no MEP trajectory "
-                    f"file {mep_path!r}: {exc}"
-                ) from exc
-            raw_members = parse_neb_images(
-                mep_xyz_text,
-                atoms=atoms,
-                n_images=self._materialized_neb_images(materialized),
-            )
-            members = tuple(
-                _dataclasses.replace(member, role="neb_image") for member in raw_members
-            )
-            ts_candidate = _parse_neb_ts_candidate(text, atoms=atoms)
-            if ts_candidate is not None:
-                if (
-                    mode == "neb_ts"
-                    and "NEB-TS"
-                    not in str(materialized.metadata.get("keyword", "")).upper().split()
-                ):
-                    raise ValueError(
-                        "native_parse_error: NEB-TS candidate refused: the job "
-                        "keyword carries no NEB-TS token, so the highest-energy "
-                        "image is a path maximum, never an optimized TS"
-                    )
-                members = (*members, _dataclasses.replace(ts_candidate, role="neb_ts_candidate"))
-            elif mode == "neb_ts":
-                raise ValueError(
-                    "native_parse_error: NEB-TS requested but the output reports "
-                    "no highest-energy image / saddle point"
-                )
-        produced: list[ProducedFile] = []
-        for suffix, role in _OUTPUT_CANDIDATES:
-            name = log_file_name if suffix == "out" else f"{log_base}.{suffix}"
-            path = os.path.join(work_dir, name)
-            if not os.path.isfile(path):
-                continue
-            try:
-                size = os.path.getsize(path)
-            except OSError:
-                continue
-            produced.append(ProducedFile(name=name, role=role, size_bytes=int(size)))
-        metadata: dict[str, Any] = {
-            "parser_version": self.parser_version,
-            "terminated_normally": terminated,
-        }
-        metadata.update(extra_metadata)
-        return NativeResult(
-            program=ProgramName.ORCA,
-            terminated_normally=terminated,
-            geometry_output=GeometryOutput.NONE,
-            final_geometry=None,
-            energies_hartree=FrozenDict(
-                {
-                    **{
-                        f"member_{member.member_index}": member.energy_hartree
-                        for member in members
-                        if member.energy_hartree is not None
-                    },
-                }
-            ),
-            frequencies_cm=(),
-            native_metadata=FrozenDict(metadata),
-            produced_files=tuple(produced),
-            parser_diagnostics=(),
-            log_file_name=log_file_name,
-            path_endpoints=(),
-            ensemble_members=members,
-        )
-
-    @staticmethod
-    def _native_neb_images(native: Any) -> int:
-        """Return the NEB image count declared in *native* (0 when absent)."""
-        section = native.get("neb") if hasattr(native, "get") else None
-        if not isinstance(section, Mapping):
-            return 0
-        value = section.get("n_images", 0)
-        if isinstance(value, bool) or not isinstance(value, int):
-            return 0
-        return value
-
-    @staticmethod
-    def _materialized_neb_images(materialized: MaterializedNativeInput) -> int:
-        """Return the NEB image count recorded at materialization time."""
-        value = materialized.metadata.get("n_images", 0)
-        if isinstance(value, bool) or not isinstance(value, int) or value < 3:
-            raise ValueError(
-                "native_parse_error: materialized NEB metadata lacks a valid "
-                f"n_images, got {value!r}"
-            )
-        return value
 
     def discover_artifacts(
         self,

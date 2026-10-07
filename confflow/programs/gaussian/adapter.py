@@ -339,41 +339,22 @@ class GaussianProgramAdapter:
         )
         mode = self._execution_mode(inputs, keyword_line)
         extra_section = _rendering.resolve_extra_section(native)
-        if inputs.checkpoints and mode in ("qst2", "qst3"):
-            raise ValueError(
-                "native_input_error: artifact_unsupported: Gaussian QST rendering "
-                "declares no checkpoint input vocabulary; refusing staged-but-unused success"
-            )
-        if mode in ("qst2", "qst3"):
-            content = self._render_qst_input(
-                inputs,
-                mode,
-                link0_lines=link0_lines,
-                cores=cores,
-                memory=memory,
-                keyword_line=keyword_line,
-                job=job,
-                charge=charge,
-                multiplicity=multiplicity,
-                extra_section=extra_section,
-            )
-        else:
-            coord_lines = _rendering.apply_freeze(
-                tuple(inputs.structure.atoms),
-                tuple(tuple(point) for point in inputs.structure.coordinates),
-                inputs.freeze,
-            )
-            content = _rendering.render_gaussian_input(
-                link0_lines=link0_lines,
-                cores=cores,
-                memory=memory,
-                keyword_line=keyword_line,
-                job=job,
-                charge=charge,
-                multiplicity=multiplicity,
-                coord_lines=coord_lines,
-                extra_section=extra_section,
-            )
+        coord_lines = _rendering.apply_freeze(
+            tuple(inputs.structure.atoms),
+            tuple(tuple(point) for point in inputs.structure.coordinates),
+            inputs.freeze,
+        )
+        content = _rendering.render_gaussian_input(
+            link0_lines=link0_lines,
+            cores=cores,
+            memory=memory,
+            keyword_line=keyword_line,
+            job=job,
+            charge=charge,
+            multiplicity=multiplicity,
+            coord_lines=coord_lines,
+            extra_section=extra_section,
+        )
         main_input_name = f"{job}.gjf"
         metadata = FrozenDict(
             {
@@ -397,107 +378,26 @@ class GaussianProgramAdapter:
 
     @staticmethod
     def _execution_mode(inputs: ResolvedCalculationInputs, keyword_line: str) -> str:
-        """Return the execution mode for these inputs: qst2/qst3/standard.
+        """Return the execution mode for these inputs: standard.
 
-        Named reactant/product slots select QST rendering (the route must
-        carry the matching QST flavor); anything else is standard.
-        No task enum exists — the mode is a rendering decision derived
-        from input shape plus native route vocabulary.
+        QST named slots (reactant/product/guess) and IRC routes are
+        retired: any work item carrying named slots fails closed here
+        instead of rendering; otherwise standard.  No task enum exists
+        — the mode is a rendering decision derived from input shape
+        plus native route vocabulary.
         """
-        from .named import parse_qst_route
-
         slots = inputs.extra_structures
-        reactant = slots.get("reactant")
-        product = slots.get("product")
-        has_named = (
-            reactant is not None and len(reactant) > 0 and product is not None and len(product) > 0
-        )
-        if has_named:
-            guess = slots.get("guess")
-            has_guess = guess is not None and len(guess) > 0
-            return parse_qst_route(keyword_line, has_guess=has_guess)
+        for retired in ("reactant", "product", "guess"):
+            try:
+                present = slots.get(retired)
+            except Exception:
+                present = None
+            if present is not None and len(present) > 0:
+                raise ValueError(
+                    "native_input_error: Gaussian QST named slots are retired; "
+                    f"slot {retired!r} must not be bound"
+                )
         return "standard"
-
-    @staticmethod
-    def _render_qst_input(
-        inputs: ResolvedCalculationInputs,
-        mode: str,
-        *,
-        link0_lines: Any,
-        cores: int,
-        memory: str,
-        keyword_line: str,
-        job: str,
-        charge: int,
-        multiplicity: int,
-        extra_section: str,
-    ) -> str:
-        """Render a QST2/QST3 input with reactant/product/guess specs."""
-        from ...execution.atom_mapping import parse_atom_mapping, reorder_slot_to_reference
-        from .named import render_qst_molecule_specs, validate_qst_slots
-
-        slots = inputs.extra_structures
-        reactant_set = slots.get("reactant")
-        product_set = slots.get("product")
-        guess_set = slots.get("guess")
-        if reactant_set is None or len(reactant_set) == 0:
-            raise ValueError("native_input_error: QST rendering requires a reactant structure")
-        if product_set is None or len(product_set) == 0:
-            raise ValueError("native_input_error: QST rendering requires a product structure")
-        reactant = reactant_set[0]
-        product = product_set[0]
-        guess = guess_set[0] if guess_set is not None and len(guess_set) > 0 else None
-        if mode == "qst2" and guess is not None:
-            raise ValueError("native_input_error: QST2 route with a guess structure; use QST3")
-        if mode == "qst3" and guess is None:
-            raise ValueError("native_input_error: QST3 route without a guess structure")
-        validate_qst_slots(
-            reactant=reactant,
-            product=product,
-            guess=guess,
-            charge=charge,
-            multiplicity=multiplicity,
-        )
-        mapping = parse_atom_mapping(inputs.native.get("atom_mapping"))
-        reference_atoms = tuple(reactant.atoms)
-        product_atoms, product_coords = reorder_slot_to_reference(
-            reference_atoms=reference_atoms,
-            slot_atoms=tuple(product.atoms),
-            slot_coords=tuple(tuple(point) for point in product.coordinates),
-            mapping=mapping,
-        )
-        guess_atoms: Any = None
-        guess_coords: Any = None
-        if guess is not None:
-            guess_atoms, guess_coords = reorder_slot_to_reference(
-                reference_atoms=reference_atoms,
-                slot_atoms=tuple(guess.atoms),
-                slot_coords=tuple(tuple(point) for point in guess.coordinates),
-                mapping=mapping,
-            )
-        specs = render_qst_molecule_specs(
-            reactant_atoms=tuple(reactant.atoms),
-            reactant_coords=tuple(tuple(point) for point in reactant.coordinates),
-            product_atoms=product_atoms,
-            product_coords=product_coords,
-            guess_atoms=guess_atoms,
-            guess_coords=guess_coords,
-            charge=charge,
-            multiplicity=multiplicity,
-        )
-        link0 = "".join(f"{line.rstrip()}\n" for line in link0_lines)
-        return (
-            f"{link0}%nprocshared={cores}\n"
-            f"%mem={memory}\n"
-            f"{keyword_line}\n"
-            f"\n"
-            f"{job}\n"
-            f"\n"
-            f"{specs}"
-            f"\n"
-            f"{extra_section}\n"
-            f"\n"
-        )
 
     def build_execution_request(
         self,

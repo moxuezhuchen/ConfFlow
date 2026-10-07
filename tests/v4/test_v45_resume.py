@@ -7,14 +7,10 @@ All resume decisions run through the real production machinery
 :func:`evaluate_reuse`); native invocations are counted at the process
 boundary via a logging wrapper, so duplicates fail loudly:
 
-- ensemble complete → resume runs 0 native;
-- QST completed + atom mapping unchanged → reuse;
-- QST mapping changed (products swapped across groups) → invalidation, the
-  work-item digest moves, nothing executes.
+- ensemble complete → resume runs 0 native.
 
 Seeded completed results are synthetic-but-rule-bound (frozen
-:mod:`confflow.execution.output_identity` ids/lineage, real
-``resolve_named_inputs``/``ts_output_lineage`` for QST); the register →
+:mod:`confflow.execution.output_identity` ids/lineage); the register →
 decide → reuse-or-launch path they traverse is production code.
 """
 
@@ -42,7 +38,6 @@ from confflow.execution.output_identity import (
     CONFORMER_ROLE,
     conformer_output_id,
     endpoint_lineage,
-    multi_output_structure_id,
 )
 from confflow.execution.process import NativeProcessSupervisor
 from confflow.execution.profile_ensemble import EnsembleProfile
@@ -368,63 +363,6 @@ def _failed_result(item: Any) -> WorkItemResult:
     )
 
 
-def _qst_result(item: Any, *, step_id: str = "s_qst") -> WorkItemResult:
-    """Build the rule-bound TS-candidate result for a QST *item*.
-
-    No production QST TS result profile exists yet, so the candidate shape
-    is synthetic-but-rule-bound: parents in semantic slot order and lineage
-    from :func:`ts_output_lineage`, the id from the frozen
-    :func:`multi_output_structure_id`.
-    """
-    from confflow.execution.named_structures import (
-        resolve_named_inputs,
-        ts_output_lineage,
-        validate_named_compatibility,
-    )
-
-    resolved = resolve_named_inputs(item, require_guess=False)
-    charge, multiplicity = validate_named_compatibility(resolved)
-    parent_ids, lineage_root, group_key = ts_output_lineage(resolved)
-    candidate_id = multi_output_structure_id(item.logical_key, "ts_candidate", 0)
-    coordinates = tuple(
-        tuple((ra + pa) / 2.0 for ra, pa in zip(r_point, p_point))
-        for r_point, p_point in zip(resolved.reactant.coordinates, resolved.product.coordinates)
-    )
-    record = StructureRecord(
-        id=candidate_id,
-        atoms=tuple(resolved.reactant.atoms),
-        coordinates=coordinates,
-        charge=charge,
-        multiplicity=multiplicity,
-        parent_ids=parent_ids,
-        lineage_root_id=lineage_root,
-        source_step_id=step_id,
-        source_work_item_id=item.id,
-        role="ts_candidate",
-        ordinal=0,
-        group_key=group_key,
-        metadata=FrozenDict({"slots": ("reactant", "product")}),
-    )
-    return WorkItemResult(
-        work_item_id=item.id,
-        status=WorkItemStatus.COMPLETED,
-        structures=StructureSet.of(record),
-        results=_stamped_results(
-            [_FakeSubject(candidate_id)],
-            item,
-            step_id,
-            [-76.400001],
-            discriminator="ts_candidate",
-        ),
-        artifacts=ArtifactSet(),
-        diagnostics=(),
-        timing=Timing(started_at=1720000000.0, finished_at=1720000001.0, duration_seconds=1.0),
-        error=None,
-        recovery=RecoveryInfo(profile="none", attempted=False),
-        semantic_digest=item.semantic_digest,
-    )
-
-
 def _reuse_hits(result: Any) -> int:
     """Count item results carrying a reuse diagnostic."""
     return sum(
@@ -492,5 +430,6 @@ class TestEnsembleResume:
 # R2.2 (G18): TestIrcResume, TestQstMappingResume and TestEndpointIdStability
 # are retired with the path_endpoints profile and the named_structures
 # adapter. R2.3b/e: TestGoatResume becomes TestEnsembleResume on a plain
-# calculation (GOAT native retired); the ensemble profile and the
-# multi-output resume machinery are retained for NEB.
+# calculation (GOAT native retired); R2.3c/d retires QST/NEB helpers.
+# The ensemble profile and the multi-output resume machinery are retained
+# for ConfGen.

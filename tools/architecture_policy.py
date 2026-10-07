@@ -419,18 +419,14 @@ V45_MODULES = [
     "confflow.execution.output_identity",
     "confflow.execution.execution_adapters",
     "confflow.execution.multi_output",
-    "confflow.execution.named_structures",
     "confflow.execution.profile_ensemble",
-    "confflow.execution.atom_mapping",
-    "confflow.programs.orca.neb",
-    "confflow.programs.gaussian.named",
 ]
 ORDINAL_WITHIN_ITEM_FILES = [
     "confflow/execution/native.py",
     "confflow/execution/output_identity.py",
     "confflow/execution/profile_ensemble.py",
 ]
-RANGE_ORDINAL_ALLOWLIST = ["confflow/execution/atom_mapping.py"]
+RANGE_ORDINAL_ALLOWLIST: list[str] = []
 
 V42_ROOTS = ["confflow/domain", "confflow/execution", "confflow/workflow/v4", "confflow/programs"]
 FORBIDDEN_V42_SYMBOLS = [

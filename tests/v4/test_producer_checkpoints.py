@@ -434,7 +434,9 @@ class TestNativeRendering:
 
         members = StructureSet.of(structure("s0"), structure("s1"))
         staged = StagedArtifact(local_name="staged/input-checkpoint-0.chk", role="checkpoint")
-        with pytest.raises(ValueError, match="checkpoint input vocabulary"):
+        # R2.3d (G18): QST slots are retired, so the retired-slots gate fires
+        # before the old checkpoint-vocabulary gate; still fail-closed.
+        with pytest.raises(ValueError, match="retired"):
             GaussianProgramAdapter().materialize_native_input(
                 ResolvedCalculationInputs(
                     structure=members[0],
