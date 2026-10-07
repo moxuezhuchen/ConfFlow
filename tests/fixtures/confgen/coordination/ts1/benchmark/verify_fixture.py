@@ -1,7 +1,19 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import json,itertools
+import hashlib,json,itertools
 ROOT=Path(__file__).resolve().parents[1]
+manifest=json.loads((ROOT/'MANIFEST.json').read_text())
+for entry in manifest['files']:
+    if 'external' not in entry: continue
+    p=ROOT/entry['path']
+    if p.is_file():
+        digest=hashlib.sha256(p.read_bytes()).hexdigest()
+        assert digest==entry['sha256'], f"sha256 mismatch for {entry['path']}"
+    else:
+        print(f"SKIP: external fixture file not present: {entry['path']}")
+        print(f"  expected sha256: {entry['sha256']} bytes: {entry['bytes']}")
+        for line in entry['external'].get('retrieval', []):
+            print(f"  retrieval: {line}")
 top=json.loads((ROOT/'topology/typed_topology.json').read_text())
 exp=json.loads((ROOT/'benchmark/expected_coordination_benchmark.json').read_text())
 wit=json.loads((ROOT/'benchmark/expected_sigma_witness.json').read_text())
