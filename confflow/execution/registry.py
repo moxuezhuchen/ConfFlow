@@ -711,6 +711,19 @@ def _default_executors() -> tuple[ExecutorContract, ...]:
                     Pairing.SINGLE,
                     "The whole structure set to transform (refine/deduplicate/filter).",
                 ),
+                # N3: filter-only energy source. MANY (not required) + SINGLE
+                # so the whole bound result set reaches the single whole-set
+                # work item; per-structure pairing happens inside the filter
+                # by subject identity (a BY_SUBJECT assembly pairing would
+                # have no single subject for a multi-structure set).
+                # Appended last.
+                PortSpec(
+                    name="results",
+                    kind=PortKind.RESULT,
+                    cardinality=Cardinality.MANY,
+                    pairing=Pairing.SINGLE,
+                    description="N3 filter energy source: bind to the calculation step's results.",
+                ),
             ),
             output_ports=(
                 _structure_port(

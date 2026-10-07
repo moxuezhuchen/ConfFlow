@@ -263,7 +263,9 @@ class TestUserReplacementScope:
         assert by_id["confgen"]["confgen"]["rings"][0]["id"] == "r1"
 
 
-def _install_fake_orca(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def _install_fake_orca(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str = "success_opt"
+) -> Path:
     bin_dir = tmp_path / "bin-orca"
     bin_dir.mkdir(parents=True, exist_ok=True)
     wrapper = bin_dir / "orca"
@@ -277,7 +279,7 @@ def _install_fake_orca(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     )
     wrapper.chmod(0o755)
     monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ["PATH"])
-    monkeypatch.setenv("FAKE_MODE", "success_opt")
+    monkeypatch.setenv("FAKE_MODE", mode)
     assert os.access(wrapper, os.X_OK)
     assert not bool(wrapper.stat().st_mode & 0o022)
     return count
@@ -335,6 +337,97 @@ class TestFakeProtocolE2E:
         data = json.loads(Path(ensemble).read_text())
         assert str(data["driving_id"]).startswith("preopt:")
         assert data["counts"]["published"] == 3
+
+
+WATER_PAIR_XYZ = """3
+water a
+O 0.0 0.0 0.0
+H 0.76 0.59 0.0
+H 0.76 -0.59 0.0
+3
+water b
+O 0.5 0.5 0.5
+H 1.26 1.09 0.5
+H 1.26 -0.09 0.5
+"""
+
+
+def _freq_filter_document() -> dict[str, Any]:
+    return {
+        "schema": SCHEMA_ID,
+        "inputs": {"structures": {"kind": "structure", "cardinality": "many"}},
+        "global": {"scientific_defaults": {"charge": 0, "multiplicity": 1}},
+        "steps": [
+            {
+                "id": "freq",
+                "executor": "calculation",
+                "bindings": {"structure": {"source": {"run": "structures"}}},
+                "calculation": {
+                    "program": "orca",
+                    "role": "freq",
+                    "execution_adapter": "standard",
+                    "result_profile": "standard",
+                    "native": {"keyword": "B3LYP D3BJ Freq"},
+                    "checks": ["normal_termination", "frequencies_required"],
+                    "recovery": {"profile": "none"},
+                },
+            },
+            {
+                "id": "sel",
+                "executor": "structure_transform",
+                "bindings": {
+                    "structure": {"source": {"step": "freq", "port": "structures"}},
+                    "results": {"source": {"step": "freq", "port": "results"}},
+                },
+                "transform": {
+                    "kind": "filter",
+                    "native": {"max_imaginary_count": 0, "lowest_n": 1},
+                },
+            },
+        ],
+    }
+
+
+class TestFilterEnergyEndToEnd:
+    def test_compile_plan_fake_freq_then_real_filter(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Real compile->plan->fake-ORCA freq->filter energy selection flow."""
+        from confflow.application.v4_run import V4RunApplication, V4RunRequest, import_xyz
+        from confflow.workflow.v4.assembly import RunInputs
+
+        count = _install_fake_orca(tmp_path, monkeypatch, "success_freq")
+        document = _freq_filter_document()
+        compiled = compile_workflow(document)
+        assert compiled.ok, [str(d) for d in compiled.diagnostics]
+        assert compiled.plan is not None
+        edges = {
+            (e.target_step_id, e.target_port.name): e.source_step_id
+            for e in compiled.plan.graph.edges
+        }
+        assert edges[("sel", "structure")] == "freq"
+        assert edges[("sel", "results")] == "freq"
+        structures = import_xyz(WATER_PAIR_XYZ, source_name="pair.xyz")
+        assert len(structures) == 2
+        report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
+            V4RunRequest(
+                workflow_document=json.loads(canonical_json_bytes(document).decode("utf-8")),
+                run_inputs=RunInputs(structures=FrozenDict({"structures": structures})),
+                run_root=str(tmp_path / "run"),
+            )
+        )
+        assert report.status == "completed", [
+            (s.step_id, getattr(s, "status", None), [str(d) for d in getattr(s, "diagnostics", [])])
+            for s in report.step_results
+        ]
+        by_id = {s.step_id: s for s in report.step_results}
+        assert str(by_id["freq"].status) == "StepStatus.COMPLETED"
+        assert str(by_id["sel"].status) == "StepStatus.COMPLETED"
+        # Both waters ran freq; identical fake energies tie, so lowest_n keeps
+        # the first in id order and the imaginary gate passes real modes.
+        assert len(by_id["freq"].structures) == 2
+        assert len(by_id["sel"].structures) == 1
+        assert len([line for line in count.read_text().splitlines() if line.strip()]) == 2
 
 
 class TestJDConsumption:

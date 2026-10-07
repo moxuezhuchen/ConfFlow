@@ -542,6 +542,144 @@ class TestCapabilityVocabulary:
         assert "schema_error" in codes(result.errors)
 
 
+class TestFilterEnergyBinding:
+    """N3: filter energy selection reads only an explicitly bound results port."""
+
+    def _freq_step(self) -> dict:
+        return calc_step(
+            "s_freq",
+            bindings={"structure": {"source": {"run": "structures"}}},
+            program="orca",
+            role="freq",
+            native={"keyword": "B3LYP Freq"},
+            checks=["normal_termination", "frequencies_required"],
+        )
+
+    def test_energy_params_without_results_binding_fail(self) -> None:
+        doc = v4_doc(
+            [
+                self._freq_step(),
+                transform_step(
+                    "s_filter",
+                    kind="filter",
+                    native={"lowest_n": 2},
+                    bindings={"structure": {"source": {"step": "s_freq", "port": "structures"}}},
+                ),
+            ],
+            inputs=STRUCTURE_INPUTS,
+        )
+        result = compile_doc(doc)
+        assert not result.ok
+        assert "filter_results_required" in reasons(result.errors)
+
+    def test_results_bound_to_other_step_than_structures_fail(self) -> None:
+        doc = v4_doc(
+            [
+                self._freq_step(),
+                calc_step(
+                    "s_other",
+                    bindings={"structure": {"source": {"run": "structures"}}},
+                    program="orca",
+                    role="freq",
+                    native={"keyword": "B3LYP Freq"},
+                    checks=["normal_termination", "frequencies_required"],
+                ),
+                transform_step(
+                    "s_filter",
+                    kind="filter",
+                    native={"lowest_n": 2},
+                    bindings={
+                        "structure": {"source": {"step": "s_freq", "port": "structures"}},
+                        "results": {"source": {"step": "s_other", "port": "results"}},
+                    },
+                ),
+            ],
+            inputs=STRUCTURE_INPUTS,
+        )
+        result = compile_doc(doc)
+        assert not result.ok
+        assert "filter_results_source_mismatch" in reasons(result.errors)
+
+    def test_results_bound_to_non_calculation_step_fail(self) -> None:
+        doc = v4_doc(
+            [
+                transform_step(
+                    "s_ref",
+                    kind="refine",
+                    bindings={"structure": {"source": {"run": "structures"}}},
+                ),
+                transform_step(
+                    "s_filter",
+                    kind="filter",
+                    native={"lowest_n": 2},
+                    bindings={
+                        "structure": {"source": {"step": "s_ref", "port": "structures"}},
+                        "results": {"source": {"step": "s_ref", "port": "results"}},
+                    },
+                ),
+            ],
+            inputs=STRUCTURE_INPUTS,
+        )
+        result = compile_doc(doc)
+        assert not result.ok
+        assert "filter_results_source_mismatch" in reasons(result.errors)
+
+    def test_invalid_energy_param_value_fails(self) -> None:
+        doc = v4_doc(
+            [
+                self._freq_step(),
+                transform_step(
+                    "s_filter",
+                    kind="filter",
+                    native={"lowest_n": -1},
+                    bindings={
+                        "structure": {"source": {"step": "s_freq", "port": "structures"}},
+                        "results": {"source": {"step": "s_freq", "port": "results"}},
+                    },
+                ),
+            ],
+            inputs=STRUCTURE_INPUTS,
+        )
+        result = compile_doc(doc)
+        assert not result.ok
+        assert "invalid_value" in reasons(result.errors)
+
+    def test_matching_results_binding_compiles(self) -> None:
+        doc = v4_doc(
+            [
+                self._freq_step(),
+                transform_step(
+                    "s_filter",
+                    kind="filter",
+                    native={"energy_key": "gibbs", "lowest_n": 2},
+                    bindings={
+                        "structure": {"source": {"step": "s_freq", "port": "structures"}},
+                        "results": {"source": {"step": "s_freq", "port": "results"}},
+                    },
+                ),
+            ],
+            inputs=STRUCTURE_INPUTS,
+        )
+        result = compile_doc(doc)
+        assert result.ok, [(d.code, d.details.get("reason")) for d in result.errors]
+
+    def test_disabled_filter_needs_no_results_binding(self) -> None:
+        doc = v4_doc(
+            [
+                self._freq_step(),
+                transform_step(
+                    "s_filter",
+                    kind="filter",
+                    native={"lowest_n": 2},
+                    bindings={"structure": {"source": {"step": "s_freq", "port": "structures"}}},
+                    enabled=False,
+                ),
+            ],
+            inputs=STRUCTURE_INPUTS,
+        )
+        assert compile_doc(doc).ok
+
+
 class TestFailurePolicyCompilation:
     """Acceptance and partial-consumption are explicit, never guessed."""
 

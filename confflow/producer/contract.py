@@ -285,6 +285,50 @@ def _native_section() -> dict[str, Any]:
                 "role": "verbatim_escape_hatch",
                 "description": "Analysis native definition (method, options).",
             },
+            {
+                "block": "transform.native(filter)",
+                "role": "verbatim_escape_hatch",
+                "description": (
+                    "N3 filter energy selection from the bound results port. "
+                    "Any key below requires that binding; missing values "
+                    "exclude with a note."
+                ),
+                "parameters": [
+                    {
+                        "name": "energy_key",
+                        "type": "string",
+                        "values": ["electronic", "gibbs"],
+                        "default": "electronic",
+                        "description": "Rank by 'energy' or 'gibbs_energy' (Hartree).",
+                    },
+                    {
+                        "name": "energy_window_kcal",
+                        "type": "number",
+                        "minimum": 0,
+                        "unit": "kcal/mol",
+                        "description": "Keep within this window above the set minimum.",
+                    },
+                    {
+                        "name": "lowest_n",
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Keep the N lowest-energy structures.",
+                    },
+                    {
+                        "name": "max_imaginary_count",
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Max imaginary frequencies (0 minima, 1 TS).",
+                    },
+                    {
+                        "name": "imaginary_threshold_cm1",
+                        "type": "number",
+                        "default": 0,
+                        "unit": "cm-1",
+                        "description": "Modes strictly below this count as imaginary.",
+                    },
+                ],
+            },
         ],
         "overrides": {
             "allowlist": list(SCIENTIFIC_OVERRIDE_KEYS),
