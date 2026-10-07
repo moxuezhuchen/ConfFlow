@@ -73,9 +73,11 @@ def _recipe() -> dict[str, Any]:
 
 
 class TestCatalogIdentity:
-    def test_is_7th_in_frozen_order(self) -> None:
-        assert RECIPE_IDS_V4[-1] == "monomer_conformers"
-        assert list(RECIPE_IDS_V4) == list(OLD6_IDS) + ["monomer_conformers"]
+    def test_monomer_second_last_in_frozen_order(self) -> None:
+        # N4 声明新增：ensemble_refine appended last；monomer 让出末位。
+        assert RECIPE_IDS_V4[-1] == "ensemble_refine"
+        assert RECIPE_IDS_V4[-2] == "monomer_conformers"
+        assert list(RECIPE_IDS_V4) == list(OLD6_IDS) + ["monomer_conformers", "ensemble_refine"]
         catalog = build_recipe_catalog_v4()
         assert [r["id"] for r in catalog["recipes"]] == list(RECIPE_IDS_V4)
         assert catalog["schema"] == RECIPE_CATALOG_SCHEMA
@@ -431,7 +433,7 @@ class TestFilterEnergyEndToEnd:
 
 
 class TestJDConsumption:
-    def test_jd_parser_consumes_7_catalog_readonly(self) -> None:
+    def test_jd_parser_consumes_8_catalog_readonly(self) -> None:
         jd_src = os.environ.get("JOBDESK_V2_SRC", "/opt/jobdesk-v2-v4/src")
         if not Path(jd_src).is_dir():
             pytest.skip("JobDesk checkout absent")
@@ -452,9 +454,123 @@ class TestJDConsumption:
             )
             verified = parse_v4_contract_bytes(payload)
             assert verified.is_v4_capable
-            # R2.2 声明：目录剩 7 项。
-            assert len(verified.recipe_ids) == 7
+            # N4 声明：目录 7→8（ensemble_refine appended last）。
+            assert len(verified.recipe_ids) == 8
             assert "monomer_conformers" in verified.recipe_ids
+            assert "ensemble_refine" in verified.recipe_ids
         finally:
             if sys_path_added:
                 sys.path.remove(jd_src)
+
+
+def _ensemble_recipe() -> dict[str, Any]:
+    return get_recipe_v4("ensemble_refine")
+
+
+class TestEnsembleRefineCatalog:
+    def test_is_8th_in_frozen_order(self) -> None:
+        assert RECIPE_IDS_V4[-1] == "ensemble_refine"
+        assert list(RECIPE_IDS_V4).index("ensemble_refine") == len(RECIPE_IDS_V4) - 1
+        catalog = build_recipe_catalog_v4()
+        assert [r["id"] for r in catalog["recipes"]] == list(RECIPE_IDS_V4)
+
+    def test_order_140_and_filter_fields_editable(self) -> None:
+        recipe = _ensemble_recipe()
+        assert recipe["order"] == 140
+        assert recipe["category"] == "Conformers"
+        assert set(recipe["required_fields"]) <= set(recipe["exposed_fields"])
+        assert "filter.energy_window_kcal" in recipe["exposed_fields"]
+        assert "filter.lowest_n" in recipe["exposed_fields"]
+        assert set(recipe["required_fields"]) >= {
+            "calc.program",
+            "calc.native",
+            "filter.energy_window_kcal",
+            "filter.lowest_n",
+        }
+
+    def test_description_carries_n2_and_md_notes(self) -> None:
+        text = _ensemble_recipe()["description"]
+        assert "N2" in text and "deduplicate" in text and "opt" in text
+        assert "thin" in text and "no frame-count" in text
+
+
+class TestEnsembleRefineCompilePlan:
+    def test_compiles_to_five_planned_steps(self) -> None:
+        recipe = _ensemble_recipe()
+        compiled = compile_workflow(recipe["document"])
+        assert compiled.ok, [str(d) for d in compiled.diagnostics]
+        assert compiled.plan is not None
+        assert [s.step_id for s in compiled.plan.steps] == [
+            "dedup",
+            "opt",
+            "refine",
+            "freq",
+            "select",
+        ]
+
+    def test_filter_results_explicitly_bound_to_freq(self) -> None:
+        recipe = _ensemble_recipe()
+        by_id = {s["id"]: s for s in recipe["document"]["steps"]}
+        assert by_id["select"]["bindings"] == {
+            "structure": {"source": {"step": "freq", "port": "structures"}},
+            "results": {"source": {"step": "freq", "port": "results"}},
+        }
+        native = by_id["select"]["transform"]["native"]
+        assert native["energy_window_kcal"] == 5.0
+        assert native["lowest_n"] == 10
+        compiled = compile_workflow(recipe["document"])
+        assert compiled.ok
+        edges = {
+            (e.target_step_id, e.target_port.name): e.source_step_id
+            for e in compiled.plan.graph.edges
+        }
+        assert edges[("select", "structure")] == "freq"
+        assert edges[("select", "results")] == "freq"
+
+    def test_refine_between_opt_and_freq_not_after(self) -> None:
+        # N3 freezes filter structure+results to the same calculation step,
+        # so refine cannot sit between freq and filter; it collapses
+        # near-duplicate opt minima before the freq leg instead.
+        recipe = _ensemble_recipe()
+        by_id = {s["id"]: s for s in recipe["document"]["steps"]}
+        assert by_id["refine"]["bindings"]["structure"]["source"]["step"] == "opt"
+        assert by_id["freq"]["bindings"]["structure"]["source"]["step"] == "refine"
+
+
+class TestEnsembleRefineFakeEndToEnd:
+    def test_window_admits_then_lowest_n_selects(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Real recipe pipeline under fake ORCA: window passes, lowest_n keeps 1."""
+        from confflow.application.v4_run import V4RunApplication, V4RunRequest, import_xyz
+        from confflow.workflow.v4.assembly import RunInputs
+
+        count = _install_fake_orca(tmp_path, monkeypatch, "success_freq")
+        document = copy.deepcopy(_ensemble_recipe()["document"])
+        for step in document["steps"]:
+            if step["id"] == "select":
+                step["transform"]["native"]["lowest_n"] = 1
+        compiled = compile_workflow(document)
+        assert compiled.ok, [str(d) for d in compiled.diagnostics]
+        structures = import_xyz(WATER_PAIR_XYZ, source_name="pair.xyz")
+        assert len(structures) == 2
+        report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
+            V4RunRequest(
+                workflow_document=json.loads(canonical_json_bytes(document).decode("utf-8")),
+                run_inputs=RunInputs(structures=FrozenDict({"structures": structures})),
+                run_root=str(tmp_path / "run"),
+            )
+        )
+        assert report.status == "completed", [
+            (s.step_id, getattr(s, "status", None), [str(d) for d in getattr(s, "diagnostics", [])])
+            for s in report.step_results
+        ]
+        by_id = {s.step_id: s for s in report.step_results}
+        for step_id in ("dedup", "opt", "refine", "freq", "select"):
+            assert str(by_id[step_id].status) == "StepStatus.COMPLETED", step_id
+        # Identical fake energies sit inside the 5 kcal window, so both reach
+        # the lowest_n stage, which keeps the first in id order.
+        assert len(by_id["freq"].structures) == 2
+        assert len(by_id["select"].structures) == 1
+        # Both frames ran opt and freq through the external adapter.
+        assert len([line for line in count.read_text().splitlines() if line.strip()]) == 4

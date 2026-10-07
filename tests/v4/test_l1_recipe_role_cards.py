@@ -382,13 +382,14 @@ def test_b2_catalog_contract_bytes_unchanged() -> None:
     from confflow.producer.recipes import recipe_catalog_sha256_v4
 
     # R2.2 声明重钉：目录、卡片数与 guide 描述随收缩更新。
+    # N4 声明新增：目录 7→8（ensemble_refine appended last）。
     assert (
         recipe_catalog_sha256_v4()
-        == "df0b82e2d0ae49131affe47e69ac72a622385469e09747eeef7d7bebbe4a6766"
+        == "072e3a51345d03fc7099529b41049922d5ac7b6cec6d6bf1972dd70091de68b9"
     )
     cat = intent_catalog()
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(cat)).hexdigest() == (
-        "sha256:9e5a479b3c9607fc5c09e2e1c16ef374acd69bfc921d1d2960aaaf8546ed0af4"
+        "sha256:08064928fb4873edb94dfd0fed9222634e7193558d265394fd3e8e1dd9e2b11a"
     )
     assert len(cat["cards"]) == 9
     env = build_configuration_contract_v4(
@@ -400,10 +401,9 @@ def test_b2_catalog_contract_bytes_unchanged() -> None:
     # R2.2 声明重钉(叠加 R2.0-logic energies 白名单)：contract 随暴露面收缩与 energies 更新，boundary 不变。
     # N3 声明新增：structure_transform 新增 results 输入端口 + filter 参数
     # schema（旧条目保留，摘要更新；boundary 不变）。
-    # N2 声明新增：script 执行器能力 + 步骤字段 schema + script_steps 静态段
-    #（旧条目逐字节保留，派生摘要更新；boundary 不变）。
+    # N4 声明新增：recipe 目录 +1（ensemble_refine；boundary 不变）。
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(env)).hexdigest() == (
-        "sha256:20fc3e85c2ea92c40d3ad38a9bc14cfb8e622b8dfaa1a4aa3c3be1c8d59334e5"
+        "sha256:08f1ca2cdc8292d37eae191efba972490646876a44c20e9b8e252b623015ccf8"
     )
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(bdoc)).hexdigest() == (
         "sha256:d9b5282bb8d6d3b3694a76bea6931b3099902f36fc74e6fe0f46727a9905e0b2"
