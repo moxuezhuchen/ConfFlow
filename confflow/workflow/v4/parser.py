@@ -665,7 +665,7 @@ def _build_inputs(
     for name, model in inputs.items():
         try:
             require_identifier(name, "run input name")
-            topology: dict[str, Any] | None = None
+            topology: Any = None
             if model.topology is not None:
                 topology = {
                     "add_edges": [[int(pair[0]), int(pair[1])] for pair in model.topology.add],

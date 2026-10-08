@@ -20,8 +20,9 @@ import sqlite3
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from ..domain._immutable import FrozenDict
 from ..domain.artifact import ArtifactLocator, ArtifactRef, LocatorKind
 from ..domain.canonical import canonical_json_bytes
 from ..domain.completion import WorkItemStatus
@@ -253,7 +254,7 @@ def _build_diagnostic(payload: Any) -> Diagnostic:
             work_item_id=payload.get("work_item_id"),
             logical_key=payload.get("logical_key"),
             field_path=payload.get("field_path"),
-            details=details if isinstance(details, dict) else {},
+            details=cast(FrozenDict, details if isinstance(details, dict) else {}),
         )
     except (KeyError, TypeError, DomainError, ValueError) as exc:
         raise CorruptStateError(f"diagnostic payload is invalid: {exc}") from exc
@@ -278,7 +279,7 @@ def _build_structure(payload: Any) -> StructureRecord:
             role=payload.get("role"),
             ordinal=payload.get("ordinal"),
             group_key=payload.get("group_key"),
-            metadata=metadata if isinstance(metadata, dict) else {},
+            metadata=cast(FrozenDict, metadata if isinstance(metadata, dict) else {}),
             topology_patch=payload.get("topology_patch"),
             working_topology=payload.get("working_topology"),
         )
@@ -302,7 +303,7 @@ def _build_provenance(payload: Any) -> Provenance | None:
             adapter=payload.get("adapter"),
             step_id=payload.get("step_id"),
             work_item_id=payload.get("work_item_id"),
-            metadata=metadata if isinstance(metadata, dict) else {},
+            metadata=cast(FrozenDict, metadata if isinstance(metadata, dict) else {}),
         )
     except (TypeError, DomainError, ValueError) as exc:
         raise CorruptStateError(f"provenance payload is invalid: {exc}") from exc
@@ -346,7 +347,7 @@ def _build_scientific_result(payload: Any) -> ScientificResult:
             source_work_item_id=payload.get("source_work_item_id"),
             provenance=_build_provenance(payload.get("provenance")),
             result_id=result_id,
-            metadata=metadata if isinstance(metadata, dict) else {},
+            metadata=cast(FrozenDict, metadata if isinstance(metadata, dict) else {}),
         )
     except (KeyError, TypeError, DomainError, ValueError) as exc:
         raise CorruptStateError(f"scientific result payload is invalid: {exc}") from exc
@@ -383,7 +384,7 @@ def _build_artifact(payload: Any) -> ArtifactRef:
             producer_work_item_id=payload.get("producer_work_item_id"),
             subject_structure_id=payload.get("subject_structure_id"),
             retention=retention,
-            metadata=metadata if isinstance(metadata, dict) else {},
+            metadata=cast(FrozenDict, metadata if isinstance(metadata, dict) else {}),
         )
     except (KeyError, TypeError, DomainError, ValueError) as exc:
         raise CorruptStateError(f"artifact payload is invalid: {exc}") from exc
@@ -481,7 +482,7 @@ def _result_from_dict(payload: Any) -> WorkItemResult:
                 code=error_payload["code"],
                 message=error_payload["message"],
                 retryable=bool(error_payload.get("retryable", False)),
-                details=details if isinstance(details, dict) else {},
+                details=cast(FrozenDict, details if isinstance(details, dict) else {}),
             )
         except (KeyError, TypeError, DomainError, ValueError) as exc:
             raise CorruptStateError(f"result error is invalid: {exc}") from exc
@@ -497,7 +498,7 @@ def _result_from_dict(payload: Any) -> WorkItemResult:
                 profile=recovery_payload["profile"],
                 attempted=bool(recovery_payload.get("attempted", False)),
                 succeeded=recovery_payload.get("succeeded"),
-                details=details if isinstance(details, dict) else {},
+                details=cast(FrozenDict, details if isinstance(details, dict) else {}),
             )
         except (KeyError, TypeError, DomainError, ValueError) as exc:
             raise CorruptStateError(f"result recovery is invalid: {exc}") from exc
@@ -521,7 +522,7 @@ def _result_from_dict(payload: Any) -> WorkItemResult:
             error=error,
             recovery=recovery,
             semantic_digest=semantic_digest,
-            metadata=metadata,
+            metadata=cast(FrozenDict, metadata),
         )
     except (TypeError, DomainError, ValueError) as exc:
         raise CorruptStateError(f"result payload violates domain invariants: {exc}") from exc

@@ -15,7 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from typing import Any
+from typing import Any, cast
 
 __all__ = [
     "main",
@@ -239,7 +239,7 @@ def _run(args: argparse.Namespace) -> int:
         "manifest": report.manifest.thaw(),
     }
     if report.status != "completed":
-        payload["failures"] = _step_failures(payload["manifest"])
+        payload["failures"] = _step_failures(cast(dict[str, Any], payload["manifest"]))
     if args.json:
         sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True))
         sys.stdout.write("\n")

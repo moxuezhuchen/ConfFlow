@@ -21,7 +21,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from ..domain._immutable import FrozenDict
 from ..domain.artifact import ArtifactSet
@@ -280,10 +280,10 @@ class BatchStepExecutor:
         width = step.scheduler.max_parallel_items or 1
         context = ItemExecutionContext(
             step_id=step.step_id,
-            scientific=request.scientific,
-            scientific_defaults=request.scientific_defaults,
-            adapter=request.adapter,
-            profile=request.profile,
+            scientific=cast("ScientificDefinition", request.scientific),
+            scientific_defaults=cast("ScientificDefaults", request.scientific_defaults),
+            adapter=cast("ProgramAdapter", request.adapter),
+            profile=cast("ResultProfile", request.profile),
             checks=request.checks,
             recovery=self._bind_recovery(request.recovery, request.adapter),
             execution_binding=request.execution_binding,
@@ -428,10 +428,10 @@ class BatchStepExecutor:
         provenance = self._current_provenance(request)
         context = ItemExecutionContext(
             step_id=step.step_id,
-            scientific=request.scientific,
-            scientific_defaults=request.scientific_defaults,
-            adapter=request.adapter,
-            profile=request.profile,
+            scientific=cast("ScientificDefinition", request.scientific),
+            scientific_defaults=cast("ScientificDefaults", request.scientific_defaults),
+            adapter=cast("ProgramAdapter", request.adapter),
+            profile=cast("ResultProfile", request.profile),
             checks=request.checks,
             recovery=self._bind_recovery(request.recovery, request.adapter),
             execution_binding=request.execution_binding,

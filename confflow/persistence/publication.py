@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Iterable
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from ..domain._immutable import FrozenDict
 from ..domain.artifact import ArtifactLocator, ArtifactRef, ArtifactSet, LocatorKind
@@ -192,7 +192,9 @@ def _structure_record(entry: Any) -> StructureRecord:
             role=data.get("role"),
             ordinal=data.get("ordinal"),
             group_key=data.get("group_key"),
-            metadata=_mapping_or_empty(data.get("metadata"), "structure metadata"),
+            metadata=cast(
+                FrozenDict, _mapping_or_empty(data.get("metadata"), "structure metadata")
+            ),
             topology_patch=data.get("topology_patch"),
             working_topology=data.get("working_topology"),
         )
@@ -216,7 +218,9 @@ def _result_provenance(entry: Any) -> Provenance | None:
             adapter=data.get("adapter"),
             step_id=data.get("step_id"),
             work_item_id=data.get("work_item_id"),
-            metadata=_mapping_or_empty(data.get("metadata"), "result provenance metadata"),
+            metadata=cast(
+                FrozenDict, _mapping_or_empty(data.get("metadata"), "result provenance metadata")
+            ),
         )
     except CorruptStateError:
         raise
@@ -253,7 +257,9 @@ def _scientific_result(entry: Any) -> ScientificResult:
             source_work_item_id=data.get("source_work_item_id"),
             provenance=_result_provenance(data.get("provenance")),
             result_id=result_id,
-            metadata=_mapping_or_empty(data.get("metadata"), "scientific result metadata"),
+            metadata=cast(
+                FrozenDict, _mapping_or_empty(data.get("metadata"), "scientific result metadata")
+            ),
         )
     except CorruptStateError:
         raise
@@ -291,7 +297,7 @@ def _artifact_ref(entry: Any) -> ArtifactRef:
             producer_work_item_id=data.get("producer_work_item_id"),
             subject_structure_id=data.get("subject_structure_id"),
             retention=RetentionClass(data["retention"]),
-            metadata=_mapping_or_empty(data.get("metadata"), "artifact metadata"),
+            metadata=cast(FrozenDict, _mapping_or_empty(data.get("metadata"), "artifact metadata")),
         )
     except CorruptStateError:
         raise
@@ -311,7 +317,7 @@ def _diagnostic(entry: Any) -> Diagnostic:
             work_item_id=data.get("work_item_id"),
             logical_key=data.get("logical_key"),
             field_path=data.get("field_path"),
-            details=_mapping_or_empty(data.get("details"), "diagnostic details"),
+            details=cast(FrozenDict, _mapping_or_empty(data.get("details"), "diagnostic details")),
         )
     except CorruptStateError:
         raise
@@ -346,7 +352,9 @@ def _result_error(entry: Any) -> ResultError | None:
             code=data["code"],
             message=data["message"],
             retryable=data["retryable"],
-            details=_mapping_or_empty(data.get("details"), "result error details"),
+            details=cast(
+                FrozenDict, _mapping_or_empty(data.get("details"), "result error details")
+            ),
         )
     except CorruptStateError:
         raise
@@ -364,7 +372,7 @@ def _recovery_info(entry: Any) -> RecoveryInfo | None:
             profile=data["profile"],
             attempted=data["attempted"],
             succeeded=data.get("succeeded"),
-            details=_mapping_or_empty(data.get("details"), "recovery details"),
+            details=cast(FrozenDict, _mapping_or_empty(data.get("details"), "recovery details")),
         )
     except CorruptStateError:
         raise
@@ -412,7 +420,9 @@ def _work_item_result(entry: Any) -> WorkItemResult:
             error=error,
             recovery=recovery,
             semantic_digest=data.get("semantic_digest"),
-            metadata=_mapping_or_empty(data.get("metadata"), "work item metadata"),
+            metadata=cast(
+                FrozenDict, _mapping_or_empty(data.get("metadata"), "work item metadata")
+            ),
         )
     except CorruptStateError:
         raise
@@ -430,7 +440,9 @@ def _step_provenance(entry: Any) -> StepProvenance | None:
             workflow_definition_digest=data.get("workflow_definition_digest"),
             step_semantic_digest=data.get("step_semantic_digest"),
             compiler_version=data.get("compiler_version"),
-            metadata=_mapping_or_empty(data.get("metadata"), "step provenance metadata"),
+            metadata=cast(
+                FrozenDict, _mapping_or_empty(data.get("metadata"), "step provenance metadata")
+            ),
         )
     except CorruptStateError:
         raise

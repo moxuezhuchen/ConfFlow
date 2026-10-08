@@ -41,7 +41,7 @@ def _resolve_program(program: Any, *, step_id: str) -> str:
 
 
 def _wire_calculation(
-    step: Mapping[str, Any], card: dict[str, Any], step_id: str
+    step: Mapping[str, Any], card: Mapping[str, Any], step_id: str
 ) -> dict[str, Any]:
     native = step.get("native")
     if not isinstance(native, Mapping) or not native:

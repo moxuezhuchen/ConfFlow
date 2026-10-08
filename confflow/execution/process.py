@@ -83,7 +83,7 @@ _PSUTIL_GONE_ERRORS: tuple[type[BaseException], ...] = tuple(
     if isinstance(error, type)
 )
 _OS_PSUTIL_ERRORS: tuple[type[BaseException], ...] = (OSError, *_PSUTIL_ERRORS)
-_SIGKILL = getattr(signal, "SIGKILL", None)
+_SIGKILL: Any = getattr(signal, "SIGKILL", None)
 
 _DETAIL_ALREADY_TERMINAL = "already terminal"
 _DETAIL_ALREADY_CANCELLED = "already cancelled"

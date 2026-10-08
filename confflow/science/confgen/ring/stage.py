@@ -30,7 +30,7 @@ from typing import Any, cast
 
 import numpy as np
 
-from confflow.domain.structure import StructureRecord
+from confflow.domain.structure import Coordinates, StructureRecord
 from confflow.science.confgen.model import (
     GenerationStage,
     GenerationTarget,
@@ -748,7 +748,7 @@ class RingStage(GenerationStage):
         try:
             new_structure = replace(
                 structure,
-                coordinates=output_coords,
+                coordinates=cast(Coordinates, output_coords),
                 id=f"{parent_id}-rings-{target.ordinal:06d}",
                 parent_ids=tuple(structure.parent_ids) + (str(parent_id),),
             )

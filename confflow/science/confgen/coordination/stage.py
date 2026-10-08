@@ -47,6 +47,7 @@ from typing import Any, cast
 
 import numpy as np
 
+from confflow.domain._immutable import FrozenDict
 from confflow.science.confgen.kernel_records import RetryResult, TelemetryRow
 from confflow.science.confgen.model import (
     GenerationStage,
@@ -1944,7 +1945,7 @@ class CoordinationStage(GenerationStage):
             multiplicity=outcome.structure.multiplicity,
             parent_ids=tuple(outcome.structure.parent_ids),
             source_step_id=outcome.structure.source_step_id,
-            metadata=prior,
+            metadata=cast(FrozenDict, prior),
             **inherit_topology_kwargs(parent.structure, adjacency),
         )
         evidence = [dict(item) for item in tuple(outcome.evidence)]
@@ -2213,8 +2214,8 @@ class CoordinationStage(GenerationStage):
             rotation=tuple(
                 cast("tuple[float, float, float]", tuple(float(v) for v in row)) for row in fitted
             ),
-            center=tuple(float(v) for v in center),
-            order=witness_order,
+            center=cast(tuple[float, float, float], tuple(float(v) for v in center)),
+            order=cast(int, witness_order),
             scope=tuple(range(graph.natoms)),
             declared_site_action={
                 site: self._spec.site_ids[sigma[pos]]

@@ -16,7 +16,7 @@ imported lazily inside :func:`compile_intent`.
 from __future__ import annotations
 
 import copy
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ..cards import CARD_TYPES, CARD_VERSION, get_card, parse_card_ref
@@ -335,7 +335,7 @@ def _extract_card_type_for_alloc(card_ref: Any, intent_registry: Any | None) -> 
 
 
 def _allocate_ids(
-    raw_steps: list[Mapping[str, Any]], intent_registry: Any | None = None
+    raw_steps: Sequence[Mapping[str, Any]], intent_registry: Any | None = None
 ) -> list[dict[str, Any]]:
     """Assign stable ``{cardtype}_{occurrence}`` ids; preserve explicit ones."""
     counts: dict[str, int] = {}

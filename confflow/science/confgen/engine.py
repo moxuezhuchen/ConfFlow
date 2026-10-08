@@ -70,6 +70,7 @@ from confflow.science.confgen.kernel_records import (
 from confflow.science.confgen.model import (
     ConfgenStateKey,
     GenerationStage,
+    GenerationTarget,
     MolecularContext,
     RealizationResult,
     TerminalStatus,
@@ -334,7 +335,7 @@ def _native_drift_observation(
         found = True
         candidate = item.get("observed_key")
         if _valid_observed_key(candidate):
-            observed = dict(candidate)
+            observed = dict(cast(Mapping[str, Any], candidate))
             break
     return found, observed
 
@@ -434,13 +435,13 @@ def _wrap_degrees_local(angle: float) -> float:
 
 def _inherited_report_entries(
     states: Sequence[ComponentInheritedState],
-    initial_key: ComponentStateKey,
+    initial_key: ComponentStateKey | None,
     context: Any,
 ) -> list[dict[str, Any]]:
     """Build legacy report entries (carrier only, byte-identical)."""
     entries: list[dict[str, Any]] = []
     try:
-        comps = dict(initial_key.components)
+        comps = dict(initial_key.components) if initial_key is not None else {}
     except (AttributeError, TypeError, ValueError):
         comps = {}
     resolved = context.resolved_spec if hasattr(context, "resolved_spec") else {}
@@ -491,13 +492,13 @@ def _inherited_report_entries(
                     if entry is not None and entry.get("atoms") is not None:
                         exp = float(states_map[label])
                     else:
-                        ref = desc.get("reference_frame_value")
+                        ref: Any = desc.get("reference_frame_value")
                         exp = float(_wrap_degrees_local(float(ref) + float(states_map[label])))
                 elif model == "absolute_dihedral_grid":
                     exp = float(label)
                 elif model == "relative_rotation_grid":
-                    ref = desc.get("reference_frame_value")
-                    exp = float(_wrap_degrees_local(float(ref) + float(label)))
+                    ref_any: Any = desc.get("reference_frame_value")
+                    exp = float(_wrap_degrees_local(float(ref_any) + float(label)))
                 else:
                     continue
             except (AttributeError, TypeError, KeyError, ValueError):
@@ -1445,7 +1446,7 @@ class _RunState:
                 )
                 own_mark_idx = len(self.telemetry) - 1
                 own_mark_phase = "input"
-                outcome = stage.realize(parent, target, context)
+                outcome = stage.realize(parent, cast(GenerationTarget, target), context)
                 self._update_telemetry_success(own_mark_idx, self._geometry_success(outcome))
         except Exception as exc:  # stage bug: account explicitly, never silent
             if isinstance(exc, TelemetryError):
@@ -1945,7 +1946,7 @@ class _RunState:
         }
         child = KernelWorkingRealization(
             structure=structure,
-            state_key=child_key,
+            state_key=cast(ComponentStateKey, child_key),
             parent_realization_id=parent.structure.id,
             generation_axis=axis,
             locked_axes=locked,
@@ -3063,7 +3064,7 @@ class _RunState:
         proof_trusted: bool = True,
     ) -> None:
         """Record a DRIFTED target with observed/out-of-scope routing."""
-        record_evidence: list[dict[str, Any]] = list(evidence)
+        record_evidence: list[Mapping[str, Any]] = list(evidence)
         observed_payload: dict[str, Any] = {
             "kind": "observed",
             "observed": dict(observed),

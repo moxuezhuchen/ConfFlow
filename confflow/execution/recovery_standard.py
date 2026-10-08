@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 import numpy as np
 
@@ -218,7 +218,7 @@ def _set_bond_length(
     unit = [component / length for component in delta]
     placed = tuple(origin[i] + unit[i] * float(target) for i in range(3))
     points[atom_b - 1] = (placed[0], placed[1], placed[2])
-    return tuple(points)
+    return cast(Coordinates, tuple(points))
 
 
 def _find_local_max(
