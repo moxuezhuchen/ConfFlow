@@ -2914,6 +2914,62 @@ def test_suppression_for_target_hook_proposes_and_refuses() -> None:
     assert hook_stage.suppression_for_target(parent, suppressed_target, context) is None
 
 
+def test_suppression_for_target_declines_unknown_witness_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unknown closure order declines suppression instead of raising TypeError."""
+    system = _build_c2_system()
+    sgraph, sspec, scoords = system["graph"], system["spec"], system["coords"]
+    from confflow.domain.structure import StructureRecord
+
+    section = {
+        "metal_center": 0,
+        "binding_sites": [
+            {"id": site.id, "kind": "atom", "atoms": list(site.atoms), "hapticity": 1}
+            for site in sspec.binding_sites
+        ],
+        "shapes": ["octahedral"],
+        "treatment": "enumerate",
+        "constraints": [],
+        "site_group": _c2_witness_section(system),
+        "tolerances": {},
+        "donor_configuration": list(sspec.site_ids),
+    }
+    structure = StructureRecord(
+        id="c2",
+        atoms=tuple(sgraph.elements),
+        coordinates=tuple(tuple(p) for p in scoords),
+        charge=0,
+        multiplicity=1,
+    )
+    topology = {
+        "bonds": [{"atoms": [e.a, e.b], "kind": e.type.value} for e in sgraph.edges],
+        "atoms": [{"index": a.index, "role": a.role} for a in sgraph.atoms if a.role],
+    }
+    workflow = {
+        "schema_version": 3,
+        "index_base": 0,
+        "topology": topology,
+        "coordination": section,
+        "stereochemistry": {"labels": list(system["stereo"])},
+    }
+    context = core_model.build_context(structure, workflow)
+    hook_stage = CoordinationStage(dict(context.resolved_spec))
+    parent = core_model.WorkingRealization(
+        structure=structure, state_key=core_model.ConfgenStateKey()
+    )
+    targets = list(hook_stage.enumerate_targets(parent, context))
+    pipe = hook_stage._pipelines(context)[0]
+    by_id = {cls.id: tuple(cls.representative) for cls in pipe["shape_classes"]}
+    multi = next(o for o in pipe["molecular_orbits"] if len(o.members) > 1)
+    by_placement = {tuple(target.state_value["placement"]): target for target in targets}
+    suppressed_target = by_placement[by_id[sorted(multi.members)[1]]]
+    record = hook_stage.suppression_for_target(parent, suppressed_target, context)
+    assert record is not None and record["closure_order"] == 2
+    monkeypatch.setattr(stage, "_permutation_order", lambda _perm: None)
+    assert hook_stage.suppression_for_target(parent, suppressed_target, context) is None
+
+
 def _c2_witness_section(system: dict[str, Any]) -> dict[str, Any]:
     count = system["graph"].natoms
     assert sorted(system["sigma"]) == list(range(count))

@@ -183,6 +183,6 @@
     }
   ],
   "tests_total_files": 246,
-  "tests_total_loc_limit": 97627,
-  "tests_total_reason": "2026-10-08 review 修复（A1-A6 执行层缺陷、C2 mypy 收紧、C3 进程监管）：上限=实测值，用户已于 2026-10-08 确认；E 轮覆盖率补测"
+  "tests_total_loc_limit": 97692,
+  "tests_total_reason": "2026-10-08 review 修复（A1-A6 执行层缺陷、C2 mypy 收紧、C3 进程监管）：上限=实测值，用户已于 2026-10-08 确认；E 轮覆盖率补测；2026-10-08 mypy cast 根因修正的回归测试，待用户确认"
 }
