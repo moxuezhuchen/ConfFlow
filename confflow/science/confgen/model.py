@@ -22,7 +22,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 if TYPE_CHECKING:  # Annotation only; runtime uses local import (avoid model->registry cycle).
     from confflow.science.confgen.kernel_records import RetryResult
@@ -396,7 +396,9 @@ def build_context(
         resolved_spec=FrozenDict(resolved),
         tolerances=tolerances,
         input_state_key=key,
-        input_coords=tuple(tuple(point) for point in structure.coordinates),
+        input_coords=tuple(
+            cast("tuple[float, float, float]", tuple(point)) for point in structure.coordinates
+        ),
         inherited_scope=FrozenDict(scope),
         atom_refs=atom_refs,
         registry=resolved_registry,

@@ -117,7 +117,7 @@ def fallback_lock(
                 )
             match, match_evidence = ring_states_match(commanded, observed)
             if not match:
-                payload = {
+                payload: dict[str, Any] = {
                     "kind": "drift",
                     "axis": f"rings.{ring_id}",
                     "detail": "ancestor ring lock drifted",

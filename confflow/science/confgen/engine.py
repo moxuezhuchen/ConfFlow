@@ -405,7 +405,7 @@ def _collect_inherited_states(
         )
     try:
         ordered = list(registry._ordered())
-    except Exception:
+    except AttributeError:
         ordered = list(getattr(registry, "descriptors", ()) or ())
     states: list[ComponentInheritedState] = []
     for descriptor in reversed(ordered):
@@ -441,7 +441,7 @@ def _inherited_report_entries(
     entries: list[dict[str, Any]] = []
     try:
         comps = dict(initial_key.components)
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         comps = {}
     resolved = context.resolved_spec if hasattr(context, "resolved_spec") else {}
     registry = getattr(context, "registry", None)
@@ -449,7 +449,7 @@ def _inherited_report_entries(
     try:
         for _d in getattr(registry, "descriptors", ()) or ():
             descs[str(getattr(_d, "id", ""))] = _d
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         descs = {}
     for st in states:
         cid = str(getattr(st, "component_id", ""))
@@ -458,7 +458,7 @@ def _inherited_report_entries(
         desc_reg = descs.get(cid)
         try:
             carries = bool(getattr(desc_reg, "carries_inherited_locks", False))
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             carries = False
         if not carries:
             continue
@@ -473,7 +473,7 @@ def _inherited_report_entries(
             for _e in resolved.get(cid, []) or []:
                 if isinstance(_e, Mapping) and _e.get("id") is not None:
                     downstream[str(_e.get("id"))] = _e
-        except Exception:
+        except (AttributeError, TypeError, KeyError, ValueError):
             downstream = {}
         for axis_id, label in dict(sv).items():
             axis = str(axis_id)
@@ -500,7 +500,7 @@ def _inherited_report_entries(
                     exp = float(_wrap_degrees_local(float(ref) + float(label)))
                 else:
                     continue
-            except Exception:
+            except (AttributeError, TypeError, KeyError, ValueError):
                 continue
             entries.append(
                 {
@@ -530,13 +530,10 @@ def _validate_driving_generic(
         sv = dict(initial_key.components).get(cid)
         payload = getattr(st, "payload", None)
         descriptor = None
-        try:
-            for d in registry.descriptors:
-                if str(getattr(d, "id", "")) == cid:
-                    descriptor = d
-                    break
-        except Exception:
-            descriptor = None
+        for d in registry.descriptors:
+            if str(getattr(d, "id", "")) == cid:
+                descriptor = d
+                break
         hook = (
             getattr(descriptor, "verify_inherited_state", None) if descriptor is not None else None
         )
@@ -575,35 +572,32 @@ def _collect_component_diagnostics(
     """
     try:
         ordered = list(registry._ordered())
-    except Exception:
-        try:
-            ordered = list(getattr(registry, "descriptors", ()) or ())
-        except Exception:
-            return {}
+    except AttributeError:
+        ordered = list(getattr(registry, "descriptors", ()) or ())
     collected: dict[str, Any] = {}
     for descriptor in ordered:
         try:
             ident = str(getattr(descriptor, "id", ""))
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             continue
         if not ident:
             continue
         hook: Any = None
         try:
             stage = bound.get(ident) if isinstance(bound, Mapping) else None
-        except Exception:
+        except (AttributeError, TypeError, KeyError):
             stage = None
         if stage is not None:
             try:
                 cand = getattr(stage, "report_diagnostics", None)
-            except Exception:
+            except AttributeError:
                 cand = None
             if callable(cand):
                 hook = cand
         if hook is None:
             try:
                 cand = getattr(descriptor, "report_diagnostics", None)
-            except Exception:
+            except AttributeError:
                 cand = None
             if callable(cand):
                 hook = cand
@@ -719,7 +713,10 @@ class ConfgenEngine:
         leaf_structure = StructureRecord(
             id=f"{context.structure.id}:v3:preserve",
             atoms=tuple(context.structure.atoms),
-            coordinates=tuple(tuple(point) for point in context.structure.coordinates),
+            coordinates=tuple(
+                cast("tuple[float, float, float]", tuple(point))
+                for point in context.structure.coordinates
+            ),
             charge=context.structure.charge,
             multiplicity=context.structure.multiplicity,
             parent_ids=(context.structure.id,),
@@ -1101,7 +1098,7 @@ class ConfgenEngine:
                 # Full generation streams ordinals; sampled generation fetches
                 # ONLY wanted ordinals. No full-target list is ever built.
                 if capped:
-                    wanted = sorted(allowed.get((level, prefix), set()))
+                    wanted: Sequence[int] = sorted(allowed.get((level, prefix), set()))
                 else:
                     wanted = range(level_counts[level])
                 for ordinal in wanted:
@@ -1671,20 +1668,17 @@ class _RunState:
         if self._inherited:
             inherited_evidence: list[dict[str, Any]] = []
             inherited_ok = True
-            try:
-                _reg = self._engine._registry
-            except Exception:
-                _reg = None  # type: ignore[assignment]
+            _reg = self._engine._registry
             _descs = {}
             try:
                 for _d in getattr(_reg, "descriptors", ()) or ():
                     _descs[str(getattr(_d, "id", ""))] = _d
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 _descs = {}
             # Reverse registry order preserves legacy torsions-first drift order.
             try:
                 _order = list(_reg._ordered())  # type: ignore[union-attr]
-            except Exception:
+            except AttributeError:
                 _order = []
             _by_id = {str(getattr(d, "id", "")): d for d in _order}
             for _st in list(self._inherited):
@@ -1702,7 +1696,7 @@ class _RunState:
                         if _key is not None
                         else {}
                     )
-                except Exception:
+                except (AttributeError, TypeError, ValueError):
                     _parent_comps = {}
                 _sv = _parent_comps.get(_cid)
                 _pay = getattr(_st, "payload", None)
@@ -1925,19 +1919,16 @@ class _RunState:
             # enumerate axes keep their fresh target values.
             try:
                 _incoming = dict(parent.state_key.components).get(axis, {}) or {}
-            except Exception:
+            except (AttributeError, TypeError, KeyError, ValueError):
                 _incoming = {}
             if isinstance(_incoming, Mapping):
-                try:
-                    _resolved = self._context.resolved_spec
-                except Exception:
-                    _resolved = {}
+                _resolved = self._context.resolved_spec
                 _down = {}
                 try:
                     for _e in _resolved.get(axis, []) or []:
                         if isinstance(_e, Mapping) and _e.get("id") is not None:
                             _down[str(_e.get("id"))] = _e
-                except Exception:
+                except (AttributeError, TypeError, KeyError, ValueError):
                     _down = {}
                 for _k, _v in dict(_incoming).items():
                     _ent = _down.get(str(_k))
@@ -2073,28 +2064,25 @@ class _RunState:
         """Read the bond-integrity hook generically (FIX-1A A3)."""
         from confflow.science.confgen.model import GenerationStage as _Base
 
-        try:
-            overridden = any(
-                "check_bond_integrity" in klass.__dict__
-                for klass in type(stage).__mro__
-                if klass not in (_Base, object)
-            )
-        except Exception:
-            overridden = False
+        overridden = any(
+            "check_bond_integrity" in klass.__dict__
+            for klass in type(stage).__mro__
+            if klass not in (_Base, object)
+        )
         if overridden:
             try:
                 return bool(getattr(stage, "check_bond_integrity", False))
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 return False
         descriptor = self._descriptor_for(axis)
         if descriptor is not None:
             try:
                 return bool(descriptor.check_bond_integrity)
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 pass
         try:
             return bool(getattr(stage, "check_bond_integrity", False))
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             return False
 
     def _supports_retry(self, stage: GenerationStage) -> bool:
@@ -2794,28 +2782,25 @@ class _RunState:
         """Read the inherited-lock carrier hook generically (FIX-1A A3)."""
         from confflow.science.confgen.model import GenerationStage as _Base
 
-        try:
-            overridden = any(
-                "carries_inherited_locks" in klass.__dict__
-                for klass in type(stage).__mro__
-                if klass not in (_Base, object)
-            )
-        except Exception:
-            overridden = False
+        overridden = any(
+            "carries_inherited_locks" in klass.__dict__
+            for klass in type(stage).__mro__
+            if klass not in (_Base, object)
+        )
         if overridden:
             try:
                 return bool(getattr(stage, "carries_inherited_locks", False))
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 return False
         descriptor = self._descriptor_for(axis)
         if descriptor is not None:
             try:
                 return bool(descriptor.carries_inherited_locks)
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 pass
         try:
             return bool(getattr(stage, "carries_inherited_locks", False))
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             return False
 
     def _hook_impl(self, axis: str, stage: GenerationStage, name: str) -> Any | None:
@@ -2830,18 +2815,13 @@ class _RunState:
         """
         from confflow.science.confgen.model import GenerationStage as _Base
 
-        try:
-            overridden = any(
-                name in klass.__dict__
-                for klass in type(stage).__mro__
-                if klass not in (_Base, object)
-            )
-        except Exception:
-            overridden = False
+        overridden = any(
+            name in klass.__dict__ for klass in type(stage).__mro__ if klass not in (_Base, object)
+        )
         if overridden:
             try:
                 hook = getattr(stage, name, None)
-            except Exception:
+            except AttributeError:
                 hook = None
             if callable(hook):
                 return hook
@@ -2849,14 +2829,14 @@ class _RunState:
         if descriptor is not None:
             try:
                 hook = getattr(descriptor, name, None)
-            except Exception:
+            except AttributeError:
                 hook = None
             if callable(hook):
                 return hook
         if not overridden:
             try:
                 hook = getattr(stage, name, None)
-            except Exception:
+            except AttributeError:
                 hook = None
             if callable(hook):
                 return hook
@@ -2913,7 +2893,10 @@ class _RunState:
                 if mode == "parent":
                     hook_context = dataclasses.replace(
                         context,
-                        input_coords=tuple(tuple(float(v) for v in row) for row in parent_coords),
+                        input_coords=tuple(
+                            cast("tuple[float, float, float]", tuple(float(v) for v in row))
+                            for row in parent_coords
+                        ),
                     )
                 try:
                     ok, snapped, hook_evidence = hook(structure, dict(locked_state), hook_context)
@@ -2972,7 +2955,7 @@ class _RunState:
         # wrongly publish this UNRESOLVED leaf).
         try:
             stage_hook = getattr(stage, "fallback_lock", None)
-        except Exception:
+        except AttributeError:
             stage_hook = None
         if callable(stage_hook):
             try:
@@ -2991,7 +2974,7 @@ class _RunState:
         if descriptor is not None:
             try:
                 descriptor_hook = getattr(descriptor, "fallback_lock", None)
-            except Exception:
+            except AttributeError:
                 descriptor_hook = None
         if callable(descriptor_hook):
             try:
@@ -3711,7 +3694,7 @@ class _RunState:
             else:
                 try:
                     hook = getattr(descriptor, "preserved_entries", None)
-                except Exception:
+                except AttributeError:
                     hook = None
                 if not callable(hook):
                     continue
@@ -3747,7 +3730,7 @@ class _RunState:
                 descriptor = self._descriptor_for(axis)
                 try:
                     hook = getattr(descriptor, "report_section", None)
-                except Exception:
+                except AttributeError:
                     hook = None
                 if not callable(hook):
                     continue

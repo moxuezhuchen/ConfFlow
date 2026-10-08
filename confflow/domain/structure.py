@@ -302,7 +302,7 @@ class StructureRecord:
             multiplicity = getattr(effective, "multiplicity", self.multiplicity)
             raw_freeze = getattr(effective, "freeze", None)
             freeze = list(raw_freeze) if raw_freeze is not None else None
-        payload = {
+        payload: dict[str, Any] = {
             "entity_id": self.id,
             "geometry_digest": self.geometry_digest,
             "charge": charge,

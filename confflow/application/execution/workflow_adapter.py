@@ -650,7 +650,7 @@ def build_workflow_service(
     spec: WorkflowRunSpec,
     *,
     state_root: str | Path,
-    workflow_runner: WorkflowRunner = default_workflow_runner,
+    workflow_runner: WorkflowRunner = default_workflow_runner,  # type: ignore[assignment]
 ) -> tuple[ExecutionService, ServiceWorkflowExecutor]:
     """Build one durable service and its formal V4 execution adapter."""
     # Mandatory formal-runtime guard (worker I): the single V4 application is
@@ -750,7 +750,7 @@ def run_workflow_through_service(
     cancel_beacon_file: str | None = None,
     original_input_files: Sequence[str] | None = None,
     work_directory_lease: _WorkDirectoryLease | None = None,
-    workflow_runner: WorkflowRunner = default_workflow_runner,
+    workflow_runner: WorkflowRunner = default_workflow_runner,  # type: ignore[assignment]
 ) -> dict[str, Any] | None:
     """Run the formal V4 application synchronously while all state transitions use the service."""
     # Mandatory formal-runtime guard (worker I): a V2/V3 document fails

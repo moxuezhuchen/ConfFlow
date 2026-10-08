@@ -582,7 +582,7 @@ def build_binding_graph(validated: ValidatedDefinition) -> GraphResult:
             if edge is None:
                 continue
             source = edge.source
-            source_port = edge.source_port
+            source_port: PortSpec | None = edge.source_port
             via: tuple[str, ...] = ()
             if source.kind is SourceKind.STEP_OUTPUT and source.step_id in disabled_ids:
                 source, source_port, via, resolution_diagnostics = _resolve_passthrough(

@@ -213,6 +213,7 @@ def project_v3(kernel_run: KernelRun) -> Any:
     records = []
     for record in kernel_run.target_records:
         complete = record.complete_key
+        complete_v3: FrozenDict | None
         if complete is not None:
             generic = _generic_from_payload(complete)
             complete_v3 = FrozenDict(to_wire_key(generic).to_dict())

@@ -360,9 +360,11 @@ class RetryResult:
         outcome = self.outcome
         if outcome is not None:
             try:
-                from confflow.science.confgen.model import RealizationResult as _Outcome
+                from confflow.science.confgen.model import RealizationResult
+
+                _Outcome: Any = RealizationResult
             except Exception:
-                _Outcome = None  # type: ignore[assignment]
+                _Outcome = None
             if _Outcome is not None and not isinstance(outcome, _Outcome):
                 raise TelemetryError(
                     "RetryResult outcome must be RealizationResult or None, "
