@@ -40,7 +40,7 @@
 |---|---|---|---|
 | 方案基线（`213b306`） | 88,333 | 99,227 | 187,560 |
 | P0 开始时（含 FIX-1D、L1、E1、J1 之后） | 97,753 | 120,560 | 218,313 |
-| **现在** | **80,081** | **96,182** | **176,263** |
+| **现在（含事后修复）** | **79,926** | **96,103** | **176,029** |
 
 - R1 + R2 实际删除生产 16.2k、测试 26.0k，与方案估计的被删量（约 14.5k / 25–30k）一致；N1–N4 新增约 2.3k 生产、约 2.4k 测试（N2 生产预算经用户批准由 800 提到 1120）。
 - 离 11 万行的差距：方案之后 FIX-1D、L1、E1、J1、L2 新增约 9.4k 生产、约 21k 测试；T1 在“每个删除必须有替代测试”（W1）下仅净减约 230 行（零覆盖损失的候选多为共用代码的参数化变体，全部删光上限也只有约 16.9k 行）；S1 只做零风险的 docstring 压缩，S2/S3 只做确凿项。
@@ -49,15 +49,26 @@
 
 ## 4. 偏离与用户决定（记录）
 
-- `ensemble` 输出形式、`profile_ensemble.py`、`multi_output.py` 保留：留存的 ConfGen 步骤在编译期硬编码 `result_profile="ensemble"`，不改语义摘要就删不掉；后续可开小卡收敛 NEB 遗留的角色处理（用户同意保留）。
+- `ensemble` 输出形式、`profile_ensemble.py`、`multi_output.py` 保留（留存的 ConfGen 步骤在编译期硬编码 `result_profile="ensemble"`，不改语义摘要就删不掉）。NEB / 路径端点遗留的角色处理已作为死代码收敛删除（见 §5，生产 −155 行，ConfGen 的 conformer 角色与 ID 派生逐字节不变）。
 - N4 的步骤顺序为 `dedup → opt → refine → freq → filter`（方案字面顺序会违反 N3 的“structure 与 results 同源”冻结规则）。
 - R7：strict 15° 保留为严格诊断并列 basin 召回；A（默认 6 元环加 B）另开卡评估，未实施；C（畸变椅种子）冻结；D 已做，结论为不需要新增环种子。
 - 临时预算例外：L2 投影卡（+402 行）已在旧链删除卡中撤销；R1.1 生产→测试转移已体现在棘轮后的上限中。
 - N2.6（JobDesk 脚本表单）生产 +756 行，超出声明的 500 行；JobDesk 没有行数预算守卫，已告知用户。
+- T2（ConfGen 测试整合）、S2/S3 的非确凿项不做（收益不到 1%，且要重做 golden / 风险高于收益）。
 
-## 5. 遗留与建议
+## 5. 事后修复（2026-10-08）
 
-- JobDesk：`PROVENANCE` 的 `source_commit` 可同步到最新 ConfFlow main（内容无变化）；CI 偶发 Qt 段错误（`tests/gui/test_cards_drawer.py`，重跑通过）；让 JobDesk 的 CI 也检出 ConfFlow 以真实执行 J1 的 4 个 live 测试（目前在 CI 中跳过，本地与集成验证里真实通过）。
-- 文件名含 `_coverage` 的 2 个测试文件改名并缩减 AP-108 豁免清单（可选）。
-- `ensemble` 遗留收敛小卡（见 §4）；A（默认形式集）评估卡；N2.5（`tspes.py` 的 `--summary-json`，在其仓库实现）。
-- 用户的 `/opt/jobdesk-v2-v4` 检出正处于 `chore/slim-phase0` 分支（他们自己的瘦身工作）；其基底早于本轮合入 JobDesk master 的若干提交，合并回 master 时可能需要处理冲突。
+- JobDesk 瘦身（JD PR #30）删除了 `jobdesk_v2.application.cards`，ConfFlow 的跨仓测试因此对新 JD 报错；CI 固定的是瘦身前的 JD 提交，所以此前一直显示绿色，**掩盖了不兼容**。已修复（ConfFlow #134）：适配新接口，`JOBDESK_COMPAT_SHA` / `EXPECTED_JOBDESK_SHA` 更新到 JD `e6fe749`，不再需要 `JOBDESK_V2_ALLOW_ANY_SHA` 绕过。
+- `changed-coverage` 工作流缺口：只改“无测试的辅助文件”的 PR 因 pytest 退出码 5 失败；改名文件未被选入。已修复（#134）。
+- JobDesk 的 CI 现在检出并安装一个固定的 ConfFlow（公开仓库），J1 的 live 测试在 CI 里真实执行：1808 通过 / 199 跳过 → 1977 通过 / 30 跳过（JD #31）。
+- 机器重启清空了 `/tmp`（基线、报告、评审 worktree 的未提交改动）。黄金基线已在干净树上重新生成并存到 `/root/confflow-baselines/main-fix/`（TS1 三份与 engine 93 份和 R1.0 manifest 记录的 sha256 逐字节一致，全量 4454 通过 / 2 跳过）。
+- AP-108 豁免清单 62 → 36（删去 24 项早已删除的文件，并把我建的两个 `_coverage` 命名测试改名出清单）；剩余 36 个是历史按阶段命名的老测试文件，批量改名只会制造引用变动而无收益，保留。
+- `ensemble` 遗留收敛（#135）：删除 NEB 与路径端点角色的死代码，生产 80,081 → 79,926；对照干净基线 TS1 / engine 报告 / 契约摘要逐字节相同。
+- JobDesk CI 偶发 Qt 段错误出自已随瘦身删除的 `test_cards_drawer.py`，JD 最近 master CI 全绿，不再需要处理。
+- 过程记录（`docs/refactor/`，167 个文件）经 `ours` 合并留在 main 历史里，位置见 `docs/archive_manifests/architecture_diet_1_records.json`。
+
+## 6. 真正的遗留
+
+- `tspes.py` 的 `--summary-json`：在 `tspes.py` 自己的仓库实现（接口文档 `docs/diet-2/N2.5-TSPES-SUMMARY-JSON.md`）。
+- A（默认 6 元环加 B）的评估卡；行数目标（约 11 万）未达成，继续压需放宽“删除须有替代测试”（W1）或降低覆盖，属取舍。
+- 两个本地保留分支（`research/realization-handoff`、`repair/refine-audit-quarantine`）由用户决定去留。
