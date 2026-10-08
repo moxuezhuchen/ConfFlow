@@ -26,6 +26,75 @@ def pytest_configure(config):
 collect_ignore: list[str] = []
 
 
+#: Vendor install roots that the test suite must never resolve via ``PATH``.
+BLOCKED_NATIVE_PREFIXES = ("/opt/orca611", "/opt/orca", "/opt/g16", "/opt/gauopen")
+
+#: Bare executable names that must never resolve into a blocked prefix.
+_BLOCKED_BASENAMES = ("orca", "g16")
+
+_ALLOW_REAL_QC = os.environ.get("CONFFLOW_ALLOW_REAL_QC") == "1"
+
+
+def _is_blocked_prefix(real_path: str) -> bool:
+    """Return whether *real_path* lives under a blocked vendor prefix."""
+    return any(
+        real_path == prefix or real_path.startswith(prefix + os.sep)
+        for prefix in BLOCKED_NATIVE_PREFIXES
+    )
+
+
+def _exposes_vendor_binary(directory: str) -> bool:
+    """Return whether *directory* shims a blocked ``orca``/``g16`` binary.
+
+    Catches symlinks such as ``/usr/local/bin/orca -> /opt/orca611/orca``:
+    the link is followed via ``realpath`` (nothing is ever executed).
+    """
+    if not directory or not os.path.isdir(directory):
+        return False
+    for name in _BLOCKED_BASENAMES:
+        candidate = os.path.join(directory, name)
+        if not (os.path.islink(candidate) or os.path.exists(candidate)):
+            continue
+        try:
+            real = os.path.realpath(candidate)
+        except OSError:
+            continue
+        if _is_blocked_prefix(real):
+            return True
+    return False
+
+
+def _scrubbed_path(value: str) -> str:
+    """Return *value* with vendor install and shim entries removed."""
+    kept: list[str] = []
+    for entry in value.split(os.pathsep):
+        normalized = os.path.normpath(entry)
+        if _is_blocked_prefix(normalized):
+            continue
+        if _exposes_vendor_binary(entry):
+            continue
+        kept.append(entry)
+    return os.pathsep.join(kept)
+
+
+@pytest.fixture(autouse=True)
+def _scrub_real_qc_from_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strip system ORCA/Gaussian install dirs from ``PATH`` for every test.
+
+    The fake suite must never accidentally launch a system ORCA/Gaussian
+    install: bare ``orca``/``g16`` names fail closed unless the test itself
+    prepends its own fake executable. The guard lives here (not in a
+    subdirectory conftest) so it applies to the whole ``tests/`` tree no
+    matter in which order pytest collects the files: a directory-scoped
+    autouse fixture can be orphaned when an unrelated module import splits
+    the collector node. The only escape hatch is
+    ``CONFFLOW_ALLOW_REAL_QC=1`` for an explicit real-native suite.
+    """
+    if _ALLOW_REAL_QC:
+        return
+    monkeypatch.setenv("PATH", _scrubbed_path(os.environ.get("PATH", "")))
+
+
 @pytest.fixture
 def input_xyz(tmp_path: Path) -> Path:
     """Create a minimal input.xyz file and return its Path."""

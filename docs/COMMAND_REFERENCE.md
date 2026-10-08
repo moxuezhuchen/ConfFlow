@@ -71,13 +71,17 @@ confflow --stop
 | `-c/--config` | V4 工作流文档（旧版文档会失败关闭） |
 | `-w/--work_dir` | 运行根目录（默认 `<输入文件名>_work`） |
 | `--resume` | 从已有状态续跑 |
-| `--verbose` | 更详细的日志 |
+| `--verbose` | 更详细的日志；用户错误的 traceback 也只在此时输出 |
 | `--capabilities [--json]` | 打印能力握手 JSON 后退出 |
 | `--version` | 打印版本后退出 |
-| `--stop` | 停止所有正在运行的 ConfFlow 任务（含子进程；需要 `psutil`） |
+| `--stop` | 停止本用户在这台机器上的所有 ConfFlow 进程树（含子进程；只看同 uid 的进程，能认出 `confflow` 与 `confflow-control-worker` 入口；需要 `psutil`） |
 
-顶层调用是同一个 V4 应用的薄入口；运行日志写入输入目录下的 `<输入文件名>.txt`，不向终端打印。
-`--rerun-failed` / `--step` 属于已退役的 legacy 执行路径，会以 `legacy_workflow_not_executable` 失败关闭。
+顶层调用是同一个 V4 应用的薄入口；运行日志写入输入目录下的 `<输入文件名>.txt`。
+用户错误（无效的工作流或输入，`ConfFlowError` / `DomainError`）只在终端打印一行 `Error: <消息>`
+（`.txt` 里保留 `[ERROR]` 记录），完整 traceback 只在 `--verbose` 时输出；非用户错误的未预期异常
+保持原有的 traceback 行为。退出码不变。
+`--rerun-failed` / `--step` / `-o/--output` 已退役：仍可解析（`--help` 标注 `retired; fails closed`），
+但一经传入即以 `legacy_workflow_not_executable` 失败关闭。
 
 ## 返回码
 

@@ -13,7 +13,13 @@ pytest -q                            # 直接跑（pyproject 的 addopts 是 -v 
 pytest --collect-only -q | tail -1   # 当前收集到的测试数（文档不写固定数字）
 ```
 
-- 覆盖率门禁 `fail_under = 85`（`pyproject.toml`；CI 的 coverage 任务执行）。
+- 覆盖率门禁 `fail_under = 70`（`pyproject.toml`；CI 的 coverage 任务只在非 PR 时执行）。
+- PR 门禁是新增/修改生产代码行覆盖率 ≥85%（CI 的 changed-coverage 任务：先跑受影响测试，再用
+  `tools/changed_coverage.py --min 85` 检查）。
+- 子系统下限：`python tools/subsystem_coverage.py check --xml coverage.xml --baseline tools/coverage_baseline.json`
+ （execution / persistence / workflow / confgen_kernel，见 `tools/coverage_baseline.json`）。
+- 本地并行需要先 `pip install -e ".[dev]"`（含 pytest-xdist），再 `pytest -q -n auto`；
+  `scripts/test.sh` 透传任意 pytest 参数。
 - 真实的 Gaussian / ORCA 不在测试范围内；所有计算类测试都用 `tests/v4/fakes/`（`fake_g16.py`、`fake_orca.py`、
   `fake_goat.py`、`fake_irc.py`、`fake_neb.py`）这类行为可控的假可执行文件。
 
@@ -58,13 +64,16 @@ pytest --collect-only -q | tail -1   # 当前收集到的测试数（文档不�
 
 ## 6. 引擎与契约基线（重构证据）
 
-外部基线（`$BASE`，本轮实际路径示例 `/tmp/l0-baseline-run-v2/baseline`，由 `MANIFEST.json` 钉住 104 个文件）固定了 TS1（三种后端）的 ConfGen 输出、全部引擎报告、契约与边界的 digest；
-`tools/refactor/` 里的 `golden_check.py`、`capture_engine_reports.py`、`contract_digests.py`、`json_paths_diff.py`
-用来重新生成并逐字节比较。任何会改变科学输出的改动都必须先用它们给出差异，再决定是否更新基线。
+外部基线（`$BASE`，由 `MANIFEST.json` 钉住 104 个文件）固定了 TS1（三种后端）的 ConfGen 输出、全部引擎报告、契约与边界的 digest；
+`/tmp` 重启即清空，基线不在本仓写死路径，需从干净 main 用 `tools/refactor/` 里的脚本重新生成（`golden_check.py`、
+`capture_engine_reports.py`、`contract_digests.py`、`json_paths_diff.py`，用法见 `tools/refactor/README.md`），
+再逐字节比较。任何会改变科学输出的改动都必须先用它们给出差异，再决定是否更新基线。
 `tests/fixtures/paths_equivalence/` 记录 legacy paths 与 typed v3 声明在含氢分子上的等价性结论。
 
 ## 7. CI
 
-`.github/workflows/ci.yml`：black / ruff / mypy 门禁；`pytest -q`（固定 3.12，含 release 安装器测试）和 3.10–3.13 矩阵
-（排除依赖锁的 release 安装器测试）；coverage 门禁并上传 `coverage.xml`。`jobdesk-contract.yml` 用固定的 JobDesk 提交
-检查契约互通；`release.yml` 构建并验证发布 wheel。真实 Gaussian/ORCA 的手动验证不在 CI 内，记录在发布说明里。
+`.github/workflows/ci.yml`：test-matrix（3.10–3.13，`pip install -e ".[dev]"` 后跑 `pytest -q -n auto`；
+black / ruff / `mypy confflow` 门禁只在 3.11 执行）；coverage（非 PR 时跑全量覆盖率并检查子系统下限，
+上传 `coverage.xml`）；changed-coverage（PR 时只跑受影响测试，要求新增/修改生产代码行覆盖率 ≥85%）。
+`jobdesk-contract.yml` 用固定的 JobDesk 提交
+检查契约互通。真实 Gaussian/ORCA 的手动验证不在 CI 内，记录在发布说明里。
