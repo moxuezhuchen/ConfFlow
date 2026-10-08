@@ -164,20 +164,20 @@ WorkflowDocument (YAML)
 
 `confflow/execution/registry.py` 是唯一权威；schema JSON 由 pydantic 模型生成后注入 registry 的 enum：
 
-- executor capability：`calculation`、`confgen`、`analysis`、`structure_transform`（`structure_transform` 的 YAML block 名为 `transform`）。
-- execution adapter：`standard`、`named_structures`、`native_template`。
-- result profile：`standard`、`path_endpoints`、`ensemble`、`opaque`。
+- executor capability：`calculation`、`confgen`、`structure_transform`、`script`（`structure_transform` 的 YAML block 名为 `transform`；`analysis` 已于 R2.2（`383a1f6`）退役，见 §30）。
+- execution adapter：`standard`（`named_structures` 已于 R2.2（`383a1f6`）退役；`native_template` 无 resolver 实现，从不注册）。
+- result profile：`standard`、`ensemble`（`path_endpoints` 已于 R2.2（`383a1f6`）退役；`opaque` 无实现，从不注册）。
 - scientific check：`normal_termination`、`geometry_required`、`frequencies_required`、`imaginary_frequency_count`、`max_rmsd_from_input`、`bond_drift`。
 - recovery：`none`、`ts_rescue_scan`（必须显式声明；不存在 `if role == "ts"` 或 itask 驱动的救援）。
 - 每个 descriptor 带独立 contract version，进入 step digest（registry 全局版本被禁止）。
 
 端口契约事实：
 
-- `calculation` 的输入端口由 adapter 决定：`standard` = `structure` + 可选 `checkpoint`（BY_SUBJECT）；`named_structures` = `reactant`/`product`（BY_GROUP_KEY）+ 可选 `guess`；`native_template` 同 standard。
+- `calculation` 的输入端口由 adapter 决定：`standard` = `structure` + 可选 `checkpoint`（BY_SUBJECT）。（`named_structures` 的 `reactant`/`product`/`guess` 端口已随该 adapter 于 R2.2 退役。）
 - 输出端口：`structures`（MANY, per_structure）、`artifacts`（MANY, by_subject, roles=checkpoint/native_output/trajectory）、`results`（MANY, by_subject）。
 - `confgen` 是 stochastic：缺 seed 直接编译错误；seed 进入所有科学 digest（resume 不重新随机）。
 - `structure_transform` 只接受显式 `kind = refine|deduplicate|filter`；calculation **不存在** hidden auto_clean/refine 尾巴。
-- `analysis` 无结构输出。
+- `analysis`（已退役，R2.2/R2.3a，见 §30）：退役前无结构输出；现行 registry 无此 capability，`executor: analysis` 编译期 fail-closed。
 
 ## 6. Defaults 单一来源
 
@@ -461,10 +461,30 @@ worker-handoff.v1 的 typed 扩展、remote staging（store 的 artifact_rows + 
 
 ---
 
-# V4-4：Typed Cross-Step Artifact Flow + Worker Handoff V2（已完成）
+# V4-4：Typed Cross-Step Artifact Flow + Worker Handoff V2（§17 本地语义有效；typed 远程已退役）
 
-里程碑状态：**V4-4 已完成**。跨步骤数据流统一为 typed ArtifactRef 流，
-remote worker 消费编译后的 V4 语义并运行同一执行核心。
+里程碑状态：**V4-4 本地部分有效，typed 远程部分已退役**。跨步骤数据流统一为 typed ArtifactRef 流；
+typed remote worker 一侧（`confflow/remote`、handoff v2/v3、bundle digest、`RemoteTransport`）已删除，
+现行 V4 执行只在本地，跨进程只走控制协议 v1（见下）。
+
+> **已退役声明（typed 远程）**：本章 §§18–21、§27 描述的 typed 远程系统——`confflow/remote` 包、
+> handoff v2/v3 与 result bundle（Pydantic strict + `extra=forbid` + frozen）、
+> `confflow.remote.bundle.v1` digest 域、`RemoteTransport`/`LocalTransport`、
+> `execute_step_resumable` / `V4RunRequest` / `run_v4_document` 的 transport 参数、
+> producer 契约的 `remote_capability`——已删除：传输实现由 R1.2（`58e3d28`）删除，
+> 契约面由 R2.2（`383a1f6`）收敛，envelope 由 R2.3f（`9e479fe`）删除。
+> `worker-handoff.v1` 的 typed 扩展从未落地（v1 以 `input_xyz` envelope 冻结，typed V2 是独立新包，亦已退役）。
+> §17 的本地 artifact 语义（subject/cardinality/preflight）仍有效。
+>
+> **现行真实路径（本地执行 + 控制协议 v1）**：V4 执行只在本地
+> （`BatchStepExecutor.execute_step_resumable`，签名无 transport 参数）；
+> 跨进程/远程只走控制协议 v1：`confflow/control.py`、`confflow/control_worker.py`、
+> `confflow/worker_handoff.py`（`HANDOFF_SCHEMA = confflow.control.worker-handoff.v1`，
+> `input_xyz` envelope，frozen digest profile）、`confflow/worker_staging.py`
+> （`_stage_file` secure-copy）、`confflow/worker_attempt.py`（per-token launch lease）、
+> `confflow/worker_sidecars.py`（`{basename}.txt`/`{basename}min.xyz`）、
+> `confflow/worker_supervision.py`；schema 见 `docs/control_protocol/v1/`
+> （`worker-handoff.schema.json` 等 5 个文件）。
 
 ```
 StepResult {StructureSet, ResultSet, ArtifactSet}
@@ -474,6 +494,11 @@ StepResult {StructureSet, ResultSet, ArtifactSet}
   → WorkItemExecutor (同一套) → ProgramAdapter → ResultProfile → Checks
   → WorkItemResult → ResultBundle → producer import → StepResult
 ```
+
+> 注：上图中 `LocalTransport | RemoteTransport (handoff V2)` 与
+> `ResultBundle → producer import` 为退役记录（R1.2/R2.3f 已删除）；
+> 现行 `WorkItem assembly` 之后直连本地 `WorkItemExecutor`，
+> 结果经 store commit/assemble/publish（见 §§14–15）。
 
 ## 17. Artifact flow（事实）
 
@@ -496,82 +521,55 @@ StepResult {StructureSet, ResultSet, ArtifactSet}
   测试钉死）。
 - **Gaussian 防御收紧**：`resolve_multiplicity` 拒绝 `<1`（ORCA 早已拒绝）。
 
-## 18. Worker handoff（事实）
+## 18. Worker handoff（v1 现行；typed V2 已退役）
 
-- **Schema**：`confflow.control.worker-handoff.v1`（envelope，与
-  `confflow/worker_handoff.py::HANDOFF_SCHEMA` 一致）/
-  `confflow.control.worker-result.v2`（result），Pydantic strict +
-  `extra=forbid` + frozen 单一来源，JSON Schema 由模型生成。
-  V1（`worker_handoff.py`，`input_xyz` envelope）frozen 不动。
-- **Envelope 内容**：run/step/work-item/logical-key/attempt/launch-token
-  身份 + digests + provenance + environment request（transport 提示，
-  不进 digest）+ `ExecutionDefinition`（program/native/contracts/
-  resources/resolved charge-mult-freeze，**无 graph/YAML/bindings/
-  scheduler**）+ `InputBundleManifest`（structure canonical payload /
-  artifact id+role+checksum+subject+bundle_locator / typed result）。
-- **Digest**：`confflow.remote.bundle.v1` 域；transport 路径、暂存名、
-  时间戳、hostname、并发度不进 digest。tuple 字段经 before-validator
-  接受 JSON 数组（frozen tuple 类型不变）；`.new()` 在 default 补齐后
-  的 dump 上计算 digest，读写一致。
-- **Launch token**：`{prefix}+{work_item_id(:→+)}+attempt-{N}`，
-  单路径段安全；同 token 重复投递返回已记录结果（内存 + worker
-  `results/<token>/result.json` 双层：后者覆盖 producer crash 场景）。
-- **Result bundle**：identity 回声 + environment 身份 + result payload +
-  produced artifact（checksum/size/subject）+ transport metadata（不进
-  digest）。Producer import 验证 identity/attempt/digest → 校验字节 →
-  安全拷贝到 run-relative → 重建 ArtifactRef → 按 attempt 匹配 store
-  后返回（**不直接 commit**，batch 照常 commit）。
+- **现行事实**：`confflow.control.worker-handoff.v1` envelope
+  （`confflow/worker_handoff.py::HANDOFF_SCHEMA`，`input_xyz` 单任务 envelope，
+  frozen digest profile 由 `tests/test_control_worker.py` 金标准锁定）+
+  `docs/control_protocol/v1/worker-handoff.schema.json`。V1 从未被 typed 扩展（frozen 不动）。
+- **已退役（R2.3f `9e479fe`；实现曾在 `confflow/remote/envelope.py`）**：
+  `confflow.control.worker-result.v2` result bundle（Pydantic strict + `extra=forbid` + frozen）、
+  `confflow.remote.bundle.v1` digest 域、`ExecutionDefinition`
+  （无 graph/YAML/bindings/scheduler 的编译语义子集）、`InputBundleManifest`
+  （structure canonical payload / artifact id+role+checksum+subject+bundle_locator / typed result）、
+  launch token（`{prefix}+{work_item_id}+attempt-{N}` 双层 dedupe）与 producer import
+  （验证 identity/attempt/digest → 安全拷贝 → 按 attempt 匹配 store，**不直接 commit**）。
+  以上为退役前记录，不代表现行代码。
 
-## 19. Remote 执行架构（事实）
+## 19. Remote 执行架构（已退役，R1.2 `58e3d28` / R2.3f `9e479fe`）
 
-- **同一核心**：`RemoteTransport → handoff → staging →
+- 以下为退役前记录，不代表现行代码：`RemoteTransport → handoff → staging →
   run_worker_envelope → 同一 WorkItemExecutor/ProgramAdapter/Profile/
-  Checks/Recovery → package → import`。无 RemoteWorkItemExecutor；
-  worker 禁止 import compiler/YAML/DAG/V3/calc（AST + 运行时双重门；
-  executor 传递性拉起的 V4 包 `__init__` 在文档中明确声明为例外，
-  worker 自身闭包经 stub 隔离探针验证）。
-- **Executable 解析**：handoff 永不携带 producer 绝对路径；worker 侧
-  按 program 经 PATH/default 解析（测试用 PATH symlink 注入 fake）。
-- **Transport 契约**：stage 失败一律转为 failure *result*（`remote_
-  {handoff,staging,worker,result_bundle}_error`，retryable），只有编程
-  错误才抛；同 token 并发投递经 per-token 锁串行化；`forget()` 仅测试。
-- **Batch 集成**：`execute_step_resumable(..., transport=None)`；
-  transport 只接收 claim 后的执行（attempt 对齐 store 新开 attempt）；
-  reuse/blocked/invalidate 永不到达 transport。
-- **Producer 真值不变**：store 仍是唯一 durable truth；worker 无 DB；
-  远端结果经 import 验证后走与本地完全相同的 commit/assemble/publish。
-- **Claim 缺陷修复（V4-3 遗留）**：`SQLITE_BUSY/locked` → `False`
- （bounded busy_timeout 内 contention）；其余 OperationalError →
-  `PersistenceError`；IntegrityError → `CorruptStateError`；各有故障
-  注入回归测试。
+  Checks/Recovery → package → import`；无 RemoteWorkItemExecutor；
+  handoff 永不携带 producer 绝对路径（worker 按 program 经 PATH 解析）；
+  stage 失败转 failure *result*（`remote_{handoff,staging,worker,result_bundle}_error`，
+  retryable）；`execute_step_resumable(..., transport=None)` compat 关键字
+  （R2.2 已连关键字一并收敛，现行签名无 transport 参数）；
+  worker 禁止 import compiler/YAML/DAG/V3/calc 的门禁已随包删除。
+- 现行事实：V4 执行只有本地路径；producer 真值仍是 store（见 §15）；
+  跨进程执行只走控制协议 v1（见 V4-4 章首横幅）。
 
-## 20. Lifecycle / 安全（事实）
+## 20. Lifecycle / 安全（远端部分已退役；控制协议 v1 现行）
 
-- **AttemptLease**：`(run, step, item, attempt, token)` 绑定 flock；
-  同 attempt 不同 token 也互斥（per-attempt mutex 补 marker 路径差）；
-  crash 释放由内核保证，audit 文件保留。
-- **Supervision**：`reconcile_owner` 主判定 + workdir cwd/killpg 扫描组合
-  （DEAD+dir-live → UNCERTAIN）；`cancel_attempt` 仅在 ALIVE 且非自身
-  进程组时发信号，事后重证死亡，否则 unconfirmed（调用方映射 BLOCKED，
-  永不误标 CANCELLED）。
-- **Staging 安全**：O_NOFOLLOW + fstat owner/regular + 0o700 dir-fd pin +
-  temp + 流式 sha256 + fsync + dev/ino 重验 + 发布前重验 + dir fsync；
-  traversal/absolute/symlink/world-writable/checksum/TOCTOU 全 fail-closed。
-- **Handoff 文件安全**：owner regular + 无组写 + 有界读取 + 严格 UTF-8 +
-  digest 重验 + schema/run-id 匹配。
+- **已退役（R1.2 `58e3d28` / R2.3f `9e479fe`）**：`(run, step, item, attempt, token)`
+  绑定的远端 `AttemptLease` flock 互斥、`reconcile_owner` + workdir 扫描组合 supervision、
+  `cancel_attempt` 语义、远端 staging（O_NOFOLLOW + dir-fd pin + 流式 sha256 + TOCTOU 重验）与
+  handoff 文件安全——均为 `confflow/remote` 配套机制，随包删除。以上为退役前记录。
+- **现行事实**：`confflow/worker_attempt.py` 的 per-token launch lease（control-worker 持有，
+  crash 释放由内核保证）、`confflow/worker_staging.py` 的 `_stage_file` secure-copy
+  （O_NOFOLLOW + owner 校验 + digest 校验 + 原子发布）、`confflow/worker_supervision.py`
+  的 liveness 规则；handoff 校验与 sidecar 发布见 `docs/control_protocol/v1/README.md`。
 
-## 21. Parity 与复用（事实）
+## 21. Parity 与复用（已退役系统的验收记录）
 
-- 同一 synthetic item：local vs remote 的 structure 内容、energy 值/单位、
-  check 结论、artifact 语义 role/checksum 一致；允许差 timestamps/
-  locator/env-digest/transport diagnostics。
-- Checkpoint 双向：local→remote 与 remote→local 使用同一 ArtifactRef/
-  subject/checksum/binding 语义（E2E 钉死）。
-- Remote resume：95/5-lite（16/2/2 → 16 reuse + 4 native，submit 边界计数，
-  0 duplicate）；endpoint/width 变更全 reuse；binary 变更
-  `INVALIDATE_ENVIRONMENT`。
-- V4-3 语义延续：CANCELLED 永不 auto-retry（transport 不绕过）；
-  unconfirmed cancel 永不 rescue；run generation 仍 deferred。
+- 以下数字描述已删除的 local-vs-remote 双路径（R1.2/R2.3f），现行单本地路径无对应物：
+  同一 synthetic item 的 local vs remote 在 structure 内容、energy 值/单位、check 结论、
+  artifact 语义 role/checksum 上一致（允许差 timestamps/locator/env-digest/transport diagnostics）；
+  checkpoint 双向（local→remote 与 remote→local 同一 ArtifactRef/subject/checksum/binding 语义，E2E 钉死）；
+  remote resume 95/5-lite（16/2/2 → 16 reuse + 4 native，submit 边界计数，0 duplicate）；
+  endpoint/width 变更全 reuse；binary 变更 `INVALIDATE_ENVIRONMENT`。
+- 现行延续：CANCELLED 永不 auto-retry；unconfirmed cancel 永不 rescue（见 §§15、32）；
+  run generation 仍 deferred。
 
 ## 22. V4-4 非目标与遗留风险
 
@@ -678,23 +676,17 @@ StructureSet 表达（1/20/100 输入下 ExecutionPlan step 数不变，已钉�
   profile 管输出语义；checks 管 acceptance。Parser 越层检查（如 Gaussian
   内写 NImag 判定）禁止。
 
-## 27. Remote（事实，无 handoff v3）
+## 27. Remote（已退役；无现行 handoff v3）
 
-- V4-4 Handoff V2 足够：仅做向后兼容扩展 —
-  `StructureBundleEntry.port`（默认 `structure`，旧 envelope 仍合法；
-  嵌套 FrozenDict 深度 thaw + `_jsonable` Mapping 分支，保证嵌套
-  native 参数可序列化）。
-- Worker 按 `port` 重建 named slots（standard 单 driving 行为不变）；
-  执行端 profile 解析自动继承（同一 PROFILES 注册表）。
-- Parity：IRC / named-QST / ensemble 三组 local-vs-remote E2E，
-  ids/digests/roles/parents/lineage/group/results/units/artifact
-  role+checksum 一致；允许差 locator/host/env-digest/timestamps/
-  transport diagnostics。注意：worker 按 program 经 PATH 解析可执行
-  文件（handoff 永不带 producer 绝对路径），parity 测试据此注入 fake。
-- Resume：IRC complete → 0 native；GOAT complete → 0 native；
-  19/20 → 恰好 1 native；remote 重启 → full reuse；mapping 变更 →
-  digest 移动 + `invalidate_input`（0 native）；endpoint ids 跨 resume
-  bit-identical。
+- 以下为退役前记录（`confflow/remote/envelope.py`，R2.3f `9e479fe` 已删除），不代表现行代码：
+  V4-4 Handoff V2 的向后兼容扩展 `StructureBundleEntry.port`（默认 `structure`）；
+  worker 按 `port` 重建 named slots；IRC / named-QST / ensemble 三组 local-vs-remote E2E parity
+  （ids/digests/roles/parents/lineage/group/results/units/artifact role+checksum 一致）；
+  resume（IRC/GOAT complete → 0 native；19/20 → 恰好 1 native；remote 重启 → full reuse；
+  mapping 变更 → digest 移动 + `invalidate_input`；endpoint ids 跨 resume bit-identical）。
+  v3 从未作为现行契约落地（envelope 内的 V2/V3 常量与实现同包删除）。
+- 现行事实：worker 按 program 经 PATH 解析可执行文件、不携带 producer 绝对路径的原则，
+  由控制协议 v1 worker 延续（见 V4-4 章首横幅）。
 
 ## 28. TSPES mini gate（事实）
 
@@ -799,7 +791,7 @@ XYZ / typed input
   recipe catalog（11 个全部真实编译，TSPES = 8 步真链）、registry
   capabilities、ports/pairing/cardinality、resources、
   completion/scheduler、native escape-hatch、analysis capabilities、
-  result schema、remote（handoff/result v2）。
+  result schema（`remote_capability`（handoff/result）已于 R2.2（`383a1f6`）从契约删除，现行契约无 remote 段）。
 - 每个 artifact 独立 digest + envelope `contract_digest`；JobDesk 重算
   验证，不匹配 reject。
 - Legacy truth（result.xyz/failed.xyz/workflow_stats/output_path/

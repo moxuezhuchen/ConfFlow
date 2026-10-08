@@ -292,8 +292,10 @@ V4 capabilities at a glance:
   endpoints, Gibbs energies, two side-relative barriers). JobDesk
   displays these results; it never recomputes them.
 - **Resume**: per-work-item durable store plus published step results.
-- **Remote**: the same `WorkItem` runs locally or through the
-  `worker-handoff.v2` boundary with identical scientific semantics.
+- **Remote**: V4 executes locally; the typed `worker-handoff.v2` transport
+  was retired (R1.2/R2.3f, see `docs/architecture/WORKFLOW_V4.md`). Cross-process
+  execution uses the control-protocol v1 `worker-handoff` envelope consumed by
+  `confflow-control-worker`.
 - **Legacy workflows** (`iprog`/`itask`, `input_xyz` envelopes, V2/V3
   documents): rejected with `legacy_workflow_not_executable`.
 
