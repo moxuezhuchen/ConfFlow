@@ -123,9 +123,9 @@ class RunGeneration:
         if not isinstance(completed, (list, tuple)):
             raise CorruptStateError("completed_step_ids must be a list")
         return cls(
-            run_id=cast(str, payload.get("run_id")),
-            generation_id=cast(str, payload.get("generation_id")),
-            status=cast(str, payload.get("status")),
+            run_id=cast(str, payload.get("run_id")),  # validated by __post_init__
+            generation_id=cast(str, payload.get("generation_id")),  # validated by __post_init__
+            status=cast(str, payload.get("status")),  # validated by __post_init__
             definition_digest=payload.get("definition_digest"),
             started_wall=payload.get("started_wall"),
             updated_wall=payload.get("updated_wall"),

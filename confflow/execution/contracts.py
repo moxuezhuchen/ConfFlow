@@ -545,7 +545,7 @@ class ExecutionEnvironment:
         claimed = data.pop("digest", None)
         try:
             rebuilt = cls(
-                program=cast(str, data.get("program")),
+                program=cast(str, data.get("program")),  # validated by __post_init__
                 program_version=data.get("program_version"),
                 executable_digest=data.get("executable_digest"),
                 relevant_env=FrozenDict(data.get("relevant_env") or {}),

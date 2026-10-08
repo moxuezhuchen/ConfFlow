@@ -421,8 +421,8 @@ def _terminal_record_from_ledger(root: str, ledger: GenerationLedger) -> RunGene
     diagnostics = detail.get("diagnostics") or ()
     return RunGeneration(
         run_id=ledger.run_id or os.path.basename(root.rstrip(os.sep)) or "run",
-        generation_id=cast(str, ledger.current_generation_id),
-        status=cast(str, ledger.terminal_status),
+        generation_id=cast(str, ledger.current_generation_id),  # validated by __post_init__
+        status=cast(str, ledger.terminal_status),  # validated by __post_init__
         definition_digest=ledger.definition_digest,
         started_wall=ledger.started_wall,
         updated_wall=wall_now(),

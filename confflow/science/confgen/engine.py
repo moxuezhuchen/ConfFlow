@@ -1446,7 +1446,9 @@ class _RunState:
                 )
                 own_mark_idx = len(self.telemetry) - 1
                 own_mark_phase = "input"
-                outcome = stage.realize(parent, cast(GenerationTarget, target), context)
+                outcome = stage.realize(
+                    parent, cast(GenerationTarget, target), context
+                )  # KernelGenerationTarget is structurally compatible with GenerationTarget
                 self._update_telemetry_success(own_mark_idx, self._geometry_success(outcome))
         except Exception as exc:  # stage bug: account explicitly, never silent
             if isinstance(exc, TelemetryError):
@@ -1946,7 +1948,7 @@ class _RunState:
         }
         child = KernelWorkingRealization(
             structure=structure,
-            state_key=cast(ComponentStateKey, child_key),
+            state_key=cast(ComponentStateKey, child_key),  # validated by __post_init__
             parent_realization_id=parent.structure.id,
             generation_axis=axis,
             locked_axes=locked,

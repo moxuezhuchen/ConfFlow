@@ -15,7 +15,6 @@ import os
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
 
 import psutil as _psutil
 
@@ -134,7 +133,7 @@ def load_server_quota(config: str | Path | None = None) -> ServerQuota | None:
     if isinstance(raw_cores, bool) or not isinstance(raw_cores, int) or raw_cores < 1:
         raise QuotaError(f"invalid server config {path}: 'total_cores' must be an integer >= 1")
     try:
-        total_mem = parse_memory_bytes(cast("str | int | float", data.get("total_memory")))
+        total_mem = parse_memory_bytes(data["total_memory"])
     except Exception as exc:
         raise QuotaError(f"invalid server config {path}: 'total_memory': {exc}") from exc
     if total_mem <= 0:

@@ -2208,6 +2208,8 @@ class CoordinationStage(GenerationStage):
         if rho is None:
             return None
         witness_order = _permutation_order(atom_perm)
+        if witness_order is None:
+            return None
         key = HGeomKey(
             kind="rotation-permutation",
             mapping=tuple(atom_perm),
@@ -2215,7 +2217,7 @@ class CoordinationStage(GenerationStage):
                 cast("tuple[float, float, float]", tuple(float(v) for v in row)) for row in fitted
             ),
             center=cast(tuple[float, float, float], tuple(float(v) for v in center)),
-            order=cast(int, witness_order),
+            order=witness_order,
             scope=tuple(range(graph.natoms)),
             declared_site_action={
                 site: self._spec.site_ids[sigma[pos]]

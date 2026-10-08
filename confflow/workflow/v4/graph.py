@@ -19,7 +19,7 @@ from __future__ import annotations
 import heapq
 import re
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 from ...domain._immutable import FrozenDict
 from ...domain.binding import (
@@ -591,13 +591,13 @@ def build_binding_graph(validated: ValidatedDefinition) -> GraphResult:
                 diagnostics.extend(resolution_diagnostics)
                 if any(item.is_error for item in resolution_diagnostics):
                     continue
-                assert source_port is not None
+            assert source_port is not None
             effective.append(
                 ResolvedEdge(
                     target_step_id=edge.target_step_id,
                     target_port=edge.target_port,
                     source=source,
-                    source_port=cast(PortSpec, source_port),
+                    source_port=source_port,
                     pairing=edge.pairing,
                     cardinality=edge.cardinality,
                     partial_consumption=edge.partial_consumption,

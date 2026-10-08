@@ -97,9 +97,9 @@
         "confflow/persistence/"
       ],
       "prod_files": 12,
-      "prod_loc_limit": 5585,
+      "prod_loc_limit": 5579,
       "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
-      "reason": "2026-10-08 mypy arg-type 收紧：上限=实测值，待用户确认"
+      "reason": "TASK-I cast 根因消除：上限=实测值（publication 多行 cast 折叠 -6）。"
     },
     {
       "id": "programs",
@@ -131,9 +131,9 @@
         "confflow/execution/"
       ],
       "prod_files": 24,
-      "prod_loc_limit": 10843,
+      "prod_loc_limit": 10842,
       "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
-      "reason": "2026-10-08 mypy arg-type 收紧：上限=实测值，待用户确认"
+      "reason": "TASK-I cast 根因消除：上限=实测值（quota 去 cast 后移除 typing 导入 -1）。"
     },
     {
       "id": "domain",
