@@ -18,7 +18,7 @@ import hashlib
 import itertools
 import json
 import os
-from typing import Any, Final, cast
+from typing import Any, Final
 
 from ..domain._immutable import FrozenDict
 from ..domain.canonical import canonical_json_bytes
@@ -268,7 +268,7 @@ def resolve_imported_structures(
                 role=record.role,
                 ordinal=record.ordinal,
                 group_key=record.group_key,
-                metadata=cast(FrozenDict, dict(record.metadata.thaw())),
+                metadata=FrozenDict(dict(record.metadata.thaw())),
                 topology_patch=record.topology_patch,
                 working_topology=record.working_topology,
             )

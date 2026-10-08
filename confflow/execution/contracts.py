@@ -548,11 +548,11 @@ class ExecutionEnvironment:
                 program=cast(str, data.get("program")),
                 program_version=data.get("program_version"),
                 executable_digest=data.get("executable_digest"),
-                relevant_env=cast(FrozenDict, data.get("relevant_env") or {}),
+                relevant_env=FrozenDict(data.get("relevant_env") or {}),
                 target=data.get("target"),
                 measurement_status=data.get("measurement_status", "verified"),
                 unknown_nonce=data.get("unknown_nonce"),
-                metadata=cast(FrozenDict, data.get("metadata") or {}),
+                metadata=FrozenDict(data.get("metadata") or {}),
             )
         except (TypeError, DomainError) as exc:
             raise DomainError(f"execution environment payload is invalid: {exc}") from exc

@@ -1945,7 +1945,7 @@ class CoordinationStage(GenerationStage):
             multiplicity=outcome.structure.multiplicity,
             parent_ids=tuple(outcome.structure.parent_ids),
             source_step_id=outcome.structure.source_step_id,
-            metadata=cast(FrozenDict, prior),
+            metadata=FrozenDict(prior),
             **inherit_topology_kwargs(parent.structure, adjacency),
         )
         evidence = [dict(item) for item in tuple(outcome.evidence)]

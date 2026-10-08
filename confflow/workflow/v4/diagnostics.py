@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import Enum
-from typing import Any, cast
+from typing import Any
 
 from ...domain._immutable import FrozenDict
 from ...domain.diagnostics import Diagnostic, DiagnosticSeverity
@@ -162,7 +162,7 @@ def _build(
         work_item_id=work_item_id,
         logical_key=logical_key,
         field_path=field_path,
-        details=cast(FrozenDict, merged),
+        details=FrozenDict(merged),
     )
 
 
