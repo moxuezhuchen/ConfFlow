@@ -494,16 +494,16 @@ def seed_block_keys_for_registry(registry: Any) -> tuple[str, ...]:
         for key in keys:
             if isinstance(key, str) and key:
                 collected.add(key)
-    for executor, keys in per_executor.items():
-        if len(keys) != 1:
+    for executor, key_set in per_executor.items():
+        if len(key_set) != 1:
             raise ValueError(
                 f"conflicting seed_block_keys for executor {executor!r}: "
-                f"{sorted(sorted(k) for k in keys)}"
+                f"{sorted(sorted(k) for k in key_set)}"
             )
     if not collected:
         fallback: list[str] = []
-        for keys in SEED_BLOCK_KEYS_BY_EXECUTOR.values():
-            for key in keys:
+        for fallback_keys in SEED_BLOCK_KEYS_BY_EXECUTOR.values():
+            for key in fallback_keys:
                 if key not in fallback:
                     fallback.append(key)
         return tuple(fallback)

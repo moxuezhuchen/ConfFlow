@@ -126,9 +126,11 @@ def _edge_kind_is_covalent(kind: Any) -> bool | None:
     if kind is None or (isinstance(kind, str) and not kind.strip()):
         return None
     try:
-        from confflow.science.confgen.graph import EdgeType as _ET
+        from confflow.science.confgen.graph import EdgeType
+
+        _ET: Any = EdgeType
     except Exception:
-        _ET = None  # type: ignore[assignment]
+        _ET = None
     if _ET is not None and isinstance(kind, _ET):
         return kind is _ET.COVALENT
     if isinstance(kind, str):

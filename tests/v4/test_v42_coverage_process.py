@@ -1034,3 +1034,72 @@ class TestCancelBranches:
             supervisor._process_is_live(Liveness(True, "x", _psutil_mod.NoSuchProcess(1))) is False
         )
         assert supervisor._process_is_live(Liveness(True, "x", _psutil_mod.Error("y"))) is True
+
+
+class TestCancelTombstone:
+    """Proven cancellations leave a collectible lightweight tombstone."""
+
+    def test_cancel_installs_collectible_tombstone(self, tmp_path: Path) -> None:
+        from confflow.execution.process import _CancelledTombstone
+
+        supervisor = NativeProcessSupervisor()
+        handle = supervisor.submit(_request(tmp_path, ("/bin/sleep", "30")))
+        outcome = supervisor.cancel(handle, grace_seconds=2.0)
+        assert outcome.confirmed is True
+        record = supervisor._records[handle.key]
+        assert isinstance(record, _CancelledTombstone)
+        assert record.exit_code is not None
+        assert supervisor.poll(handle).is_terminal is True
+        second = supervisor.cancel(handle, grace_seconds=2.0)
+        assert second.confirmed is True
+        assert "already cancelled" in second.detail
+        collected = supervisor.collect(handle)
+        assert collected.exit_code == record.exit_code
+        assert handle.key not in supervisor._records
+
+    def test_poll_other_handle_not_blocked_by_cancel(self, tmp_path: Path) -> None:
+        import sys
+        import threading
+
+        ready_path = tmp_path / "slow_ready.flag"
+        ignore_term = (
+            "import signal,sys,time,pathlib;"
+            "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+            "pathlib.Path(sys.argv[1]).write_text('ready',encoding='utf-8');"
+            "time.sleep(30)"
+        )
+        supervisor = NativeProcessSupervisor(poll_interval=0.01)
+        slow = supervisor.submit(
+            _request(tmp_path, (sys.executable, "-c", ignore_term, str(ready_path)))
+        )
+        quick = supervisor.submit(_request(tmp_path, ("/bin/sleep", "30")))
+        deadline = time.monotonic() + 10.0
+        while not ready_path.exists():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        outcomes: list = []
+        worker = threading.Thread(
+            target=lambda: outcomes.append(supervisor.cancel(slow, grace_seconds=5.0)),
+            daemon=True,
+        )
+        try:
+            worker.start()
+            time.sleep(0.5)
+            started = time.monotonic()
+            status = supervisor.poll(quick)
+            elapsed = time.monotonic() - started
+            assert status.is_terminal is False
+            assert elapsed < 2.0
+            worker.join(timeout=20.0)
+            assert outcomes and outcomes[0].confirmed is True
+        finally:
+            worker.join(timeout=20.0)
+            for pending in (quick, slow):
+                try:
+                    supervisor.cancel(pending, grace_seconds=2.0)
+                except NativeProcessError:
+                    pass
+                try:
+                    supervisor.collect(pending)
+                except NativeProcessError:
+                    pass

@@ -67,3 +67,21 @@ def test_missing_inherited_section_passes_through() -> None:
     projected = project_v3(kernel)
     assert "inherited" not in projected.report_json()
     assert projected.certificate is cert
+
+
+def test_inherited_report_components_programming_error_propagates() -> None:
+    """A broken ``components`` read is a programming error, never an empty carry."""
+    from types import SimpleNamespace
+
+    import pytest
+
+    from confflow.science.confgen.engine import _inherited_report_entries
+
+    class ExplodingKey:
+        @property
+        def components(self) -> dict:
+            raise RuntimeError("boom")
+
+    context = SimpleNamespace(resolved_spec={}, registry=None)
+    with pytest.raises(RuntimeError, match="boom"):
+        _inherited_report_entries([], ExplodingKey(), context)

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 __all__ = [
     "INDEX_BASE",
@@ -423,7 +423,7 @@ def _validate_record(
         StructureRecord(
             id="structure-preview",
             atoms=tuple(elements),
-            coordinates=tuple(tuple(p) for p in coordinates),
+            coordinates=tuple(cast("tuple[float,float,float]", tuple(p)) for p in coordinates),
             charge=charge,
             multiplicity=multiplicity,
         )

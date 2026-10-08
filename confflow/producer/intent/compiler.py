@@ -1226,7 +1226,7 @@ def compile_intent(
         if not isinstance(step, dict):
             continue
         step_id = str(step.get("id"))
-        card_type = by_id.get(step_id, {}).get("_card_type")
+        step_card_type = by_id.get(step_id, {}).get("_card_type")
         card_version = by_id.get(step_id, {}).get("_card_version", CARD_VERSION)
         preset_ref = by_id.get(step_id, {}).get("_preset_ref")
         named_ref = by_id.get(step_id, {}).get("_named_card")
@@ -1248,7 +1248,7 @@ def compile_intent(
         resolution.update(
             {
                 "intent_schema": INTENT_SCHEMA,
-                "card": card_type,
+                "card": step_card_type,
                 "card_version": card_version,
                 "preset": preset_ref,
                 "preset_version": PRESET_VERSION if preset_ref else None,

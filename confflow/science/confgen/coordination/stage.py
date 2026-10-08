@@ -43,7 +43,7 @@ The single typed-graph authority is the lane-B graph on the context
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -1936,7 +1936,10 @@ class CoordinationStage(GenerationStage):
         record = StructureRecord(
             id=outcome.structure.id,
             atoms=tuple(outcome.structure.atoms),
-            coordinates=tuple(tuple(point) for point in outcome.structure.coordinates),
+            coordinates=tuple(
+                cast("tuple[float, float, float]", tuple(point))
+                for point in outcome.structure.coordinates
+            ),
             charge=outcome.structure.charge,
             multiplicity=outcome.structure.multiplicity,
             parent_ids=tuple(outcome.structure.parent_ids),
@@ -2207,7 +2210,9 @@ class CoordinationStage(GenerationStage):
         key = HGeomKey(
             kind="rotation-permutation",
             mapping=tuple(atom_perm),
-            rotation=tuple(tuple(float(v) for v in row) for row in fitted),
+            rotation=tuple(
+                cast("tuple[float, float, float]", tuple(float(v) for v in row)) for row in fitted
+            ),
             center=tuple(float(v) for v in center),
             order=witness_order,
             scope=tuple(range(graph.natoms)),

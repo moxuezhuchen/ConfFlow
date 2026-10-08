@@ -219,31 +219,31 @@ def parse_energies(text: str) -> tuple[dict[str, float], dict[str, str]]:
                 sources["electronic"] = "scf_done"
         match = _GIBBS_SUMMARY_PATTERN.search(line)
         if match is not None:
-            value = _to_float(match.group(1))
-            if value is not None:
-                energies["gibbs"] = value
+            gibbs_value = _to_float(match.group(1))
+            if gibbs_value is not None:
+                energies["gibbs"] = gibbs_value
                 sources["gibbs"] = "thermochemistry"
         match = _GIBBS_CORRECTION_PATTERN.search(line)
         if match is not None:
-            value = _to_float(match.group(1))
-            if value is not None:
-                energies["gibbs_correction"] = value
+            gibbs_correction_value = _to_float(match.group(1))
+            if gibbs_correction_value is not None:
+                energies["gibbs_correction"] = gibbs_correction_value
                 sources["gibbs_correction"] = "thermochemistry"
     if "electronic" not in energies or "gibbs" not in energies:
         compact = _collect_archive_compact(text)
         if "electronic" not in energies:
             matches = _ARCHIVE_HF_PATTERN.findall(compact)
             if matches:
-                value = _to_float(matches[-1])
-                if value is not None:
-                    energies["electronic"] = value
+                archive_hf_value = _to_float(matches[-1])
+                if archive_hf_value is not None:
+                    energies["electronic"] = archive_hf_value
                     sources["electronic"] = "archive_hf"
         if "gibbs" not in energies:
             matches = _ARCHIVE_GIBBS_PATTERN.findall(compact)
             if matches:
-                value = _to_float(matches[-1])
-                if value is not None:
-                    energies["gibbs"] = value
+                archive_gibbs_value = _to_float(matches[-1])
+                if archive_gibbs_value is not None:
+                    energies["gibbs"] = archive_gibbs_value
                     sources["gibbs"] = "archive_gibbs"
     return energies, sources
 
