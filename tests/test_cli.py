@@ -505,7 +505,7 @@ def test_resolve_default_work_dir_shape():
 
 
 def test_main_consistency_error_no_interactive_prompt_on_tty(tmp_path):
-    """Consistency errors should be written to txt without interactive prompt, even on TTY."""
+    """ValueError failures are written to txt without interactive prompt, even on TTY."""
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n")
     config_yaml = _v4_config(tmp_path / "config.yaml")
@@ -528,7 +528,8 @@ def test_main_consistency_error_no_interactive_prompt_on_tty(tmp_path):
     output_txt = tmp_path / "input.txt"
     assert output_txt.exists()
     content = output_txt.read_text(encoding="utf-8")
-    assert "Input consistency validation failed" in content
+    assert f"[ERROR] {error_msg}" in content
+    assert "force_consistency" not in content
 
 
 # =============================================================================
@@ -836,3 +837,154 @@ def test_capability_payload_from_wheel_with_real_build(tmp_path):
 def test_retired_agent_flag_is_rejected() -> None:
     with pytest.raises(SystemExit):
         main(["--agent", "status"])
+
+
+# =============================================================================
+# B2 regression tests: retired switches, --stop scope, user-error output
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--rerun-failed", "dir"],
+        ["--step", "s1"],
+        ["-o", "out"],
+        ["--output", "out"],
+    ],
+)
+def test_retired_execution_flags_fail_closed(argv, capsys):
+    """Retired execution switches stay parseable but fail closed (B2b)."""
+    with patch("confflow.cli.run_workflow_through_service") as mock_facade:
+        result = main(argv)
+    assert result == 2
+    mock_facade.assert_not_called()
+    assert "legacy_workflow_not_executable" in capsys.readouterr().err
+
+
+def test_retired_flags_help_marks_fails_closed():
+    """--help labels the retired switches instead of hiding them (B2b)."""
+    text = build_parser().format_help()
+    for flag in ("--rerun-failed", "--step", "--output"):
+        assert flag in text
+    assert text.lower().count("retired; fails closed") >= 3
+
+
+def test_stop_matcher_covers_control_worker():
+    """--stop recognises the control-worker entrypoint (B2c)."""
+    assert _is_confflow_process_cmdline(["confflow-control-worker", "--attempt", "x"])
+    assert _is_confflow_process_cmdline(["python", "/usr/local/bin/confflow-control-worker"])
+    assert not _is_confflow_process_cmdline(["vim", "confflow-control-worker.yaml"])
+
+
+def test_stop_skips_other_users_processes(monkeypatch):
+    """--stop only stops ConfFlow trees owned by the current user (B2c)."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(os, "getuid", lambda: 1000)
+    mine = MagicMock()
+    mine.pid = 100
+    mine.status.return_value = "running"
+    mine.info = {
+        "cmdline": ["confflow", "input.xyz"],
+        "pid": 100,
+        "uids": SimpleNamespace(real=1000, effective=1000, saved=1000),
+    }
+    other = MagicMock()
+    other.pid = 101
+    other.status.return_value = "running"
+    other.info = {
+        "cmdline": ["confflow", "other.xyz"],
+        "pid": 101,
+        "uids": SimpleNamespace(real=2000, effective=2000, saved=2000),
+    }
+
+    with patch("psutil.process_iter", return_value=[mine, other]):
+        with patch("psutil.Process") as mock_proc:
+            mock_myself = MagicMock()
+            mock_myself.pid = 1
+            mock_proc.return_value = mock_myself
+
+            with patch("confflow.cli.kill_proc_tree") as mock_kill:
+                assert stop_all_confflow_processes() == 0
+                mock_kill.assert_called_once_with(100, timeout=3)
+
+
+def test_stop_help_states_same_user_scope():
+    """--stop help says it stops this user's process trees on this machine (B2c)."""
+    text = build_parser().format_help()
+    assert "current user" in text
+    assert "same uid" in text
+
+
+def _reset_confflow_console_stream() -> None:
+    """Point the singleton console handler at the live ``sys.stdout`` without flushing.
+
+    The ``ConfFlowLogger`` singleton otherwise keeps the previous test's (now
+    closed) ``capsys`` buffer, and the next ``cli_output_to_txt`` entry flushes
+    it via ``StreamHandler.setStream``, raising ``ValueError: I/O operation on
+    closed file`` before the CLI body runs. Direct assignment skips the flush;
+    it is test-only lifecycle hygiene, not production behaviour.
+    """
+    from confflow.core.logging import get_logger
+
+    handler = get_logger().handlers.get("console")
+    if handler is not None:
+        handler.stream = sys.stdout
+
+
+def _run_main_with_facade_error(tmp_path, error, extra_args=None):
+    """Run the normal CLI path with the service facade raising *error*."""
+    _reset_confflow_console_stream()
+    input_xyz = tmp_path / "input.xyz"
+    input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
+    config_yaml = _v4_config(tmp_path / "config.yaml")
+    argv = [str(input_xyz), "-c", str(config_yaml), "-w", str(tmp_path / "work")]
+    argv.extend(extra_args or [])
+    with patch("confflow.cli.run_workflow_through_service", side_effect=error):
+        return main(argv)
+
+
+def test_user_error_confFlow_error_single_line_no_traceback(tmp_path, capsys):
+    """ConfFlowError user errors print one line; no traceback by default (B2d)."""
+    from confflow.core.exceptions import ConfFlowError
+
+    result = _run_main_with_facade_error(tmp_path, ConfFlowError("bad workflow"))
+    assert result == 2
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert err.splitlines() == ["Error: bad workflow"]
+    output_txt = tmp_path / "input.txt"
+    assert "[ERROR] bad workflow" in output_txt.read_text(encoding="utf-8")
+
+
+def test_user_error_domain_value_error_is_usage_error(tmp_path, capsys):
+    """ValueError-flavoured domain errors stay usage errors, still one line (B2d)."""
+    from confflow.domain.errors import InvalidStructureError
+
+    result = _run_main_with_facade_error(tmp_path, InvalidStructureError("bad structure"))
+    assert result == 1
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert err.splitlines() == ["Error: bad structure"]
+
+
+def test_user_error_verbose_logs_traceback(tmp_path, capsys):
+    """--verbose adds the traceback for user errors (B2d)."""
+    from confflow.core.exceptions import ConfFlowError
+
+    result = _run_main_with_facade_error(
+        tmp_path, ConfFlowError("bad workflow"), extra_args=["--verbose"]
+    )
+    assert result == 2
+    captured = capsys.readouterr()
+    assert "Error: bad workflow" in captured.err
+    assert "Traceback" in captured.out + captured.err
+
+
+def test_unexpected_error_keeps_traceback(tmp_path, capsys):
+    """Non-user errors keep the existing traceback behaviour (B2d)."""
+    result = _run_main_with_facade_error(tmp_path, RuntimeError("boom"))
+    assert result == 2
+    captured = capsys.readouterr()
+    assert "Traceback" in captured.out + captured.err

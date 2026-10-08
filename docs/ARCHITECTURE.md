@@ -28,8 +28,8 @@ confflow/
   programs/      量化程序适配器（Gaussian、ORCA）：输入渲染与输出解析
   persistence/   持久化：逐 work item 的 SQLite 存储、发布协议、复用判定、孤儿回收、run state
   application/   应用层：正式 V4 入口 `v4_entry`、整次运行 `v4_run`、执行服务与仓库（SQLite）
-  remote/        远程执行边界：worker-handoff v2、安全 staging、传输、结果包
-  analysis/      反应/PES 聚合：反应组发现、Gibbs 能、势垒
+  worker_handoff.py worker_staging.py worker_attempt.py worker_sidecars.py worker_supervision.py
+               远程执行边界：producer-owned worker-handoff envelope、安全 staging、attempt 管理与结果 sidecar
   producer/      对客户端发布的契约与工具：contract / boundary / authoring / intent、cards、presets、
                  editor manifest、recipes、字节级校验、run result 投影、种子与机器检查点辅助
   config/        契约 schema id 的唯一权威（无依赖）
@@ -92,7 +92,8 @@ confflow/
 - **配置契约**由真实注册表生成（工作流 JSON schema、editor manifest、recipe 目录、能力、端口、资源、分析与结果 schema），
   全部用 digest 钉住；客户端据此编辑、校验、提交。
 - **边界协议**（`confflow.boundary.v4`）声明规范化算法（JCS）、authoring 请求/响应 schema 与兼容性词汇；已发布的契约 digest
-  由 `tests/` 与外部检查点（`$BASE`，本轮实际路径示例 `/tmp/l0-baseline-run-v2/baseline`）固定；
+  由 `tests/` 与外部基线（`$BASE`，由 `MANIFEST.json` 钉住，需从干净 main 用 `tools/refactor/` 里的脚本重新生成，
+  不在本仓写死路径，`/tmp` 重启即清空）固定；
   仓内检查点记录位于 `docs/confgen-fix/checkpoints/`。
 - **四个 digest 轴**（WorkflowDefinition / StepSemantic / WorkItem / ExecutionEnvironment）区分"科学内容"和"调度/展示内容"：
   改 label、`max_parallel_items`、executable 路径不会移动科学 digest；改 native、checks、seed、资源、科学默认值会。
