@@ -1,0 +1,844 @@
+{
+ "archive_tip": "11bdc14ceb7802e69a93328d2b1c131604d07a2a",
+ "also_reachable": {
+  "docs/refactor-plan_tip": "5cf2000998734ecce658cf4a77d9efae7b7e1327"
+ },
+ "files": {
+  "docs/refactor/ACCEPTANCE.md": {
+   "blob": "ded398e844b7f981ad729abcf85991b7e6805f09",
+   "mode": "100644",
+   "sha256": "300e408394731a5cde5d59b053c1789773c6e2fcc5b906c41a62785d3e4ea30d"
+  },
+  "docs/refactor/LOG.md": {
+   "blob": "27a59bf3e0c07065f6702fd0b5752c2b39572b8f",
+   "mode": "100644",
+   "sha256": "ca8d8d94e21e0679d1143813562216d8fe795639c5b792bbc49efca85ae429af"
+  },
+  "docs/refactor/PLAN.md": {
+   "blob": "4e92eef30ae421f05717ea732acf55f028697c0f",
+   "mode": "100644",
+   "sha256": "b77a7957d369064b842b707620dc55a9bc7f76931acff31dfbd52928184e3135"
+  },
+  "docs/refactor/REFINE_GAP.md": {
+   "blob": "d854c115881d33203d75939020604681dddb2026",
+   "mode": "100644",
+   "sha256": "78c0c1e14bf74627fccccb32d159199dcf39f8dbc0d733f7d3791751844bec4f"
+  },
+  "docs/refactor/STATUS.md": {
+   "blob": "123576b4646ee4e9bfa576cfa0aef274f3334a6c",
+   "mode": "100644",
+   "sha256": "4e36453f4e7d717b0409459af3667b18124fd9ec289582568e3c165df4b3d729"
+  },
+  "docs/refactor/handoff/A1-1-executor-prompt.txt": {
+   "blob": "fc2869d5b879010720e98a34f15cd461f03ae683",
+   "mode": "100644",
+   "sha256": "58e87d293735fab3313453c4a8151e2915c458169fdbb30d77cbde6e93f3c213"
+  },
+  "docs/refactor/handoff/A1-1.md": {
+   "blob": "497fea60ed23a1de20045aa127610c5612d35375",
+   "mode": "100644",
+   "sha256": "071c7ecfca351e6d3b5be3743a35e371b889a38b754943b3ab3411598526176d"
+  },
+  "docs/refactor/handoff/A1-1.patch": {
+   "blob": "4d4c9faf8696822b6262757bfbb1a115dd9203f0",
+   "mode": "100644",
+   "sha256": "c2f713cd8e2be148e5d169d5ef53d5a1a9054430375c55c7853077f8fe0d5134"
+  },
+  "docs/refactor/handoff/A1-2-executor-prompt.txt": {
+   "blob": "132ab9c942ac2ad87423911b372726f9fca65a3f",
+   "mode": "100644",
+   "sha256": "7da6c5c126bb31cac1e0b4c6c34a6f1d583a037f0897226c050b35e713e41b65"
+  },
+  "docs/refactor/handoff/A1-2.md": {
+   "blob": "8307c2b19b04f192a6eec83d037c75b4b50525b9",
+   "mode": "100644",
+   "sha256": "88ceaae2a7d9856dd1939570950a746b9cd755816ceb334cf5fd023476b1f4c9"
+  },
+  "docs/refactor/handoff/A1-2.patch": {
+   "blob": "28414dc48430584bd11d93bbff034d98a5797e9e",
+   "mode": "100644",
+   "sha256": "4fae3df02fafd53344333d73d2859ec294fa115d597a2b660253bc0d662d0511"
+  },
+  "docs/refactor/handoff/A1-3-executor-prompt.txt": {
+   "blob": "c9055c9fbc1bb8775744ef6fa78c7044ccbf25c2",
+   "mode": "100644",
+   "sha256": "8ba88a2f7c9bebf036b6b6f4555892f899479a53cee8994e1698db8c94b0071d"
+  },
+  "docs/refactor/handoff/A1-3.md": {
+   "blob": "0a833cf27e149686565d25797f6d925c180452d3",
+   "mode": "100644",
+   "sha256": "1f012afc3ebb51be2d786b0b1f6e987634f0e6d354512360fbc0a749038ae341"
+  },
+  "docs/refactor/handoff/A1-3.patch": {
+   "blob": "ef957a51cb22e560aa080157751c79c40516945b",
+   "mode": "100644",
+   "sha256": "134581ad87f00f51407c40a003947a2a0300343d9acbb65a90b50c3b3cb536f9"
+  },
+  "docs/refactor/handoff/A1.md": {
+   "blob": "ae9b634af57be4a6e22d5beb6f0b793ddb712261",
+   "mode": "100644",
+   "sha256": "17525034efe9d87aebbff0f2f59b8387121ef7ef22816a79523083b4198407c6"
+  },
+  "docs/refactor/handoff/A2b-executor-prompt.txt": {
+   "blob": "8a8a69370b154be7ec34796cd44587bdaa3a5a50",
+   "mode": "100644",
+   "sha256": "ba599363d2cf81e8ac5767b546f9744a0a3d86dab2c15fa7ad094473683d38e1"
+  },
+  "docs/refactor/handoff/A2b.md": {
+   "blob": "e5c251f7e0fe8cd3bf45a879a296f693871fecbd",
+   "mode": "100644",
+   "sha256": "14f30c089ca7ee57b176ea0dc362b0b9c6ce9b0a199b1b7358f1349101cae3aa"
+  },
+  "docs/refactor/handoff/A2b.patch": {
+   "blob": "c8f7bc529dd03b47c1795ca94b5751d784833e95",
+   "mode": "100644",
+   "sha256": "df07f8a0f1f192faaa307979627f4c0de3773178f6c7aef67b3f3c4590ae10d1"
+  },
+  "docs/refactor/handoff/B0.1.md": {
+   "blob": "f1e59166b6992c5ef8d6659988d923504002aaf4",
+   "mode": "100644",
+   "sha256": "b0076d65b2664ec87816d56f621f28ef46d8a48d670084b41c07c22c6216c3a5"
+  },
+  "docs/refactor/handoff/B0.2.md": {
+   "blob": "ec7cdd987d9420e169d2de333262c32f67418b0a",
+   "mode": "100644",
+   "sha256": "f886669313e44b7042667569814297f56db1ba11a8c96439932026e6a2280ced"
+  },
+  "docs/refactor/handoff/C1.1.md": {
+   "blob": "c4f0c18d6a4def1d6733b8d9faf883110c94d881",
+   "mode": "100644",
+   "sha256": "fd207747d6091cbad97c655aff276717a3d9b909fc65c6cae2bfb5c9ecef656b"
+  },
+  "docs/refactor/handoff/C1.2.md": {
+   "blob": "f4950795001da1f5078066ed2d2b5906ac85cc13",
+   "mode": "100644",
+   "sha256": "282599d19e8e851992ead630779b838e409ca6c6e47f1b0a98f836a07909a225"
+  },
+  "docs/refactor/handoff/C1.3.md": {
+   "blob": "64615aad304c77ea35e9240227d3ed633259e249",
+   "mode": "100644",
+   "sha256": "086b42aabecfcc6579a37a860a9a5c637537ee1862e5dc4afd9731705cdea2d3"
+  },
+  "docs/refactor/handoff/C1.4.md": {
+   "blob": "1ca4a920dcd5a21594a02f437890096f10710275",
+   "mode": "100644",
+   "sha256": "58303d74605aecf5b30a88dad8e287d353f1de85544c544b7181d73b975bb3df"
+  },
+  "docs/refactor/handoff/C1a-executor-prompt.txt": {
+   "blob": "9a77d3bd2bd2be4cd9bfedb1a4dfc8e26f3f8ac5",
+   "mode": "100644",
+   "sha256": "568c12d1a4c4763d1b8555fc6e5dd52700cca3368d4382528b69cfcef8239f57"
+  },
+  "docs/refactor/handoff/C1a.md": {
+   "blob": "1b124b1bdb30f8286b4c472c09cd3d1907d91009",
+   "mode": "100644",
+   "sha256": "b9febe5c9e444f79f877bdca29717212267c2a144ea7c1c554d6fc1eb085b522"
+  },
+  "docs/refactor/handoff/C1a.patch": {
+   "blob": "c0116efbecf9d377c06347fb030f2c5fe425d9ac",
+   "mode": "100644",
+   "sha256": "af62d50b9541f9e7728435821b918e6942b55bb6415a610230b666ca63efb6d3"
+  },
+  "docs/refactor/handoff/C3.1-C3.2.md": {
+   "blob": "3c9b71ddaebbf9e61f75b462faf978984610b995",
+   "mode": "100644",
+   "sha256": "7aff5eec83ac521a000a329b3d736a842bb91df6213521f12f4f584feb17425c"
+  },
+  "docs/refactor/handoff/C3.1-pin.patch": {
+   "blob": "20d6f79725c02828f945b81390f54025c46ea8ea",
+   "mode": "100644",
+   "sha256": "547d562883d0675c062be493133d355b3fee9fca0a5533c45f060935f2ae4eac"
+  },
+  "docs/refactor/handoff/C3.2-removed-tests.txt": {
+   "blob": "d880eac7adfca16e25b32e3262950e95913f62e4",
+   "mode": "100644",
+   "sha256": "8c432e6f05b78f7a8c1e95462af49efd30c07a0bc341d4732e73bb66f1b46d36"
+  },
+  "docs/refactor/handoff/C3.2-src-tests.patch": {
+   "blob": "1c981b817401a27c06058e1e8d627495e840e86b",
+   "mode": "100644",
+   "sha256": "0904aac4cc947da8a79305e917b2d6e02e30b73ec16eb9f3c9ebc890ebd8179b"
+  },
+  "docs/refactor/handoff/C3.3-J3.3.md": {
+   "blob": "e9322ebe26bc330660814b593fedd843d967cfe1",
+   "mode": "100644",
+   "sha256": "01342f81048ecdaa10a4a00449c2bf3a7c43632d9de5732c982294f40d5b6c78"
+  },
+  "docs/refactor/handoff/C3.3-src-tests.patch": {
+   "blob": "417244a2046e234a2dce712fa5d87e54e35dec14",
+   "mode": "100644",
+   "sha256": "0be3f599f2f42f9331161f362fd906e27006bc058961c27d7f66b88e3d73704a"
+  },
+  "docs/refactor/handoff/C3.4-pin.patch": {
+   "blob": "297870e07dd50383a27358a97bf9e1dd8036d781",
+   "mode": "100644",
+   "sha256": "41d2441b35312891f8c053938e56a745127a3f6b4b2e50956e893879284ff6a2"
+  },
+  "docs/refactor/handoff/C4.1-executor-prompt.txt": {
+   "blob": "ecedd6e4b4da33ef5354effb78506692465714f2",
+   "mode": "100644",
+   "sha256": "879d8eea72474de51b7090c0797993474c1cf750e202d64483dc9d47c402a46e"
+  },
+  "docs/refactor/handoff/C4.1.md": {
+   "blob": "dcdf3c8126010ea7b9b303016e9eaf6184aec8e8",
+   "mode": "100644",
+   "sha256": "4e52691f4c6dc21347b0c3a6445729b0c187a9570d9481119fd41f68abd59ea8"
+  },
+  "docs/refactor/handoff/C4.1.patch": {
+   "blob": "95bff3485ec4d038063ac6921a5c9f3e81efb942",
+   "mode": "100644",
+   "sha256": "330a2bafd1c7a82b591c3fd42406e9ce993df2dbea1b160073dd049ffae8cafd"
+  },
+  "docs/refactor/handoff/C4.2-executor-prompt.txt": {
+   "blob": "d2643ed39b5326523b3f3794cae66d06e9c7958f",
+   "mode": "100644",
+   "sha256": "32eb94471de09f81d0dd3e3eb11adc3e1548ed3eba415a737b94fed0dcc945a3"
+  },
+  "docs/refactor/handoff/C4.2.md": {
+   "blob": "a678d248e11d20517d212500a33cde17868de734",
+   "mode": "100644",
+   "sha256": "34296467953e0e55e0452b7d68e154ef3e1a24985db70e34c5de75adda3e34e8"
+  },
+  "docs/refactor/handoff/C4.2.patch": {
+   "blob": "572b3fb47683c3eee7271be7e73906ced2643f3d",
+   "mode": "100644",
+   "sha256": "3a31ce5b267942362208ee185479fca145ada6e420dc251d16454efebb01436d"
+  },
+  "docs/refactor/handoff/C4.3-added-tests.txt": {
+   "blob": "ebd2351388bc8282ea0284f2693f1bba14bcedc3",
+   "mode": "100644",
+   "sha256": "efb44a08a9e6cbf7d368c24599a519895222192331db16127320f0cd4d939a7a"
+  },
+  "docs/refactor/handoff/C4.3-executor-prompt.txt": {
+   "blob": "0e73cff85ea34a0ca6fe39b04f6caa9f385f4571",
+   "mode": "100644",
+   "sha256": "031ded2397d1c192465b66a02f934db8e3f539f53f32f273187d506331c30e67"
+  },
+  "docs/refactor/handoff/C4.3-removed-tests.txt": {
+   "blob": "8d330341f2af431358475eb90a1614600abc0652",
+   "mode": "100644",
+   "sha256": "1aa08c8496c7c0e9343fa787dad26c307e06f85a2d1cffb2a7877af08554b2cf"
+  },
+  "docs/refactor/handoff/C4.3-test-triage.md": {
+   "blob": "efd4c6384d1409f986e6d4cd18b25017da4ced21",
+   "mode": "100644",
+   "sha256": "2805f3bc7da26747ad4f9a7637373c912370cf11ad6160e5bc7683094047acb8"
+  },
+  "docs/refactor/handoff/C4.3.md": {
+   "blob": "b9ad5e17572c895310a102363d2d66dd04cc9cd7",
+   "mode": "100644",
+   "sha256": "adf9f1385fe231b911fa94e11618bacab0087c2a8033e765413c92ff6d98af6f"
+  },
+  "docs/refactor/handoff/C4.3.patch": {
+   "blob": "5d0bea3f4310b6ab8dfcea33eef0391b6c2d4595",
+   "mode": "100644",
+   "sha256": "417ba836c01e37961a02918c9413b3bdcc6f632867e88102d9b4a037653d4a9b"
+  },
+  "docs/refactor/handoff/C4.3a-executor-prompt.txt": {
+   "blob": "9a3d3e2c02415d46141643d1aa229ec9f076a397",
+   "mode": "100644",
+   "sha256": "355e95468e822fa3c29215895b827e3013d0d64d9ae6d317a20e9f0444df2cae"
+  },
+  "docs/refactor/handoff/C4.3a.md": {
+   "blob": "23ed93796de5227226c1adea04810aa1bffd09d2",
+   "mode": "100644",
+   "sha256": "f4f6bbda837b6a139c14967e82a01661188309731c40e24c17a86d594c79fa06"
+  },
+  "docs/refactor/handoff/C4.3a.patch": {
+   "blob": "5d3bd21bc697a7a8462b7a5f99319658b692397d",
+   "mode": "100644",
+   "sha256": "882dd323c2a43c3f66c3d93a3478873869499ef463a1717713139ca56863ccbd"
+  },
+  "docs/refactor/handoff/C4.4-executor-prompt.txt": {
+   "blob": "8017c77749798a83dc2e4f94edf92ed8f22d7b87",
+   "mode": "100644",
+   "sha256": "8b616a8bdaf8fedb2f9ab88f64b8dddbdc7a39b0cff661dde74265739873fc59"
+  },
+  "docs/refactor/handoff/C4.4.md": {
+   "blob": "9088bd77f8aa39cef5b290e04aba798fa92e9f2a",
+   "mode": "100644",
+   "sha256": "b798664db6b44d0d6bdde9ef182509bbc19af4281e45384bd08117ccfdf682de"
+  },
+  "docs/refactor/handoff/C4.4.patch": {
+   "blob": "48764147822b5651f554b294fddd15426a14e24c",
+   "mode": "100644",
+   "sha256": "adb455f1b3d7b2017b4fb2b342de18dd38563e752389312b2c23ed3038ad1d5e"
+  },
+  "docs/refactor/handoff/C4.5-executor-prompt.txt": {
+   "blob": "d0bb7206abecd7057485f0d8de3c372d5998ea9e",
+   "mode": "100644",
+   "sha256": "9aed54356419843e50438b6a4f41688cd346a8b741827191ed6eda6ad269e836"
+  },
+  "docs/refactor/handoff/C4.5.md": {
+   "blob": "fe7730364f9b238bd509be924d7ac00473476ace",
+   "mode": "100644",
+   "sha256": "1587d62dd38e2d351feaf07f4ce69a60cd3b6465febce88701869900fd293f35"
+  },
+  "docs/refactor/handoff/C4.5.patch": {
+   "blob": "2d3fa265dcf4ed1f6227fc63d60cb3926b81fc52",
+   "mode": "100644",
+   "sha256": "3060b96c9aed5d7f732f3578b122cd084ba638df25ddabca870f5e67c99d4ee4"
+  },
+  "docs/refactor/handoff/C4.6-executor-prompt.txt": {
+   "blob": "388bb9641ae7e40e53d3af0bfdc5b3c92c4ce227",
+   "mode": "100644",
+   "sha256": "208f87240e7662725c4142f97cbbd0a1915ad4dd917065cce8151827b55b7e23"
+  },
+  "docs/refactor/handoff/C4.6.md": {
+   "blob": "1b1734c13c4bcb4990b279dd2c330fea6cd12f7a",
+   "mode": "100644",
+   "sha256": "c704293632a9476a7c56c9f9da0ebe6470aaca81ab6cda691908acc7d9261eaa"
+  },
+  "docs/refactor/handoff/C4.6.patch": {
+   "blob": "2eb6e2eca5814877de7531fade1f53e5a81b612c",
+   "mode": "100644",
+   "sha256": "7aae3d7b35ef05c651937e76c81ec4cebf5b2d8310b45e1258abcd73627b97b3"
+  },
+  "docs/refactor/handoff/C4.7-executor-prompt.txt": {
+   "blob": "161996d39cab15c26b7f41bfe0b2e02589b59d0e",
+   "mode": "100644",
+   "sha256": "54c1667ca51344e67ae34b5982ee7e5466ce0f15b63ad2bb2eed80447cbeaeac"
+  },
+  "docs/refactor/handoff/C4.7.md": {
+   "blob": "6e0e3473812c12acd370c645022e472260789808",
+   "mode": "100644",
+   "sha256": "fe0ecbbdb1f7e5e7b844fa00e601b40d7a364b0f64c76e113cb4fa2042b1c168"
+  },
+  "docs/refactor/handoff/C4.7.patch": {
+   "blob": "0bf0a5eca5ae23c3ebb730ce2794e8b8c66988c5",
+   "mode": "100644",
+   "sha256": "21b90a74fddfe42dbf661dcd3f8a38592242667a150267943de1987191011b9f"
+  },
+  "docs/refactor/handoff/C4.7b-executor-prompt.txt": {
+   "blob": "3a98cccc0e1c0965a8d36bda137e21fb50802fa9",
+   "mode": "100644",
+   "sha256": "af085cefe5eb5c0fd0552d75cd9060b64aa6eddedc5fa9dc31415d11df92bb8d"
+  },
+  "docs/refactor/handoff/C4.7b.md": {
+   "blob": "451921482b46019c51b521a9eb25c509c2f98e1f",
+   "mode": "100644",
+   "sha256": "b4fec0eddc0fe85c895a678ca72cfd257711343575f03e6ba83a92e5e493e857"
+  },
+  "docs/refactor/handoff/C4.7b.patch": {
+   "blob": "9802f7559a86aaf7e7b519d26b146deb755f55f5",
+   "mode": "100644",
+   "sha256": "9f77f998ff83f940d703122fb425c7be7184dc025fc29117e1121b0f78304298"
+  },
+  "docs/refactor/handoff/C4.8-executor-prompt.txt": {
+   "blob": "3fcde93ba7921926088beb0c35254ef930d94755",
+   "mode": "100644",
+   "sha256": "8c527af7e615f9c20a64c20f57b1d3cca99cc98fdb404e4c4199f50c0ea3153a"
+  },
+  "docs/refactor/handoff/C4.8.md": {
+   "blob": "98474444a4b2ff41e55304fd99823860c032acc3",
+   "mode": "100644",
+   "sha256": "979665b1531432a785bfb0280e466b729b84ce2a4a25a030e4832a8ae5a6deb9"
+  },
+  "docs/refactor/handoff/C4.8.patch": {
+   "blob": "6753e7d48f4bf7d749a0e25c045fed399448eb39",
+   "mode": "100644",
+   "sha256": "62af82f77aec8b44dd423d8dd39f19a656815cf9813703ceac1f344cce8ad53c"
+  },
+  "docs/refactor/handoff/C5.2-removed-tests.txt": {
+   "blob": "277c4ca08ba5aa4121f23e7d56625e405901085d",
+   "mode": "100644",
+   "sha256": "8882f89154f0c92894989ccc7cd1f0ef7ee05e6851ee5a94f3ae4772c8761206"
+  },
+  "docs/refactor/handoff/C5.2-src-tests.patch": {
+   "blob": "3c14c54a3e90f12a6822701e565729551c01c55a",
+   "mode": "100644",
+   "sha256": "b0a093ff1b2ba4a0a17bc184abc976cd0ce95bf54178cb6039506717a35155b1"
+  },
+  "docs/refactor/handoff/C5.2.md": {
+   "blob": "156622865c681602bab48ef030194094aa1f352b",
+   "mode": "100644",
+   "sha256": "3f2110779e2bff1a52b336fa802c88f6cbe75dd2fa354e5d2b1aee48c756073e"
+  },
+  "docs/refactor/handoff/C5.2b-removed-tests.txt": {
+   "blob": "290c2ee3c7163845fe80d6d2db5b9ad82c034154",
+   "mode": "100644",
+   "sha256": "7100b1094e5505ad8bcb94094b321cd7f389cd034ae677c4965a371a952df194"
+  },
+  "docs/refactor/handoff/C5.2b-src-tests.patch": {
+   "blob": "96d05b72b63264c4cf718762fea4cb1450676edb",
+   "mode": "100644",
+   "sha256": "95212818d97995b37c1e93673346c510159ebe89970865ccee7d704bf2228b96"
+  },
+  "docs/refactor/handoff/C5.2b.md": {
+   "blob": "a96995270160f25482be0120656af4ad0215b13c",
+   "mode": "100644",
+   "sha256": "4409a9a782174c329283b29ae01245c6d05ade437931287d6d088cd4011d50c8"
+  },
+  "docs/refactor/handoff/C5.3a-added-tests.txt": {
+   "blob": "1b383ec01cb82b176c9b3b47ece51a064d3b542e",
+   "mode": "100644",
+   "sha256": "631d25b0a5d7b4b71d944fee25eedce56e0d55bc9d9ceb05724ad0509c96dfbb"
+  },
+  "docs/refactor/handoff/C5.3a-removed-tests.txt": {
+   "blob": "4d696ed4e8220979cac39a41c6979ee5fd0e2ea7",
+   "mode": "100644",
+   "sha256": "b211bb480f8a386bf075cee3b9511680e94814c62e3bae14d338939e05ee0be4"
+  },
+  "docs/refactor/handoff/C5.3a-src-tests.patch": {
+   "blob": "835f9278a9122ac6770f530ce300d6f4bac205c6",
+   "mode": "100644",
+   "sha256": "fb80f3eee80a798bc4a6d9f0a1de48b1dc827f8b1544089dc9b6d8af7c743654"
+  },
+  "docs/refactor/handoff/C5.3a.md": {
+   "blob": "66f3dfc8737a09a4fc818b6400ae7c8d4b1847ef",
+   "mode": "100644",
+   "sha256": "4e4ed06fa80b0b3ed27e4162688701e4d3ad9cd7e409fce91e860373563ead6e"
+  },
+  "docs/refactor/handoff/C5.3b-added-tests.txt": {
+   "blob": "96d3db3652bf094ab21fae7c2cb75e8a4b039c19",
+   "mode": "100644",
+   "sha256": "84cf8eb82f34d88fce79088f43ed58168dae7f7d2c8aa726dc5301ebf942535e"
+  },
+  "docs/refactor/handoff/C5.3b-src-tests.patch": {
+   "blob": "d710ff1148b153f32d3a85d706e5144662018c96",
+   "mode": "100644",
+   "sha256": "20196dcefeb11dfbc10c9f332a3bdf176a721e10785135cc80e4533a7f2c9621"
+  },
+  "docs/refactor/handoff/C5.3b.md": {
+   "blob": "e39470be016c00c29d87870c82819acb2b62b40a",
+   "mode": "100644",
+   "sha256": "64d19a7f6d62977432d1af0bf21b15662adec977e3781d1ee050a2b17d9c3422"
+  },
+  "docs/refactor/handoff/C5.3c-1-added-tests.txt": {
+   "blob": "5b43858ed241232023fbbcc5a15308da3e13789f",
+   "mode": "100644",
+   "sha256": "10b99475d847b141793477f9648f02fc5463ec2a51017a1fdf30f731b37af0da"
+  },
+  "docs/refactor/handoff/C5.3c-1-src-tests.patch": {
+   "blob": "badec2a05588c5604ed63f765dbf5c047b3850e3",
+   "mode": "100644",
+   "sha256": "d775175c822365dddcf58d81af743489c6d9d7dc76fd025c008a025ad0d86c38"
+  },
+  "docs/refactor/handoff/C5.3c-1.md": {
+   "blob": "9648ffcd5b7e99e41b98b7d56db6c3aaf999c5ca",
+   "mode": "100644",
+   "sha256": "5ced5319eb4593e8a6b5cc6c922cde283838ff7b74705132b1645176a09c96d7"
+  },
+  "docs/refactor/handoff/C5.3d-4-added-tests.txt": {
+   "blob": "58dad633414570a9828565d6381d6990ea786ce3",
+   "mode": "100644",
+   "sha256": "d63358719bf1f7f2baec28cd929dc2acdbcc34f4cfc9e264ce3cd91f5cdf5f4d"
+  },
+  "docs/refactor/handoff/C5.3d-4-removed-tests.txt": {
+   "blob": "6096922717ff6a320c670f62e0aab8730a801216",
+   "mode": "100644",
+   "sha256": "bb0b82c0cd9218a043188cf0eac3eba839f92f73ff6d608faf70633280f01601"
+  },
+  "docs/refactor/handoff/C5.3d-4-src-tests.patch": {
+   "blob": "e65cc840e36091d5791a13cc92204a2622e39bd7",
+   "mode": "100644",
+   "sha256": "81d284d0d83be93f5d1081290ad9ade2b8795185ba435e54ca8da5ec86fd14d8"
+  },
+  "docs/refactor/handoff/C5.3d-4.md": {
+   "blob": "49f44a4948b7d8fa8d7811aa08ee3bb950946271",
+   "mode": "100644",
+   "sha256": "9e5f592caca5270d587d5b256c99ee9bd21bf71f608192c000575228161f8144"
+  },
+  "docs/refactor/handoff/C5.5-added-tests.txt": {
+   "blob": "daf08d145b9f80561fea924700a1c5bc8b46cfa5",
+   "mode": "100644",
+   "sha256": "c159669b276997e8e2763e15772ba1b7b91b7242b07c74feda964a38b248a03f"
+  },
+  "docs/refactor/handoff/C5.5-removed-tests.txt": {
+   "blob": "65ab9e4279e8ea4a548f0b84a43ebdd5e4fec868",
+   "mode": "100644",
+   "sha256": "ddbc6d2ec0027114fc029376c8f249355068456342c10a2121d6ddd2b1c8de25"
+  },
+  "docs/refactor/handoff/C5.5-src-tests.patch": {
+   "blob": "33ed67fdf66042f61ba66dad8e22edd370865880",
+   "mode": "100644",
+   "sha256": "6618af1d515889d8988fdf0c91529c409b98dcb4913cb153d29be95fa64b3ca8"
+  },
+  "docs/refactor/handoff/C5.5.md": {
+   "blob": "f25b0ef98676d5e9ea2653fe13627b3310830783",
+   "mode": "100644",
+   "sha256": "7d64e136901ba337498b402d3d77c1ffee74072a2349a856a22324ffbabbf6df"
+  },
+  "docs/refactor/handoff/C5.5a.md": {
+   "blob": "c8bf6a359fdb134de738ae775b5cb839d82e3981",
+   "mode": "100644",
+   "sha256": "b62307a4b06037cfaf217a5cb03478bbd9f5e2005ddd0b19f5deda6ad4e6afa2"
+  },
+  "docs/refactor/handoff/C5.5a.patch": {
+   "blob": "43106da1c679fbd3145a4eca6233e1a39b314e7f",
+   "mode": "100644",
+   "sha256": "5cc20b1465578687183551c25b6513892c1dac4cb31165959f26c99cb8dbb32e"
+  },
+  "docs/refactor/handoff/C5.6-8-removed-tests.txt": {
+   "blob": "525cbb15421708e8088cce0bca4f557a05e2d206",
+   "mode": "100644",
+   "sha256": "209d832555d73b8c0ecaa9ba4c4951d70c09eb7e69c9ac78621b17af5f95696f"
+  },
+  "docs/refactor/handoff/C5.6-8-src-tests.patch": {
+   "blob": "1c462d66525b4c0fc5fdb2da077b2ba76243f538",
+   "mode": "100644",
+   "sha256": "1d9ca76a5f1ecc73c6defdedfa0579abe110b1b1e86d567bc53eb387b4b0dc2b"
+  },
+  "docs/refactor/handoff/C5.6-8.md": {
+   "blob": "dddd358c7d007664e6e21df0e82cc435220a8995",
+   "mode": "100644",
+   "sha256": "090df4015ed66e32352698e654c63cba5d848ce60a4609b7bed2c58560721c12"
+  },
+  "docs/refactor/handoff/D1a-executor-prompt.txt": {
+   "blob": "5e7f92e26ed4411712776eaa6103f3592cd4e284",
+   "mode": "100644",
+   "sha256": "a85a6a729d3488c4824f191b800d940804ff5944b332bff17fa7e83bc03f6596"
+  },
+  "docs/refactor/handoff/D1a.md": {
+   "blob": "4cc4b05a0a321b243fa08dd2ca2e1b44f4935d9b",
+   "mode": "100644",
+   "sha256": "473634655832968fd673c07177bc3799a8d9f785781104e8eebb1d4da72ff6f4"
+  },
+  "docs/refactor/handoff/D1a.patch": {
+   "blob": "9260a7bbb379e2f60ac6f6580927c812363c34a7",
+   "mode": "100644",
+   "sha256": "96a033809a4c8b53c4793d06c36bd0bdad5af8fea626dcf89d8414850ffdf2ce"
+  },
+  "docs/refactor/handoff/D1b-executor-prompt.txt": {
+   "blob": "bf759db5fb16afadee53497bf78b6a07090344b3",
+   "mode": "100644",
+   "sha256": "9e3fc4bf74c5f1e3895add9cfa84520268aa9bb193ad1f4faea23ad242ee5c4e"
+  },
+  "docs/refactor/handoff/D1b.md": {
+   "blob": "bbc4508d4b9e8fc50e1d3a8f6372ee3953b4b3bc",
+   "mode": "100644",
+   "sha256": "aa93ff076bd17f327f2d8fcb4a1d7e5a76594c8cd8dba78d7a662367b5cd4fe2"
+  },
+  "docs/refactor/handoff/D1b.patch": {
+   "blob": "94b1e2ae8c54e60460822f21327d3eba8c70e31c",
+   "mode": "100644",
+   "sha256": "b1649d1fadfad80178910054cbb0ed7bbbaedba0266228b5859d0667be842c16"
+  },
+  "docs/refactor/handoff/E-fast-planning-execution-prompt.txt": {
+   "blob": "60ac2488983ab07ac4f1fe16aaab0e92c4029e7f",
+   "mode": "100644",
+   "sha256": "e988a07ea6fa6e8b0c88cf97963a9a65d50d357bbeb8e906ba04aadb8528bcc5"
+  },
+  "docs/refactor/handoff/E1-executor-prompt.txt": {
+   "blob": "057bb168761ac548b488105f957fd03316dfaa06",
+   "mode": "100644",
+   "sha256": "a9d70a9e0479fda4958430618afaa6bb06183821bbec7fbbb877888f9cc074ee"
+  },
+  "docs/refactor/handoff/E1-planning-prompt.txt": {
+   "blob": "5fb324aecb1d305a4e55ab8470049a5d08535fe1",
+   "mode": "100644",
+   "sha256": "b0af398bb293905290b51314a9222a1e9d057122112e83be673ff6b865b10a0e"
+  },
+  "docs/refactor/handoff/E1.md": {
+   "blob": "92b7c22f15f67acd86d0190baf7b1d9eab09da0e",
+   "mode": "100644",
+   "sha256": "9496548a0e10a95832df901b27ce091959fc8675549d4a3ae6dea8492c284c5e"
+  },
+  "docs/refactor/handoff/E1.patch": {
+   "blob": "8073b9d81121cef9a19922eaf88ebe8ca18fe0a8",
+   "mode": "100644",
+   "sha256": "22e4689c6a46b8392ad58757a134e52bfcf962cac884e2b9edc6e4d22e89a4f0"
+  },
+  "docs/refactor/handoff/IS.1.md": {
+   "blob": "4081630f64ddc81f2cab5d277dfcdaf0316548a8",
+   "mode": "100644",
+   "sha256": "daf697928e522703f112e84e184847be3debc0a7c0c9c801bc30ba99de69b1c1"
+  },
+  "docs/refactor/handoff/IS.1b.md": {
+   "blob": "7d15c30f74e0047cc1f7188a19fc9b71aff33d55",
+   "mode": "100644",
+   "sha256": "25e304c58d1cf4f168654ddd8d93f9b590da5999bc6ad9847427131d2fa77578"
+  },
+  "docs/refactor/handoff/IS.2-added-tests.txt": {
+   "blob": "76e27dfaf316d3f00ea9bbeda2915402b3913d07",
+   "mode": "100644",
+   "sha256": "52013da1cb8fc5f4df45b8afaa9cd03f1f0ffe94049eb6c00881b380c542d71c"
+  },
+  "docs/refactor/handoff/IS.2-src-tests.patch": {
+   "blob": "1f9611a5b08fb0606a01b026ddd835298a455b20",
+   "mode": "100644",
+   "sha256": "d13f05497d132ca4a8e402407f0a4fa50b2077b47f078f898103042afb34ad89"
+  },
+  "docs/refactor/handoff/IS.2.md": {
+   "blob": "3b007578dd3dc21d33ba3bd6b5ef596d5996b4ed",
+   "mode": "100644",
+   "sha256": "65edf3bd88524ab84e773a4aacce30667efce235273404842a1e5d1f724b749d"
+  },
+  "docs/refactor/handoff/IS.2b-added-tests.txt": {
+   "blob": "cdbe58eb47c5a01b27f4985820030b6f59dbc412",
+   "mode": "100644",
+   "sha256": "121518d063b26014f0aa81010bdbc85c659bfa3971137d29249c4ee605753f60"
+  },
+  "docs/refactor/handoff/IS.2b-src-tests.patch": {
+   "blob": "4aa5cb1f88fdf04043edcceadcfc7588ef775e2d",
+   "mode": "100644",
+   "sha256": "aa74416f057df4bd81b6b3a72ae39ae3749575c4c38f779cc550e92951e85573"
+  },
+  "docs/refactor/handoff/IS.2c-IS.2b.md": {
+   "blob": "948acd3783a2f15831ebd27d4c8b3c22e12d30df",
+   "mode": "100644",
+   "sha256": "954884b34cb69aa1332947c82d6921d697602c8b54d4d6d7be0705dd1ca5d1d6"
+  },
+  "docs/refactor/handoff/IS.2c-waypoint-hint.patch": {
+   "blob": "9ffe5a6e377517a57c2a0f9f92fb2d95b27f1e84",
+   "mode": "100644",
+   "sha256": "b592a2e97a6fc90dd9d7c4f9f9d391a8291bf3c5cc9def02879ceacb4f51ff24"
+  },
+  "docs/refactor/handoff/IS.3-IS.4.md": {
+   "blob": "89d43d5c661a2a84fb82e3471b9995d92160a094",
+   "mode": "100644",
+   "sha256": "8da248a2552b89f530329409e42c0e7f5dc5a941075ee0927cfa17c22b580d01"
+  },
+  "docs/refactor/handoff/IS.3-added-tests.txt": {
+   "blob": "5df2bb6433fc91fed8300d1593eaf8024c48e7f8",
+   "mode": "100644",
+   "sha256": "e89d690a81c000996980c0fd73a13a6f686c060d94b69c0b37bc8f45ed6056b0"
+  },
+  "docs/refactor/handoff/IS.3-removed-tests.txt": {
+   "blob": "eb15517c0462f30ff5a40688c4820017c6f35eca",
+   "mode": "100644",
+   "sha256": "be61b6832eccd761347a999f2db4d666f43485bdf596efccf90cbd73a8a5d0f8"
+  },
+  "docs/refactor/handoff/IS.3-src-tests.patch": {
+   "blob": "1fd29cc9d8790f1d97209a847c9e5a6e3318d458",
+   "mode": "100644",
+   "sha256": "6a9535e85221afaae96398c61ad1f8e9e55f0e3aed0d3ee5abbc3d88fb05ceb1"
+  },
+  "docs/refactor/handoff/IS.3.md": {
+   "blob": "b0b1bbe52fbc6e7d04b335f2acbcfd7c900428af",
+   "mode": "100644",
+   "sha256": "a375649a55b4c2f1f2cd12f2366ff7ec46a5c031c9e7ba80b57fb470cd97ab51"
+  },
+  "docs/refactor/handoff/IS.4-added-tests.txt": {
+   "blob": "324f000c13e07541d520bdece5bc5df6fced5cdf",
+   "mode": "100644",
+   "sha256": "476e29a035f3a06cabddb5ad77d1561d9a89f6e138ed127052e158002e6425ab"
+  },
+  "docs/refactor/handoff/IS.4-removed-tests.txt": {
+   "blob": "57cf8a7ac72bd4659ef19705d4e3e8b77e2687f9",
+   "mode": "100644",
+   "sha256": "b97ad95e5bcb4b61b07e98bb4d913cf79197d413ef8b2038f024b447e3f0d042"
+  },
+  "docs/refactor/handoff/IS.4-src-tests.patch": {
+   "blob": "2ec00f54f080d6825f6f08f262b92d8c989115ae",
+   "mode": "100644",
+   "sha256": "b88c5243472431b13f6af383f036e660dd67deab96694eaedb747162b76f5e51"
+  },
+  "docs/refactor/handoff/J1.md": {
+   "blob": "33a04dd205c4f640ded7684f493ad29b17865da3",
+   "mode": "100644",
+   "sha256": "5c18b3030b8b549d1c5f96c12be750a813ef3efcc769dd37faaafb525555d7a2"
+  },
+  "docs/refactor/handoff/J2.1a.md": {
+   "blob": "47f6331cb74a909cddf9f163b22998ca9ef4522d",
+   "mode": "100644",
+   "sha256": "56aba33a59bad80fbd6413542aadc2576072a06c202c21700a48700342a17166"
+  },
+  "docs/refactor/handoff/J2.1b.md": {
+   "blob": "27ba00dc2f9c3306bed6fe75633eb5f9df405b51",
+   "mode": "100644",
+   "sha256": "3a14058257d0e329288972b9a07f9382d90f309b8ec973ca3376579e0f29e16e"
+  },
+  "docs/refactor/handoff/J2.1c-calculation_section.patch": {
+   "blob": "f259960b121b17047678a35928b2996e1c486777",
+   "mode": "100644",
+   "sha256": "2f4eec79cc248158cded9427191d430d94dda3cee635b96d0c715c1b7a9d832e"
+  },
+  "docs/refactor/handoff/J2.1c.md": {
+   "blob": "64d48f7600dad115777729b6a460649776c257b2",
+   "mode": "100644",
+   "sha256": "c14d5e0eff7b724a52de5d3a6b4de51f070f1c6e94714fc62d55564cbaad3c64"
+  },
+  "docs/refactor/handoff/J2.4-removed-tests.txt": {
+   "blob": "de6b5409c6b1ae7bbb575154d25882f24da3bb49",
+   "mode": "100644",
+   "sha256": "74fd46baeff65e394a7bcb58feb9b8fb2835f740c6f242e2cc04ccba136bdba1"
+  },
+  "docs/refactor/handoff/J2.4-src-tests.patch": {
+   "blob": "5eb6853ab5af524c8e759cd462bdae97ca17a4eb",
+   "mode": "100644",
+   "sha256": "b1e0f6c9bd3938699591896ae870f2ac29bb923652c93b03f3388f1c897f6f8a"
+  },
+  "docs/refactor/handoff/J2.4.md": {
+   "blob": "9b556bce5687712d7652e5ad73ea720945e4a7ad",
+   "mode": "100644",
+   "sha256": "4052234a76bf2171246746f4d2068b7acfb950b5a7b406e4e3a35c843baa9fb0"
+  },
+  "docs/refactor/handoff/J3.1-J3.2.md": {
+   "blob": "f3f078801cc1c5e8881d9e18d42d8a962303f35d",
+   "mode": "100644",
+   "sha256": "6c4f238fe2bb34812db933018dbf48feb0b0286386751b444caa3ef064f756f8"
+  },
+  "docs/refactor/handoff/J3.1-presenter.patch": {
+   "blob": "33c585c14b4287f4943b9b530c188cfcc5220acb",
+   "mode": "100644",
+   "sha256": "f7ffb14ef4e1c32f0f3ac8751415b52c1fb76b8345a7284a23237d41876a0849"
+  },
+  "docs/refactor/handoff/J3.2-removed-tests.txt": {
+   "blob": "6665f090a2e2932142c20027584a1b13ff5c2d4b",
+   "mode": "100644",
+   "sha256": "78f562488a25f69c523f875c0679753074fd6ece65688c67a1ea40f07ff47087"
+  },
+  "docs/refactor/handoff/J3.2-src-tests.patch": {
+   "blob": "ded2ce9812b94ef505f11a800ace1c261305b568",
+   "mode": "100644",
+   "sha256": "af44f3d99819e8b5989dd278797323a161aa9134ba72e671f28de052d91ce1ef"
+  },
+  "docs/refactor/handoff/J3.3-code.patch": {
+   "blob": "85d44068ae000c9f8f980c03b7007f4311a23052",
+   "mode": "100644",
+   "sha256": "59e1c6f9d8eeeac24e6f68fdda630c24f55056542ee8d45fe0850758d02adc34"
+  },
+  "docs/refactor/handoff/J3.3-removed-tests.txt": {
+   "blob": "ecb946dc0975e00e181cbe6d8c2b22599022a5c7",
+   "mode": "100644",
+   "sha256": "efd67e74e57443a8c6e867b0e80645491293185070b47d65b704db6ebfc4817e"
+  },
+  "docs/refactor/handoff/J4.1p-executor-prompt.txt": {
+   "blob": "2af434dc65f5e0fb812baa540815377207fff6b0",
+   "mode": "100644",
+   "sha256": "a677878e1d4afd5fdaa10895cd7964693581fff625797fc409043ca1a0223f51"
+  },
+  "docs/refactor/handoff/J4.1p.md": {
+   "blob": "8cbac427789de160e6bbd728e7c5efccba5872d2",
+   "mode": "100644",
+   "sha256": "888db064fd894d09b2b81f10bde00d9c6beb3cc2d7cf377b56fca0f88ff54151"
+  },
+  "docs/refactor/handoff/J4.1p.patch": {
+   "blob": "418f4d2ec0304a4d2e8c0c3645b35c348e0075bb",
+   "mode": "100644",
+   "sha256": "799e9cf813576bbe0354064635055a8112e7fab197b7f83ea80fd8390609460f"
+  },
+  "docs/refactor/handoff/L1-executor-prompt.txt": {
+   "blob": "9cf2c15f9440b11a8b09092afd4d3531661c6b68",
+   "mode": "100644",
+   "sha256": "93c3912643479a9612804e9f48064c5972b54781338fce7448c5823d70fabfe6"
+  },
+  "docs/refactor/handoff/L1.md": {
+   "blob": "d55b6b8c0b80b9f606c17e41785515be554301ce",
+   "mode": "100644",
+   "sha256": "bac7d3ae0feb982c13b15da88b1a3151efb8cbc874e4860051b38b82238294f7"
+  },
+  "docs/refactor/handoff/L1.patch": {
+   "blob": "756456be972fae1b117da4db40964aa1461acb3c",
+   "mode": "100644",
+   "sha256": "ad4b31a0b0b71d646346e7be0b66c9086daf154171e7dd1291a07231f78c07a8"
+  },
+  "docs/refactor/handoff/L2-executor-prompt.txt": {
+   "blob": "3767921342cafb9491576e9d8a09f401e707ec0d",
+   "mode": "100644",
+   "sha256": "6ee723ba4518c442ca846e8e936cda8042f0bb6c829dab46219f9fde17ecb815"
+  },
+  "docs/refactor/handoff/L2.md": {
+   "blob": "2616b7d762eb0cb65934e94830f4d2f5f0cf9cd3",
+   "mode": "100644",
+   "sha256": "24819413c337344ef5b1a42ca28abca40f593c4516cd97dcf6fc3ef71d19680e"
+  },
+  "docs/refactor/handoff/L2.patch": {
+   "blob": "0ee8556b046057be6cde53d471f1f0f870b9866d",
+   "mode": "100644",
+   "sha256": "5b0cbaa0f3b8c9e79c789f79cf3c9f2993a50bfce2af3d27bae2bc0a5bd73e86"
+  },
+  "docs/refactor/plan2/A1-report.md": {
+   "blob": "9d8807db6e14f344410e4e2149c97222879b03fc",
+   "mode": "100644",
+   "sha256": "ed1295c244bd3a5d825df80d4cdcf63281108ca9d768ace203b7f9e3b84a2e1b"
+  },
+  "docs/refactor/plan2/A2-report.md": {
+   "blob": "23600d8935a34c912a206bd76a8157e25ced7bba",
+   "mode": "100644",
+   "sha256": "b90e897b980a7093548096be0dad49eb44934a082cb8b6897195ae8f50625e14"
+  },
+  "docs/refactor/plan2/ACCEPTANCE_BATCH_POLICY.md": {
+   "blob": "5e9db0ebcabe1087288d6ad021b74e350ab7d674",
+   "mode": "100644",
+   "sha256": "47da6794aacdd76ae75a41fdbe9ffd2841560e412f7ccbf02a5a7a64419143da"
+  },
+  "docs/refactor/plan2/ACCEPTANCE_FAST.md": {
+   "blob": "070ac8111e832e11d24183560ebfc98be55d4fa9",
+   "mode": "100644",
+   "sha256": "46e83c97f9fad4b4d7e926a8e3f8dc66e7c87874880122a5ad49c907db5e6a6d"
+  },
+  "docs/refactor/plan2/C1-evaluation.md": {
+   "blob": "921bae2bfdf08e515ad6d14d825f371f3eb41588",
+   "mode": "100644",
+   "sha256": "ac2c71baae6aa67b41284e305d54df96d7dedd3772894917ab0517023fbda339"
+  },
+  "docs/refactor/plan2/HANDOFF.md": {
+   "blob": "cbb85e457052d11cd17a8111403d2c384dff2e21",
+   "mode": "100644",
+   "sha256": "dfee7b057af395ae2e7fbab441175ff872350cfef48d53312515c7a0d8a708cd"
+  },
+  "docs/refactor/plan2/STATUS.md": {
+   "blob": "13e7f9b82e55cafdf6d3fce770567ba9b8a182ab",
+   "mode": "100644",
+   "sha256": "b6baa1d8d559eeaf51a9b8c33c9b6511a7bbd0a430ae9ea01b8058a29b9d7325"
+  },
+  "docs/refactor/plan2/a1-inputs/lin.xyz": {
+   "blob": "0779a7bb83f6e565b235eff08de0790c0c698dea",
+   "mode": "100644",
+   "sha256": "b7f0c7444e9c7c9838b6737af337c633e7c269c8370ea1991e777c90634864f3"
+  },
+  "docs/refactor/plan2/a1-inputs/w1.yaml": {
+   "blob": "9e979facf5571dd6f34506b7a07f0294d12f91e7",
+   "mode": "100644",
+   "sha256": "0ca0cecd446ce717b6c33008b5d637ecb696513136dbf06f49c84c662ad45749"
+  },
+  "docs/refactor/plan2/a1-inputs/w2.yaml": {
+   "blob": "6167a9422ea43e6a834f8efcc533a65efc1dbc7e",
+   "mode": "100644",
+   "sha256": "56eec8fe2fd6a413e43a91d95f7dc02563e712f9ddc0134df7d9f5e6aa139330"
+  },
+  "docs/refactor/plan2/a1-inputs/w3.yaml": {
+   "blob": "d03582f71f8d4ce545e546ee6741db703e66a4fd",
+   "mode": "100644",
+   "sha256": "0b10412bdf684a0e16e076424dc8d429adf92b75d63d18a9e27bf4227b74fb45"
+  },
+  "docs/refactor/plan2/a1-inputs/w4.yaml": {
+   "blob": "378cd9229417f39c2bf0ce76dcd70f3111b6da38",
+   "mode": "100644",
+   "sha256": "36dffa94e085543392640eaf718c97f738d7f6f7ca9e36750eb4e25ed7a74b35"
+  },
+  "docs/refactor/plan3/PROPOSAL.md": {
+   "blob": "9ffa3e8ac684d739ade6137230a7fa63648d1f1a",
+   "mode": "100644",
+   "sha256": "ed37fb08cd4ff374a5f9ca8defb3927886c58d93fd90fcf3c62ad5e643d41812"
+  },
+  "docs/refactor/tools-acc/deleted_modules_check.py": {
+   "blob": "e482a0031a2a52b9bbed79b6ae85ca14fd80a7a9",
+   "mode": "100644",
+   "sha256": "b86a2fef751b4122ae9ec85b03c429c702329520190d134ee7bb61c3eeac4ef2"
+  },
+  "docs/refactor/tools-acc/move_identity_check.py": {
+   "blob": "1b19e6cf4996c2348a2b7cf5fa00a2c39e0113cc",
+   "mode": "100644",
+   "sha256": "0f2c127cba76acf7a02bd234ed4b782a8a72af49bf38a1920bb7540a679d22c0"
+  },
+  "docs/refactor/tools-acc/noeditable/sitecustomize.py": {
+   "blob": "a90f3f414c2427dc6ee35f207cd2dd54c4278a8a",
+   "mode": "100644",
+   "sha256": "55906a6514571f850a027b59886a066d51e9afb662da432f66fb7fbfb51bcc8a"
+  },
+  "docs/refactor/tools-acc/run_sharded.py": {
+   "blob": "3356ca2ef1c6826490882d0eea9d2d6faf99533b",
+   "mode": "100644",
+   "sha256": "a583cd2f9f5c588dc9e9f73b32dd0cc50713cc5e2551fa9ca93297529e183b24"
+  },
+  "docs/refactor/tools-acc/startup_smoke.py": {
+   "blob": "e88af6076803697dce238aab0014e98615e82dc4",
+   "mode": "100644",
+   "sha256": "13d91fd749e4d99aebab593b0e7c4af7a4b814c690658ab49eb6228a05d8f5c3"
+  },
+  "docs/refactor/tools-acc/weights.json": {
+   "blob": "2d2e06472bda4ab2f0ecfde09908600da4fd4658",
+   "mode": "100644",
+   "sha256": "7995630aa5967a3e65cc3595a46f6eacbb6f99bf6de4e194585e2dce3dacba33"
+  },
+  "docs/refactor/tools/run_jd_tests.sh": {
+   "blob": "9086cbc634c97158a780fe2c47d39bcb88a3e615",
+   "mode": "100755",
+   "sha256": "b2b2f56309a187ed7779abd1c98b388d678670c2c15a5aea3b859eb087ecb9f9"
+  }
+ },
+ "note": "docs/plan2-e1 的最终树中 docs/refactor/ 下全部文件（含 docs/refactor-plan 的内容，后者是其祖先）。工作树中不恢复这些文件（见 docs/ARCHITECTURE_DIET_1.md 的归档决定）；用 git show <archive_tip>:<path> 读取。mode 为 git 文件模式，blob 为 git 对象哈希，sha256 为内容哈希。"
+}
