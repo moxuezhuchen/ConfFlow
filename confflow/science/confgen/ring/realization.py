@@ -844,7 +844,7 @@ def realize_cp_target(
                     f"puckering_amplitude:{qor_now:.4f}<{_R3_PHASE_DEFINED_Q_MIN:.2f}"
                 )
                 first_failed = "puckering_amplitude"
-        target_cp = getattr(form, "cp_target", None)
+        target_cp: Any = getattr(form, "cp_target", None)
         if first_failed is not None:
             _skipped("cp_reached")
         elif is_planar_target:

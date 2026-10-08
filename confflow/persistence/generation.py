@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from ..domain._immutable import FrozenDict
 from ..domain.canonical import canonical_json_bytes
@@ -123,9 +123,9 @@ class RunGeneration:
         if not isinstance(completed, (list, tuple)):
             raise CorruptStateError("completed_step_ids must be a list")
         return cls(
-            run_id=payload.get("run_id"),
-            generation_id=payload.get("generation_id"),
-            status=payload.get("status"),
+            run_id=cast(str, payload.get("run_id")),  # validated by __post_init__
+            generation_id=cast(str, payload.get("generation_id")),  # validated by __post_init__
+            status=cast(str, payload.get("status")),  # validated by __post_init__
             definition_digest=payload.get("definition_digest"),
             started_wall=payload.get("started_wall"),
             updated_wall=payload.get("updated_wall"),

@@ -52,9 +52,9 @@ rotors with the last rotor fastest (matching ``itertools.product``,
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypeGuard, cast
 
 from confflow.domain.canonical import canonical_sha256
 
@@ -223,7 +223,7 @@ class PathResolution:
     raw_cartesian_size: int = 0
 
 
-def _is_int(value: Any) -> bool:
+def _is_int(value: Any) -> TypeGuard[int]:
     """Return True for real ints (bool is never an atom index)."""
     return type(value) is int
 
@@ -325,8 +325,8 @@ def parse_path_declarations(
                 raise PathDeclarationError(
                     f"{path}.{name} index {value!r} below declared index_base " f"{index_base}"
                 )
-        start = int(raw_start) - index_base
-        end = int(raw_end) - index_base
+        start = int(cast(int, raw_start)) - index_base
+        end = int(cast(int, raw_end)) - index_base
         if start == end:
             raise PathResolutionError(
                 PATH_INVALID_ENDPOINT,
@@ -373,14 +373,14 @@ def parse_path_declarations(
                 move=str(move),
                 angles=grid,
                 source=str(source),
-                raw_start=int(raw_start),
-                raw_end=int(raw_end),
+                raw_start=int(cast(int, raw_start)),
+                raw_end=int(cast(int, raw_end)),
             )
         )
     return tuple(parsed)
 
 
-def _bfs_path(adjacency: Sequence[Sequence[int]], start: int, end: int) -> list[int] | None:
+def _bfs_path(adjacency: Sequence[Iterable[int]], start: int, end: int) -> list[int] | None:
     """Return the deterministic shortest atom path, or None when detached."""
     n_atoms = len(adjacency)
     prev: list[int | None] = [None] * n_atoms

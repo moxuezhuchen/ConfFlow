@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from enum import Enum
 from typing import Any
 
+from ...domain._immutable import FrozenDict
 from ...domain.diagnostics import Diagnostic, DiagnosticSeverity
 
 __all__ = [
@@ -161,7 +162,7 @@ def _build(
         work_item_id=work_item_id,
         logical_key=logical_key,
         field_path=field_path,
-        details=merged,
+        details=FrozenDict(merged),
     )
 
 

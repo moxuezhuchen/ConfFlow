@@ -14,6 +14,7 @@ SciPy/NumPy are imported lazily so `confflow.science` stays cheap.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
 
 from .data import GV_COVALENT_RADII
 
@@ -74,7 +75,7 @@ def infer_bond_pairs(
     if len(numbers) <= 1:
         return []
 
-    radii = np.array([float(radius) for radius in radii_list], dtype=np.float64)
+    radii = np.array([float(cast(float, radius)) for radius in radii_list], dtype=np.float64)
 
     from scipy.spatial import cKDTree
 

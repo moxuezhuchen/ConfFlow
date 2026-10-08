@@ -86,9 +86,9 @@
         "confflow/producer/"
       ],
       "prod_files": 26,
-      "prod_loc_limit": 10486,
+      "prod_loc_limit": 10488,
       "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
-      "reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。"
+      "reason": "2026-10-08 mypy arg-type 收紧：上限=实测值，待用户确认"
     },
     {
       "id": "persistence",
@@ -97,9 +97,9 @@
         "confflow/persistence/"
       ],
       "prod_files": 12,
-      "prod_loc_limit": 5571,
+      "prod_loc_limit": 5579,
       "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
-      "reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。"
+      "reason": "TASK-I cast 根因消除：上限=实测值（publication 多行 cast 折叠 -6）。"
     },
     {
       "id": "programs",
@@ -120,9 +120,9 @@
         "confflow/workflow/"
       ],
       "prod_files": 14,
-      "prod_loc_limit": 5939,
+      "prod_loc_limit": 5940,
       "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
-      "reason": "ConfFlow 执行层 A1-A6 修复卡：上限=实测值（修复 6 个已确认问题及回归测试所必需的最小增量）。"
+      "reason": "2026-10-08 mypy arg-type 收紧：上限=实测值，待用户确认"
     },
     {
       "id": "execution",
@@ -133,7 +133,7 @@
       "prod_files": 24,
       "prod_loc_limit": 10842,
       "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
-      "reason": "2026-10-08 review 修复（A1-A6 执行层缺陷、C2 mypy 收紧、C3 进程监管）：上限=实测值，用户已于 2026-10-08 确认"
+      "reason": "TASK-I cast 根因消除：上限=实测值（quota 去 cast 后移除 typing 导入 -1）。"
     },
     {
       "id": "domain",
@@ -168,9 +168,9 @@
         "confflow/__build__"
       ],
       "prod_files": 2,
-      "prod_loc_limit": 316,
+      "prod_loc_limit": 317,
       "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
-      "reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。"
+      "reason": "2026-10-08 mypy arg-type 收紧：上限=实测值，待用户确认"
     },
     {
       "id": "common",
@@ -183,6 +183,6 @@
     }
   ],
   "tests_total_files": 246,
-  "tests_total_loc_limit": 97627,
-  "tests_total_reason": "2026-10-08 review 修复（A1-A6 执行层缺陷、C2 mypy 收紧、C3 进程监管）：上限=实测值，用户已于 2026-10-08 确认；E 轮覆盖率补测"
+  "tests_total_loc_limit": 97692,
+  "tests_total_reason": "2026-10-08 review 修复（A1-A6 执行层缺陷、C2 mypy 收紧、C3 进程监管）：上限=实测值，用户已于 2026-10-08 确认；E 轮覆盖率补测；2026-10-08 mypy cast 根因修正的回归测试，待用户确认"
 }

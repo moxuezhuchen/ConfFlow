@@ -21,7 +21,7 @@ import copy
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from jsonschema import Draft202012Validator
 
@@ -1129,7 +1129,7 @@ def dispatch_request(data: bytes | bytearray | str) -> dict[str, Any]:
         )
     parameters = request.get("parameters")
     params = dict(parameters) if isinstance(parameters, Mapping) else {}
-    document = request.get("document")
+    document: Any = request.get("document")
     if operation == "describe_step":
         return describe_step(document, params.get("step_id"))
     if operation == "binding_candidates":
@@ -1142,7 +1142,7 @@ def dispatch_request(data: bytes | bytearray | str) -> dict[str, Any]:
         )
     if operation == "instantiate_card":
         return instantiate_card(
-            params.get("snapshot"),
+            cast(Any, params.get("snapshot")),
             params.get("requested_step_id"),
             document,
             params.get("binding_choices"),

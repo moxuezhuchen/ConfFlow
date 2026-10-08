@@ -591,7 +591,7 @@ def build_binding_graph(validated: ValidatedDefinition) -> GraphResult:
                 diagnostics.extend(resolution_diagnostics)
                 if any(item.is_error for item in resolution_diagnostics):
                     continue
-                assert source_port is not None
+            assert source_port is not None
             effective.append(
                 ResolvedEdge(
                     target_step_id=edge.target_step_id,

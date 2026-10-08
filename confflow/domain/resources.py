@@ -67,12 +67,12 @@ class OnFailure(str, Enum):
     FAIL_FAST = "fail_fast"
 
 
-def parse_memory_bytes(value: str | int | float) -> int:
+def parse_memory_bytes(value: str | int | float | None) -> int:
     """Parse a memory amount into bytes.
 
     Parameters
     ----------
-    value : str | int | float
+    value : str | int | float | None
         Integer/float byte counts, or a string such as ``"16GB"`` or
         ``"512MiB"``.  Suffixes are binary (``1GB`` = 1024^3 bytes).
 

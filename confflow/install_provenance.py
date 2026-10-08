@@ -22,6 +22,7 @@ import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 INSTALL_PROVENANCE_RELATIVE_PATH = "share/confflow/install-provenance.json"
 INSTALL_PROVENANCE_SCHEMA = "confflow.install-provenance.v2"
@@ -74,7 +75,7 @@ class InstallProvenanceRecord:
         return payload
 
     @classmethod
-    def from_dict(cls, raw: dict[str, object]) -> InstallProvenanceRecord:
+    def from_dict(cls, raw: dict[str, Any]) -> InstallProvenanceRecord:
         schema = str(raw.get("schema"))
         if schema != INSTALL_PROVENANCE_SCHEMA:
             raise ValueError(

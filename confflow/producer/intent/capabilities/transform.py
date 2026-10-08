@@ -21,7 +21,9 @@ from ...presets import get_preset, parse_preset_ref
 from ..common import _fail
 
 
-def _wire_transform(step: Mapping[str, Any], card: dict[str, Any], step_id: str) -> dict[str, Any]:
+def _wire_transform(
+    step: Mapping[str, Any], card: Mapping[str, Any], step_id: str
+) -> dict[str, Any]:
     kind = card.get("transform_kind")
     if not kind:
         raise _fail(f"step {step_id!r}: transform card lacks a kind", step_id=step_id)

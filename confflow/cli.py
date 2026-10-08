@@ -13,7 +13,7 @@ import shutil
 import signal
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 try:
     import psutil
@@ -24,6 +24,7 @@ except ImportError:
 from .__build__ import COMMIT, DIRTY
 from .application.execution.errors import ExecutionServiceError
 from .application.execution.workflow_adapter import (
+    WorkflowRunner,
     acquire_work_directory_lease,
     run_workflow_through_service,
 )
@@ -625,7 +626,7 @@ def main(
                     pause_beacon_file=os.path.join(work_dir, "PAUSE"),
                     cancel_beacon_file=os.path.join(work_dir, "CANCEL"),
                     work_directory_lease=work_lease,
-                    workflow_runner=run_workflow,
+                    workflow_runner=cast(WorkflowRunner, run_workflow),
                 )
                 # Terminal V4 status owns the process exit code: a published
                 # run_result.json with status failed/partial/cancelled is a

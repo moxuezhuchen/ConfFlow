@@ -122,6 +122,15 @@ class TestQuotaConfig:
         with pytest.raises(QuotaError, match="total_memory"):
             load_server_quota(bad)
 
+    def test_missing_total_memory_message_matches_main(self, tmp_path: Path) -> None:
+        missing = tmp_path / "missing-mem.toml"
+        missing.write_text("total_cores = 4\n", encoding="utf-8")
+        with pytest.raises(QuotaError) as excinfo:
+            load_server_quota(missing)
+        assert str(excinfo.value) == (
+            f"invalid server config {missing}: 'total_memory': " "unsupported memory amount: None"
+        )
+
 
 class TestQuotaWaiting:
 

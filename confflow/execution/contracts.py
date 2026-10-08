@@ -13,7 +13,7 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from ..domain._immutable import FrozenDict
 from ..domain.binding import Cardinality, Pairing, PortKind
@@ -545,14 +545,14 @@ class ExecutionEnvironment:
         claimed = data.pop("digest", None)
         try:
             rebuilt = cls(
-                program=data.get("program"),
+                program=cast(str, data.get("program")),  # validated by __post_init__
                 program_version=data.get("program_version"),
                 executable_digest=data.get("executable_digest"),
-                relevant_env=data.get("relevant_env") or {},
+                relevant_env=FrozenDict(data.get("relevant_env") or {}),
                 target=data.get("target"),
                 measurement_status=data.get("measurement_status", "verified"),
                 unknown_nonce=data.get("unknown_nonce"),
-                metadata=data.get("metadata") or {},
+                metadata=FrozenDict(data.get("metadata") or {}),
             )
         except (TypeError, DomainError) as exc:
             raise DomainError(f"execution environment payload is invalid: {exc}") from exc
