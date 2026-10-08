@@ -448,9 +448,7 @@ class OrcaProgramAdapter(ProgramAdapter):
             atoms, coords = geometry
             final_geometry = ParsedGeometry(
                 atoms=tuple(atoms),
-                coordinates=tuple(
-                    cast("tuple[float, float, float]", tuple(point)) for point in coords
-                ),
+                coordinates=tuple(cast(Any, tuple(point)) for point in coords),
             )
             geometry_output = GeometryOutput.PRODUCED
         else:

@@ -1114,6 +1114,7 @@ class WorkItemExecutor:
                     break
                 time.sleep(poll_interval)
             if timed_out:
+                _release_quota()
                 return (
                     NativeExecutionResult(
                         exit_code=None,

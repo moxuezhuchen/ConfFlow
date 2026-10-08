@@ -605,6 +605,74 @@ class _NeverTerminalUnconfirmed:
         raise AssertionError("never terminal")
 
 
+class _TimeoutConfirmedSupervisor:
+    """Supervisor that never finishes but confirms the timeout stop."""
+
+    def submit(self, request: NativeExecutionRequest) -> NativeHandle:
+        return NativeHandle(key="timeout-confirmed:1", pid=None)
+
+    def poll(self, handle: NativeHandle) -> NativeStatus:
+        return NativeStatus(is_terminal=False, exit_code=None)
+
+    def cancel(self, handle: NativeHandle, *, grace_seconds: float = 2.0):  # type: ignore[no-untyped-def]
+        from confflow.execution.native import CancelOutcome
+
+        return CancelOutcome(confirmed=True, detail="boundary stopped")
+
+    def collect(self, handle: NativeHandle) -> NativeExecutionResult:
+        raise AssertionError("never terminal")
+
+
+class TestWalltimeQuotaRegression:
+    """D2: confirmed walltime stop releases the lease; unconfirmed keeps it."""
+
+    def _timeout_request(self, tmp_path: Path) -> NativeExecutionRequest:
+        return NativeExecutionRequest(
+            executable="/bin/true",
+            argv=("/bin/true",),
+            work_dir=str(tmp_path),
+            env=FrozenDict({"PATH": os.environ.get("PATH", "")}),
+            walltime_seconds=0.05,
+        )
+
+    def test_confirmed_timeout_releases_lease(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _active_config(monkeypatch, tmp_path, cores=1)
+        state_file = tmp_path / "quota-state" / "server-quota.json"
+        resources = ResourceRequest(cores_per_item=1, memory_per_item_bytes=_GIB)
+        launched = WorkItemExecutor()._launch_and_wait(
+            _TimeoutConfirmedSupervisor(),
+            self._timeout_request(tmp_path),
+            0.01,
+            should_cancel=None,
+            quota=(resources, "run", "item-timeout"),
+        )
+        assert launched is not None
+        execution_result, cancel_outcome = launched
+        assert execution_result.timed_out and cancel_outcome is None
+        assert json.loads(state_file.read_text(encoding="utf-8"))["leases"] == {}
+
+    def test_unconfirmed_timeout_holds_lease(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _active_config(monkeypatch, tmp_path, cores=1)
+        state_file = tmp_path / "quota-state" / "server-quota.json"
+        resources = ResourceRequest(cores_per_item=1, memory_per_item_bytes=_GIB)
+        launched = WorkItemExecutor()._launch_and_wait(
+            _NeverTerminalUnconfirmed(),
+            self._timeout_request(tmp_path),
+            0.01,
+            should_cancel=None,
+            quota=(resources, "run", "item-timeout"),
+        )
+        assert launched is not None
+        execution_result, cancel_outcome = launched
+        assert execution_result.timed_out
+        assert cancel_outcome is not None and not cancel_outcome.confirmed
+        assert json.loads(state_file.read_text(encoding="utf-8"))["leases"] != {}
+
+
 class _SubmitFailingSupervisor:
     """Supervisor whose submit always fails (handle is lost)."""
 

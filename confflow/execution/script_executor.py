@@ -35,6 +35,7 @@ from ..domain.work_item import RecoveryInfo, Timing, WorkItem, WorkItemResult
 from .native import NativeExecutionRequest
 from .quota import QuotaCancelled, QuotaError
 from .script_registry import (
+    ScriptEntry,
     expand_script_args,
     format_mem_gb,
     load_script_registry,
@@ -103,15 +104,10 @@ def _diagnostic(
     )
 
 
-def _resolved_script_command(entry: Any) -> tuple[str, ...]:
+def _resolved_script_command(entry: ScriptEntry) -> tuple[str, ...]:
     """Return *entry.command* with the script element as an absolute path."""
     parts = list(entry.command)
-    index = getattr(entry, "script_arg_index", 1)
-    if not isinstance(index, int) or isinstance(index, bool):
-        index = 1
-    if index < 0 or index >= len(parts):
-        index = 0 if len(parts) == 1 else 1
-    parts[index] = str(entry.script_path)
+    parts[entry.script_arg_index] = str(entry.script_path)
     return tuple(parts)
 
 

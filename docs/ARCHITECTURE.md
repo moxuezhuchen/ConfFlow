@@ -8,7 +8,7 @@
 ## 1. 它是什么
 
 ConfFlow 是计算化学工作流的**生产者（producer）**：给定一份 V4 工作流文档（`schema: confflow.workflow.v4`）和若干 XYZ 输入，
-它编译出确定性的执行计划，按 work item 运行构象生成、Gaussian / ORCA 量化计算、结构变换（精修/去重/过滤）和反应分析，
+它编译出确定性的执行计划，按 work item 运行构象生成、Gaussian / ORCA 量化计算、结构变换（精修/去重/过滤）和外部脚本，
 并发布带类型的结果（`StepResult`、整次运行的 `run_result.json` manifest）。
 
 同时它向 GUI 客户端（JobDesk-v2）**发布契约**：配置契约、边界协议、authoring 接口和输入简化（intent）编译器都由 producer 生成，
@@ -22,7 +22,7 @@ ConfFlow 是计算化学工作流的**生产者（producer）**：给定一份 V
 confflow/
   domain/        不可变语义核心：结构、绑定、work item、step result、完成策略、digest 规范化（无仓库内依赖）
   workflow/v4/   V4 编译器：严格解析 → 语义校验 → 带类型的绑定图 → 不可变 ExecutionPlan → 合成 WorkItem
-  execution/     能力注册表与各类执行器：calculation / confgen / transform / analysis、
+  execution/     能力注册表与各类执行器：calculation / confgen / structure_transform / script、
                  检查（checks）、恢复（recovery）、结果 profile、原生进程边界、批执行
   science/       纯科学计算：ConfGen v3 引擎（扭转/环/配位）、工作拓扑权威、图同构映射、帧比较、键感知
   programs/      量化程序适配器（Gaussian、ORCA）：输入渲染与输出解析
@@ -60,16 +60,16 @@ confflow/
                             ▼
                       assemble_work_items（run 输入 + 已发布输出 → WorkItem）
                             ▼
-   application.v4_run  ──► executors（calculation / confgen / transform / analysis）
+   application.v4_run  ──► executors（calculation / confgen / structure_transform / script）
                             ▼  每个 work item 的结果先落盘（persistence）
                       StepResult 发布（崩溃一致性协议）
                             ▼
                       run_result.json（producer.run_result 投影，客户端只读）
 ```
 
-- **同一份科学语义在本地和远程相同**：同一个 `WorkItem` 可以直接执行，也可以经 `worker-handoff.v2` 边界交给远程 worker。
+- **同一份科学语义在本地和远程相同**：同一个 `WorkItem` 可以直接执行，也可以经 `confflow.control.worker-handoff.v1` 边界交给远程 worker。
 - **resume 靠持久化而不是重跑**：已发布的 step 从磁盘加载；未完成的 step 按 work item 续跑，已完成的 work item 复用。
-- **没有隐式收尾**：清理、去重、精修都是显式的 `transform` / `analysis` 步骤；不存在 calculation 的隐藏尾巴。
+- **没有隐式收尾**：清理、去重、精修都是显式的 `structure_transform` 步骤，外部脚本是显式的 `script` 步骤；不存在 calculation 的隐藏尾巴。
 
 ## 4. 入口与对外接口
 

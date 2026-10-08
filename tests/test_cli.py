@@ -917,25 +917,8 @@ def test_stop_help_states_same_user_scope():
     assert "same uid" in text
 
 
-def _reset_confflow_console_stream() -> None:
-    """Point the singleton console handler at the live ``sys.stdout`` without flushing.
-
-    The ``ConfFlowLogger`` singleton otherwise keeps the previous test's (now
-    closed) ``capsys`` buffer, and the next ``cli_output_to_txt`` entry flushes
-    it via ``StreamHandler.setStream``, raising ``ValueError: I/O operation on
-    closed file`` before the CLI body runs. Direct assignment skips the flush;
-    it is test-only lifecycle hygiene, not production behaviour.
-    """
-    from confflow.core.logging import get_logger
-
-    handler = get_logger().handlers.get("console")
-    if handler is not None:
-        handler.stream = sys.stdout
-
-
 def _run_main_with_facade_error(tmp_path, error, extra_args=None):
     """Run the normal CLI path with the service facade raising *error*."""
-    _reset_confflow_console_stream()
     input_xyz = tmp_path / "input.xyz"
     input_xyz.write_text("2\ntest\nC 0 0 0\nH 0 0 1\n", encoding="utf-8")
     config_yaml = _v4_config(tmp_path / "config.yaml")
@@ -988,3 +971,23 @@ def test_unexpected_error_keeps_traceback(tmp_path, capsys):
     assert result == 2
     captured = capsys.readouterr()
     assert "Traceback" in captured.out + captured.err
+
+
+def test_console_redirect_tolerates_closed_old_stream():
+    """D4: switching away from a closed old stream must not raise."""
+    import io
+
+    from confflow.core.logging import get_logger, redirect_logging_streams
+
+    logger = get_logger()
+    handler = logger.handlers.get("console")
+    if handler is None:
+        pytest.skip("no console handler")
+    closed = io.StringIO()
+    closed.close()
+    handler.stream = closed
+    logger.redirect_console_handler(sys.stdout)
+    assert handler.stream is sys.stdout
+    handler.stream = closed
+    redirect_logging_streams(sys.stdout, include_root=False)
+    assert handler.stream is sys.stdout
