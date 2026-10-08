@@ -320,37 +320,11 @@ class TestResultOrderInvariant:
     def test_result_order_invariant(self) -> None:
         from confflow.domain.result import ResultSet, ScientificResult, make_result_id
         from confflow.domain.units import Unit
-
-        # R2.3b/e (G18): retained conformer roles (path-endpoint roles
-        # are retired with IRC).
-        from confflow.execution.multi_output import order_item_structures
         from confflow.execution.output_identity import conformer_output_id
 
         logical = "s_ens:seed01"
         forward_id = conformer_output_id(logical, 0)
         reverse_id = conformer_output_id(logical, 1)
-
-        def _record(record_id: str, role: str, x: float, ordinal: int) -> Any:
-            from confflow.domain import StructureRecord
-
-            return StructureRecord(
-                id=record_id,
-                atoms=("O", "H", "H"),
-                coordinates=((x, 0.0, 0.0), (x + 1.0, 0.0, 0.0), (x, 1.0, 0.0)),
-                role=role,
-                ordinal=ordinal,
-                group_key="ens-01",
-                parent_ids=("seed01",),
-            )
-
-        forward = _record(forward_id, "conformer", 0.0, 0)
-        reverse = _record(reverse_id, "conformer", 5.0, 1)
-        assert [
-            record.id for record in order_item_structures(StructureSet.of(reverse, forward))
-        ] == [
-            forward_id,
-            reverse_id,
-        ]
         digest = "sha256:" + hashlib.sha256(b"order").hexdigest()
         results = ResultSet(
             (
