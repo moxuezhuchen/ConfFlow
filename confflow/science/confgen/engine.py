@@ -588,17 +588,11 @@ def _collect_component_diagnostics(
         except (AttributeError, TypeError, KeyError):
             stage = None
         if stage is not None:
-            try:
-                cand = getattr(stage, "report_diagnostics", None)
-            except AttributeError:
-                cand = None
+            cand = getattr(stage, "report_diagnostics", None)
             if callable(cand):
                 hook = cand
         if hook is None:
-            try:
-                cand = getattr(descriptor, "report_diagnostics", None)
-            except AttributeError:
-                cand = None
+            cand = getattr(descriptor, "report_diagnostics", None)
             if callable(cand):
                 hook = cand
         if hook is None:
@@ -2819,25 +2813,16 @@ class _RunState:
             name in klass.__dict__ for klass in type(stage).__mro__ if klass not in (_Base, object)
         )
         if overridden:
-            try:
-                hook = getattr(stage, name, None)
-            except AttributeError:
-                hook = None
+            hook = getattr(stage, name, None)
             if callable(hook):
                 return hook
         descriptor = self._descriptor_for(axis)
         if descriptor is not None:
-            try:
-                hook = getattr(descriptor, name, None)
-            except AttributeError:
-                hook = None
+            hook = getattr(descriptor, name, None)
             if callable(hook):
                 return hook
         if not overridden:
-            try:
-                hook = getattr(stage, name, None)
-            except AttributeError:
-                hook = None
+            hook = getattr(stage, name, None)
             if callable(hook):
                 return hook
         return None
@@ -2953,10 +2938,7 @@ class _RunState:
         # reached via the stage hook or the descriptor fallback; it is
         # never replaced by the generic comparison below (which would
         # wrongly publish this UNRESOLVED leaf).
-        try:
-            stage_hook = getattr(stage, "fallback_lock", None)
-        except AttributeError:
-            stage_hook = None
+        stage_hook = getattr(stage, "fallback_lock", None)
         if callable(stage_hook):
             try:
                 owned = stage_hook(dict(locked_state), structure, context)
@@ -2972,10 +2954,7 @@ class _RunState:
         descriptor = self._descriptor_for(axis)
         descriptor_hook = None
         if descriptor is not None:
-            try:
-                descriptor_hook = getattr(descriptor, "fallback_lock", None)
-            except AttributeError:
-                descriptor_hook = None
+            descriptor_hook = getattr(descriptor, "fallback_lock", None)
         if callable(descriptor_hook):
             try:
                 resolved = descriptor_hook(stage, dict(locked_state), structure, context)
@@ -3692,10 +3671,7 @@ class _RunState:
             if axis in bound:
                 hook = self._hook_impl(axis, bound[axis], "preserved_entries")
             else:
-                try:
-                    hook = getattr(descriptor, "preserved_entries", None)
-                except AttributeError:
-                    hook = None
+                hook = getattr(descriptor, "preserved_entries", None)
                 if not callable(hook):
                     continue
             if hook is None:
@@ -3728,10 +3704,7 @@ class _RunState:
                 hook = self._hook_impl(axis, bound[axis], "report_section")
             else:
                 descriptor = self._descriptor_for(axis)
-                try:
-                    hook = getattr(descriptor, "report_section", None)
-                except AttributeError:
-                    hook = None
+                hook = getattr(descriptor, "report_section", None)
                 if not callable(hook):
                     continue
             if hook is None:
