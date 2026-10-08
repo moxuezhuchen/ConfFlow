@@ -131,9 +131,9 @@
         "confflow/execution/"
       ],
       "prod_files": 24,
-      "prod_loc_limit": 10679,
+      "prod_loc_limit": 10524,
       "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
-      "reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。"
+      "reason": "ensemble 遗留收敛卡：删除 NEB/路径端点死代码后棘轮，上限=实际值。"
     },
     {
       "id": "domain",
@@ -183,6 +183,6 @@
     }
   ],
   "tests_total_files": 246,
-  "tests_total_loc_limit": 96197,
-  "tests_total_reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。 + 跨仓适配 author_v4_document(JD 瘦身后接口变化，必要修复) 96182->96197。"
+  "tests_total_loc_limit": 96103,
+  "tests_total_reason": "ensemble 遗留收敛卡：删除死代码守护测试后棘轮，上限=实际值。"
 }

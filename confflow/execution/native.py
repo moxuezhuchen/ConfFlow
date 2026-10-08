@@ -38,7 +38,6 @@ __all__ = [
     "NativeExecutionRequest",
     "NativeExecutionResult",
     "NativeHandle",
-    "NativePathEndpoint",
     "NativeResult",
     "NativeStatus",
     "ParsedGeometry",
@@ -110,43 +109,8 @@ class ProducedFile:
 
 
 @dataclass(frozen=True, slots=True)
-class NativePathEndpoint:
-    """One parsed reaction-path endpoint (IRC/NEB direction)."""
-
-    direction: str
-    geometry: ParsedGeometry
-    point_ordinal: int | None = None
-    energy_hartree: float | None = None
-    converged: bool = True
-    metadata: FrozenDict = field(default_factory=FrozenDict)
-
-    def __post_init__(self) -> None:
-        if self.direction not in ("forward", "reverse"):
-            raise ValueError(
-                f"path direction must be 'forward' or 'reverse', got {self.direction!r}"
-            )
-        if not isinstance(self.geometry, ParsedGeometry):
-            raise TypeError("geometry must be a ParsedGeometry")
-        if self.point_ordinal is not None and (
-            isinstance(self.point_ordinal, bool)
-            or not isinstance(self.point_ordinal, int)
-            or self.point_ordinal < 0
-        ):
-            raise ValueError("point_ordinal must be an integer >= 0 or None")
-        if self.energy_hartree is not None and (
-            isinstance(self.energy_hartree, bool)
-            or not isinstance(self.energy_hartree, (int, float))
-        ):
-            raise TypeError("energy_hartree must be a number or None")
-        if not isinstance(self.converged, bool):
-            raise TypeError("converged must be a boolean")
-        if not isinstance(self.metadata, FrozenDict):
-            object.__setattr__(self, "metadata", FrozenDict(self.metadata))
-
-
-@dataclass(frozen=True, slots=True)
 class NativeEnsembleMember:
-    """One parsed ensemble/conformer member (GOAT/NEB images)."""
+    """One parsed ensemble/conformer member."""
 
     member_index: int
     geometry: ParsedGeometry
@@ -196,7 +160,6 @@ class NativeResult:
     produced_files: tuple[ProducedFile, ...] = ()
     parser_diagnostics: tuple[Diagnostic, ...] = ()
     log_file_name: str = ""
-    path_endpoints: tuple[NativePathEndpoint, ...] = ()
     ensemble_members: tuple[NativeEnsembleMember, ...] = ()
 
     def __post_init__(self) -> None:
@@ -217,7 +180,6 @@ class NativeResult:
         object.__setattr__(self, "frequencies_cm", tuple(self.frequencies_cm))
         object.__setattr__(self, "produced_files", tuple(self.produced_files))
         object.__setattr__(self, "parser_diagnostics", tuple(self.parser_diagnostics))
-        object.__setattr__(self, "path_endpoints", tuple(self.path_endpoints))
         object.__setattr__(self, "ensemble_members", tuple(self.ensemble_members))
 
     @property

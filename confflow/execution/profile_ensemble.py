@@ -25,12 +25,8 @@ from ..domain.structure import StructureRecord, StructureSet
 from ..domain.units import Unit
 from .native import NativeEnsembleMember
 from .output_identity import (
-    NEB_IMAGE_ROLE,
-    NEB_TS_CANDIDATE_ROLE,
     conformer_output_id,
     endpoint_lineage,
-    neb_image_output_id,
-    neb_ts_candidate_output_id,
     output_ordering_key,
 )
 from .profiles import GeometrySemantics, ProfileContext, ProfileOutput
@@ -104,11 +100,7 @@ def _passthrough_artifacts(context: ProfileContext) -> ArtifactSet:
 
 
 def _member_output_id(logical_key: str, member: NativeEnsembleMember) -> str:
-    """Return the deterministic entity id for one ensemble/path member."""
-    if member.role == NEB_IMAGE_ROLE:
-        return neb_image_output_id(logical_key, member.member_index)
-    if member.role == NEB_TS_CANDIDATE_ROLE:
-        return neb_ts_candidate_output_id(logical_key)
+    """Return the deterministic entity id for one ensemble member."""
     return conformer_output_id(logical_key, member.member_index)
 
 
@@ -166,9 +158,7 @@ class EnsembleProfile:
         if len(set(keys)) != len(keys):
             # Colliding (role, index) pairs would share one deterministic
             # id, so fail closed with no structures rather than deduping or
-            # renumbering silently.  Identity is role-scoped: an NEB image
-            # and the TS candidate may share a native image number because
-            # their roles (hence entity ids) differ.
+            # renumbering silently.
             diagnostics.append(
                 Diagnostic(
                     code=DUPLICATE_ENSEMBLE_MEMBER_CODE,

@@ -2,7 +2,7 @@
 
 """V4-5 ensemble profile and multi-output helper tests.
 
-Covers :class:`EnsembleProfile` plus the pure helpers in
+Covers :class:`EnsembleProfile` plus the restart-subject helper in
 :mod:`confflow.execution.multi_output` with in-memory fixtures only:
 
 - ensemble name and the exact registry contract string;
@@ -11,8 +11,8 @@ Covers :class:`EnsembleProfile` plus the pure helpers in
 - pinned non-dedup of identical geometries under distinct ids;
 - per-member energy subjects, lineage, and artifact passthrough;
 - multi-parent lineage propagation and disagreement rules;
-- structure ordering, uniqueness validation, and the restart-subject
-  classifier including the never-copy-to-all-outputs rule.
+- the restart-subject classifier including the
+  never-copy-to-all-outputs rule.
 """
 
 from __future__ import annotations
@@ -30,12 +30,9 @@ from confflow.domain import (
     Unit,
 )
 from confflow.domain.diagnostics import DiagnosticSeverity
-from confflow.domain.errors import DomainError
-from confflow.domain.structure import StructureRecord, StructureSet
+from confflow.domain.structure import StructureRecord
 from confflow.execution.multi_output import (
-    order_item_structures,
     resolve_multi_output_restart_subjects,
-    validate_multi_output_uniqueness,
 )
 from confflow.execution.native import (
     GeometryOutput,
@@ -396,71 +393,6 @@ class TestMultiParentLineage:
     def test_empty_parents_raise(self) -> None:
         with pytest.raises(ValueError):
             multi_parent_lineage(())
-
-
-class TestOrderItemStructures:
-    """Presentation ordering by role then ordinal, stable."""
-
-    def test_forward_sorts_before_reverse(self) -> None:
-        from confflow.execution.output_identity import (
-            PATH_ENDPOINT_FORWARD_ROLE,
-            PATH_ENDPOINT_REVERSE_ROLE,
-        )
-
-        seed = seed_structure()
-        reverse = StructureRecord(
-            id="item:reverse",
-            atoms=seed.atoms,
-            coordinates=seed.coordinates,
-            role=PATH_ENDPOINT_REVERSE_ROLE,
-            ordinal=0,
-        )
-        forward = StructureRecord(
-            id="item:forward",
-            atoms=seed.atoms,
-            coordinates=seed.coordinates,
-            role=PATH_ENDPOINT_FORWARD_ROLE,
-            ordinal=0,
-        )
-        ordered = order_item_structures(StructureSet((reverse, forward)))
-        assert ordered.ids == ("item:forward", "item:reverse")
-
-    def test_conformers_sort_by_member_index(self) -> None:
-        seed = seed_structure()
-        members = tuple(
-            StructureRecord(
-                id=f"item:c{index}",
-                atoms=seed.atoms,
-                coordinates=member_coords(0.01 * index),
-                role=CONFORMER_ROLE,
-                ordinal=index,
-            )
-            for index in (2, 0, 1)
-        )
-        ordered = order_item_structures(StructureSet(members))
-        assert ordered.ids == ("item:c0", "item:c1", "item:c2")
-
-
-class TestValidateMultiOutputUniqueness:
-    """Duplicate ids fail closed with DomainError."""
-
-    def test_unique_set_passes(self) -> None:
-        output = apply_profile(native_result(three_members()))
-        assert validate_multi_output_uniqueness(output.structures) is None
-
-    def test_duplicate_ids_raise(self) -> None:
-        seed = seed_structure()
-        first = StructureRecord(
-            id="dup", atoms=seed.atoms, coordinates=seed.coordinates, role=CONFORMER_ROLE
-        )
-        second = StructureRecord(
-            id="dup",
-            atoms=seed.atoms,
-            coordinates=member_coords(0.09),
-            role=CONFORMER_ROLE,
-        )
-        with pytest.raises(DomainError, match="duplicate multi-output structure id"):
-            validate_multi_output_uniqueness((first, second))
 
 
 class TestResolveMultiOutputRestartSubjects:
