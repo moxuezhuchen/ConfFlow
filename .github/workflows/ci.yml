@@ -144,14 +144,18 @@ jobs:
           base="origin/${{ github.base_ref }}"
           {
             python tools/affected_tests.py --base "$base"
-            git diff --name-only --diff-filter=AM "$base...HEAD" -- 'tests/*.py'
+            git diff --name-only --diff-filter=AMR "$base...HEAD" -- 'tests/*.py'
           } | sort -u | grep -v '^$' > affected.txt || true
           wc -l affected.txt
 
       - name: Run affected tests with coverage
         run: |
           if [ -s affected.txt ]; then
-            pytest -q -n auto --cov=confflow --cov-branch --cov-fail-under=0 --cov-report=xml $(cat affected.txt)
+            # Exit code 5 means the selected files hold no collectable tests
+            # (e.g. a PR that only touches a test helper); that is not a failure.
+            rc=0
+            pytest -q -n auto --cov=confflow --cov-branch --cov-fail-under=0 --cov-report=xml $(cat affected.txt) || rc=$?
+            if [ "$rc" -ne 0 ] && [ "$rc" -ne 5 ]; then exit "$rc"; fi
           else
             echo "no affected tests"
           fi

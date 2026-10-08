@@ -49,7 +49,7 @@ DEFAULT_JOBDESK_SRC = Path("/opt/jobdesk-v2-v4/src")
 #: Pinned JobDesk revision the cross-repo evidence was produced against.
 #: Tracks JobDesk-v2 ``refactor/diet-p4`` at J4.1' (no longer edits the retired
 #: ``confgen.native`` field; validation answers bind to content, contract and target).
-EXPECTED_JOBDESK_SHA = "cd16fa626491ed21223ee7202231a94757943290"
+EXPECTED_JOBDESK_SHA = "e6fe749ba55794bbaee9676f3cfb4f1c83062892"
 
 #: Explicit escape hatch for development against a different checkout.
 ALLOW_ANY_SHA_ENV = "JOBDESK_V2_ALLOW_ANY_SHA"
@@ -197,10 +197,25 @@ def load_jobdesk() -> JobDeskIntegration:
     if src_text not in sys.path:
         sys.path.insert(0, src_text)
     _purge_conflicting_jobdesk_modules(src)
-    from jobdesk_v2.application.cards.v4_provider import author_v4_document
     from jobdesk_v2.application.editor.contract.errors import ContractParseError
     from jobdesk_v2.application.editor.contract.v4 import parse_v4_contract_bytes
+    from jobdesk_v2.application.editor.recipes import document_from_recipe_document
     from jobdesk_v2.application.runs.v4_results import parse_result_bytes
+
+    def author_v4_document(contract: Any, recipe_id: str) -> Any:
+        """Build one recipe's native V4 document the way JobDesk's editor does."""
+        for item in contract.recipe_catalog.get("recipes") or ():
+            if isinstance(item, dict) and item.get("id") == recipe_id:
+                document = item.get("document")
+                if (
+                    not isinstance(document, dict)
+                    or document.get("schema") != "confflow.workflow.v4"
+                ):
+                    raise ValueError(
+                        f"recipe {recipe_id!r} does not carry a confflow.workflow.v4 document"
+                    )
+                return document_from_recipe_document(document)
+        raise LookupError(f"recipe {recipe_id!r} is not in the producer catalog")
 
     _CACHED = JobDeskIntegration(
         src=src,

@@ -10,8 +10,6 @@
   },
   "grandfather_note": "AP-108（G16）只拦截新增的按阶段/轮次命名测试文件。仓库已有大量历史匹配文件，为避免追溯性失败，本清单豁免当前（P0.2 执行时）已存在的全部匹配文件。清单只许缩减：删除历史文件时同步删除对应条目；不得新增条目来豁免新文件（新文件必须改名、按行为命名并并入已有测试文件）。",
   "grandfathered": [
-    "tests/test_changed_coverage.py",
-    "tests/test_subsystem_coverage.py",
     "tests/v4/_helpers/v43_coverage.py",
     "tests/v4/test_producer_authoring_boundary_coverage.py",
     "tests/v4/test_producer_checkpoint_boundary_coverage.py",
@@ -36,42 +34,18 @@
     "tests/v4/test_v43_store.py",
     "tests/v4/test_v44_artifact_flow.py",
     "tests/v4/test_v44_claim.py",
-    "tests/v4/test_v44_coverage.py",
-    "tests/v4/test_v44_crash_matrix.py",
-    "tests/v4/test_v44_crash_matrix2.py",
-    "tests/v4/test_v44_faults.py",
-    "tests/v4/test_v44_handoff.py",
-    "tests/v4/test_v44_hardening.py",
-    "tests/v4/test_v44_parity.py",
-    "tests/v4/test_v44_resume_remote.py",
-    "tests/v4/test_v44_security.py",
-    "tests/v4/test_v44_staging.py",
-    "tests/v4/test_v44_worker.py",
-    "tests/v4/test_v45_atom_mapping.py",
     "tests/v4/test_v45_gaussian_path.py",
-    "tests/v4/test_v45_goat.py",
     "tests/v4/test_v45_multi_output.py",
-    "tests/v4/test_v45_named.py",
     "tests/v4/test_v45_orca_path.py",
-    "tests/v4/test_v45_parity.py",
-    "tests/v4/test_v45_path_profile.py",
-    "tests/v4/test_v45_reaction_chain.py",
     "tests/v4/test_v45_resume.py",
-    "tests/v4/test_v45_tspes.py",
-    "tests/v4/test_v46_analysis.py",
-    "tests/v4/test_v46_analysis_grouping.py",
     "tests/v4/test_v46_application.py",
     "tests/v4/test_v46_cross_repo.py",
     "tests/v4/test_v46_cross_repo_e2e.py",
     "tests/v4/test_v46_debt.py",
-    "tests/v4/test_v46_pes.py",
     "tests/v4/test_v46_producer_closure.py",
     "tests/v4/test_v46_producer_contract.py",
     "tests/v4/test_v46_production_gates.py",
-    "tests/v4/test_v46_reaction.py",
-    "tests/v4/test_v46_recipes.py",
-    "tests/v4/test_v46_tspes_e2e.py",
-    "tests/v4/test_v46_tspes_science.py"
+    "tests/v4/test_v46_recipes.py"
   ],
   "subsystems": [
     {
@@ -209,6 +183,6 @@
     }
   ],
   "tests_total_files": 246,
-  "tests_total_loc_limit": 96182,
-  "tests_total_reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。"
+  "tests_total_loc_limit": 96197,
+  "tests_total_reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。 + 跨仓适配 author_v4_document(JD 瘦身后接口变化，必要修复) 96182->96197。"
 }
