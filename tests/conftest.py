@@ -179,3 +179,18 @@ def guard_repo_root_pollution():
             f"Test created chem_tasks_* directories in repo root: {[d.name for d in new_dirs]}. "
             "Use tmp_path or resume_dir parameter to avoid polluting repo root."
         )
+
+
+@pytest.fixture
+def jobdesk():
+    """Return the optional JobDesk consumer surfaces (skip when absent)."""
+    from tests.v4 import jobdesk_integration
+
+    try:
+        return jobdesk_integration.load_jobdesk()
+    except jobdesk_integration.JobDeskUnavailable as exc:
+        pytest.skip(str(exc))
+    except jobdesk_integration.JobDeskMisconfigured as exc:
+        pytest.fail(str(exc), pytrace=False)
+    except jobdesk_integration.JobDeskShaMismatch as exc:
+        pytest.fail(str(exc), pytrace=False)

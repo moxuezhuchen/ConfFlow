@@ -317,7 +317,7 @@ confflow/
 ## 13. V4-2 非目标状态
 
 IRC/path_endpoints、QST2/QST3、NEB、GOAT、ensemble、PES、SQLite
-WorkItemStore、per-item resume、worker-handoff.v2、JobDesk、migration、
+WorkItemStore、per-item resume、worker-handoff.v1 的 typed 扩展、JobDesk、migration、
 streaming DAG 均未做。Batch/Executor 通过 `WorkItemRepository` /
 `ReuseStore` 协议与内存实现为 V4-3 留好 seam，无需改动核心 contracts
 即可接入持久化与按 digest 复用。
@@ -450,13 +450,13 @@ confflow/execution/batch.py # BatchStepExecutor.execute_step_resumable（编排�
   注入测试，V4-4 补）；Windows 分支未覆盖；`resolve_multiplicity(0)`
   已修复（Gaussian 与 ORCA 一致 `>=1`）。
 - V4-3 非目标（未做）：IRC/path_endpoints/QST2/QST3/NEB/GOAT/ensemble/
-  PES/worker-handoff.v2/remote/JobDesk/migration/streaming DAG/分布式调度/
+  PES/worker-handoff.v1 的 typed 扩展/remote/JobDesk/migration/streaming DAG/分布式调度/
   cloud artifact/cancelled 显式重跑原语/跨 definition 代重跑。
 
 V4-4 readiness：YES — 无需改动 WorkItem / ProgramAdapter /
 WorkItemResult / StepResult / WorkItemStore / reuse-resume 核心契约，
 可直接增加 typed cross-step artifact flow、checkpoint binding、
-worker-handoff.v2、remote staging（store 的 artifact_rows + 保护 id 集
+worker-handoff.v1 的 typed 扩展、remote staging（store 的 artifact_rows + 保护 id 集
 + locator 体系即为接入口）。
 
 ---
@@ -496,9 +496,10 @@ StepResult {StructureSet, ResultSet, ArtifactSet}
   测试钉死）。
 - **Gaussian 防御收紧**：`resolve_multiplicity` 拒绝 `<1`（ORCA 早已拒绝）。
 
-## 18. Worker handoff V2（事实）
+## 18. Worker handoff（事实）
 
-- **Schema**：`confflow.control.worker-handoff.v2`（envelope）/
+- **Schema**：`confflow.control.worker-handoff.v1`（envelope，与
+  `confflow/worker_handoff.py::HANDOFF_SCHEMA` 一致）/
   `confflow.control.worker-result.v2`（result），Pydantic strict +
   `extra=forbid` + frozen 单一来源，JSON Schema 由模型生成。
   V1（`worker_handoff.py`，`input_xyz` envelope）frozen 不动。
@@ -742,9 +743,16 @@ XYZ / typed input
   → RunResultManifest → JobDesk
 ```
 
-## 30. Analysis（事实）
+## 30. Analysis（已退役）
 
-- **AnalysisExecutor**（`confflow/analysis/`）：正式 step executor，
+> R2.3a 删除 `confflow/analysis/` 包（`ls confflow/` 无此目录），默认
+> registry 不再注册 `analysis` executor（见
+> `confflow/execution/registry.py::build_default_registry` 的 R2.3a 注释），
+> producer contract 的 `analysis_capabilities` 为空列表（见
+> `confflow/producer/contract.py::_analysis_capabilities`）。以下为退役前
+> 记录，不代表现行代码。
+
+- **AnalysisExecutor**（退役前为 `confflow/analysis/`）：正式 step executor，
   capability `analysis`。纯函数：typed ports + explicit definition →
   ResultSet/diagnostics；绝不调用 ProgramAdapter、不启动 subprocess、
   不读文件名（AST 门钉死）。
@@ -805,12 +813,11 @@ XYZ / typed input
 ## 32. Application Runtime（事实）
 
 - **V4RunApplication**（`confflow/application/v4_run.py`）：compile →
-  拓扑步序 → 单步 `BatchStepExecutor`（calculation/confgen）或
-  `AnalysisExecutor`（analysis，跨 item 合并 ports 后单次执行）→
-  StepResult → publication → `RunResultManifest`（analyses 条目从
-  `reaction_profile` 结果提取）。Resume：published 整步直接 load，
-  未完成计算步按 work item resume，已完成 analysis 复用，从未启动
-  的步继续——永不全重跑。
+  拓扑步序 → 单步 `BatchStepExecutor`（calculation/confgen 等已注册
+  capability；`analysis` 未注册，遇此步 fail-closed）→ StepResult →
+  publication → `RunResultManifest`（`analyses` 恒为空，R2.3a 已退役
+  reaction-profile 分组）。Resume：published 整步直接 load，未完成
+  计算步按 work item resume，从未启动的步继续——永不全重跑。
 - **XYZ importer**：`import_xyz`（多 block，`xyz:<index>` 稳定 id，
   路径仅 provenance）。
 - **CLI 切面**：`confflow/v4cli.py`（`cli.py` 仅加 3 行 dispatch）。
