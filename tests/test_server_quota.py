@@ -489,3 +489,210 @@ class TestScriptQuota:
         )
         assert result.error is not None
         assert result.error.code == "quota_exceeded"
+
+
+class TestQuotaLedgerRegression:
+    """A4: atomic ledger writes; corrupt ledgers fail closed."""
+
+    def test_missing_ledger_starts_empty(self, tmp_path: Path) -> None:
+        quota = ServerQuota(4, 8 * _GIB, tmp_path / "state")
+        assert quota.acquire(1, _GIB, "run", "item") is not None
+
+    def test_corrupt_ledger_fails_closed(self, tmp_path: Path) -> None:
+        state = tmp_path / "state"
+        state.mkdir(parents=True, exist_ok=True)
+        (state / "server-quota.json").write_text("{corrupt", encoding="utf-8")
+        quota = ServerQuota(4, 8 * _GIB, state)
+        with pytest.raises(QuotaError, match="corrupt"):
+            quota.acquire(1, _GIB, "run", "item")
+
+    def test_non_object_ledger_fails_closed(self, tmp_path: Path) -> None:
+        state = tmp_path / "state"
+        state.mkdir(parents=True, exist_ok=True)
+        (state / "server-quota.json").write_text('{"leases": []}', encoding="utf-8")
+        quota = ServerQuota(4, 8 * _GIB, state)
+        with pytest.raises(QuotaError, match="corrupt"):
+            quota.acquire(1, _GIB, "run", "item")
+
+
+class TestRescueQuotaRegression:
+    """A2: recovery reruns acquire the work item's real quota."""
+
+    def test_run_native_requests_item_quota(self, tmp_path: Path) -> None:
+        from confflow.execution.work_item_executor import _RescueDriver
+
+        item = _executor_item(cores=2, key="rescue-quota")
+        context = _executor_context(object(), tmp_path)
+        seen: dict = {}
+        executor = WorkItemExecutor()
+
+        def _fake_launch(supervisor, request, poll, *, should_cancel, quota=None):  # type: ignore[no-untyped-def]
+            seen["quota"] = quota
+            return None
+
+        executor.launch_and_wait = _fake_launch  # type: ignore[method-assign]
+        driver = _RescueDriver(executor, context, object(), str(tmp_path), None, item)
+        materialized = MaterializedNativeInput(
+            program=ProgramName.GAUSSIAN, main_input_name="job.inp", files=()
+        )
+        request = NativeExecutionRequest(
+            executable="/bin/true",
+            argv=("/bin/true",),
+            work_dir=str(tmp_path),
+            env=FrozenDict({"PATH": os.environ.get("PATH", "")}),
+        )
+        driver.run_native(materialized, request, stage="retry")
+        assert seen["quota"] is not None
+        resources, run_root, work_item_id = seen["quota"]
+        assert resources.cores_per_item == 2
+        assert resources.memory_per_item_bytes == _GIB
+        assert run_root == str(tmp_path)
+        assert work_item_id == item.id
+
+
+class TestCancelProofRegression:
+    """A3: timeout/handle-loss paths never claim unproven stops."""
+
+    def test_timeout_without_proof_is_cancellation_error(self, tmp_path: Path) -> None:
+        supervisor = _NeverTerminalUnconfirmed()
+        request = NativeExecutionRequest(
+            executable="/bin/true",
+            argv=("/bin/true",),
+            work_dir=str(tmp_path),
+            env=FrozenDict({"PATH": os.environ.get("PATH", "")}),
+            walltime_seconds=0.05,
+        )
+        launched = WorkItemExecutor().launch_and_wait(
+            supervisor, request, 0.01, should_cancel=None, quota=None
+        )
+        assert launched is not None
+        execution_result, cancel_outcome = launched
+        assert execution_result.timed_out
+        assert cancel_outcome is not None and not cancel_outcome.confirmed
+
+    def test_execute_timeout_without_proof_carries_timed_out(self, tmp_path: Path) -> None:
+        plan_item = _executor_item(cores=1, key="timeout-proof")
+        context = _executor_context(_NeverTerminalUnconfirmed(), tmp_path)
+        object.__setattr__(context, "adapter", _TimeoutAdapter(context.adapter, walltime=0.05))
+        result = WorkItemExecutor().execute(plan_item, context)
+        assert result.error is not None
+        assert result.error.code == "cancellation_error"
+        assert dict(result.error.details).get("timed_out") is True
+
+    def test_handle_lost_with_cancel_is_unconfirmed(self, tmp_path: Path) -> None:
+        item = _executor_item(cores=1, key="lost-handle")
+        context = _executor_context(_SubmitFailingSupervisor(), tmp_path)
+        result = WorkItemExecutor().execute(item, context, should_cancel=lambda: True)
+        assert result.status.value == "cancelled"
+        assert result.diagnostics[0].details["confirmed"] is False
+
+
+class _NeverTerminalUnconfirmed:
+    """Supervisor that never finishes and never confirms cancellation."""
+
+    def submit(self, request: NativeExecutionRequest) -> NativeHandle:
+        return NativeHandle(key="unconfirmed:1", pid=None)
+
+    def poll(self, handle: NativeHandle) -> NativeStatus:
+        return NativeStatus(is_terminal=False, exit_code=None)
+
+    def cancel(self, handle: NativeHandle, *, grace_seconds: float = 2.0):  # type: ignore[no-untyped-def]
+        from confflow.execution.native import CancelOutcome
+
+        return CancelOutcome(confirmed=False, detail="boundary still live")
+
+    def collect(self, handle: NativeHandle) -> NativeExecutionResult:
+        raise AssertionError("never terminal")
+
+
+class _SubmitFailingSupervisor:
+    """Supervisor whose submit always fails (handle is lost)."""
+
+    def submit(self, request: NativeExecutionRequest) -> NativeHandle:
+        raise OSError("gone")
+
+    def poll(self, handle: NativeHandle) -> NativeStatus:
+        raise AssertionError("no handle")
+
+    def collect(self, handle: NativeHandle) -> NativeExecutionResult:
+        raise AssertionError("no handle")
+
+
+class _TimeoutAdapter:
+    """Adapter double forcing a walltime on the launch request."""
+
+    def __init__(self, inner: object, *, walltime: float) -> None:
+        self._inner = inner
+        self._walltime = walltime
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._inner, name)
+
+    def build_execution_request(  # type: ignore[no-untyped-def]
+        self, materialized, *, executable, work_dir, env, walltime_seconds
+    ):
+        request = self._inner.build_execution_request(
+            materialized,
+            executable=executable,
+            work_dir=work_dir,
+            env=env,
+            walltime_seconds=walltime_seconds,
+        )
+        return NativeExecutionRequest(
+            executable=request.executable,
+            argv=request.argv,
+            work_dir=request.work_dir,
+            env=request.env,
+            walltime_seconds=self._walltime,
+            stdout_file=request.stdout_file,
+            stderr_file=request.stderr_file,
+            metadata=request.metadata,
+        )
+
+
+class TestLayeringRegression:
+    """A6: execution never imports application; launch has a public entry."""
+
+    def test_xyz_authority_is_shared(self) -> None:
+        import confflow.application.v4_run as app_run
+        import confflow.execution.xyz_import as xyz_authority
+
+        assert app_run.import_xyz is xyz_authority.import_xyz
+
+    def test_execution_has_no_application_import(self) -> None:
+        import ast
+
+        root = Path(__file__).resolve().parents[1] / "confflow" / "execution"
+        for path in sorted(root.glob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        assert not alias.name.startswith("confflow.application"), path
+                elif isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    assert not module.startswith("confflow.application"), path
+                    assert not (module == "application" or module.startswith("application.")), path
+
+    def test_public_launch_delegates_to_private(self, tmp_path: Path) -> None:
+        seen: dict = {}
+        executor = WorkItemExecutor()
+        real = executor._launch_and_wait
+
+        def _spy(supervisor, request, poll, *, should_cancel, quota=None):  # type: ignore[no-untyped-def]
+            seen["quota"] = quota
+            return real(supervisor, request, poll, should_cancel=should_cancel, quota=quota)
+
+        executor._launch_and_wait = _spy  # type: ignore[method-assign]
+        supervisor = _SubmitFailingSupervisor()
+        request = NativeExecutionRequest(
+            executable="/bin/true",
+            argv=("/bin/true",),
+            work_dir=str(tmp_path),
+            env=FrozenDict({"PATH": os.environ.get("PATH", "")}),
+        )
+        assert (
+            executor.launch_and_wait(supervisor, request, 0.01, should_cancel=None, quota=None)
+            is None
+        )
+        assert "quota" in seen

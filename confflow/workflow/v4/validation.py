@@ -498,6 +498,11 @@ def _proven_input_state(
 SCRIPT_STEP_DIGEST_KIND = "confflow.workflow.step.script.v1"
 
 
+def _has_parent_segment(pattern: str) -> bool:
+    """Return whether *pattern* carries a ``..`` path segment."""
+    return ".." in pattern.replace("\\", "/").split("/")
+
+
 def _validate_script_step(
     step: StepDefinition,
     scripts: Mapping[str, ScriptEntry],
@@ -576,6 +581,7 @@ def _validate_script_step(
                 isinstance(item, str) and item and not item.startswith(("/", "\\"))
                 for item in patterns
             )
+            or any(_has_parent_segment(item) for item in patterns if isinstance(item, str))
         ):
             diagnostics.append(
                 error(

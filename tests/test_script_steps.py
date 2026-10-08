@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from confflow.domain import FrozenDict, StructureSet
+from confflow.domain.errors import DomainError
 from confflow.domain.resources import ResourceRequest
 from confflow.domain.work_item import WorkItem, WorkItemInputs, make_work_item_id
 from confflow.execution.process import NativeProcessSupervisor
@@ -585,3 +586,119 @@ class TestScriptControlCapabilities:
         assert main(["capabilities", "--json"]) == 0
         response = json.loads(capsys.readouterr().out)
         assert response["registered_scripts"] == [{"id": "demo", "description": "demo"}]
+
+
+class TestScriptRelativePathRegression:
+    """A1: the executed argv uses the registry-resolved absolute path."""
+
+    def test_relative_command_runs_from_config_dir(self, tmp_path: Path) -> None:
+        from confflow.execution.script_executor import ScriptExecutor
+
+        script = _write_script(tmp_path, "demo.py", _SUCCESS_SCRIPT)
+        _write_server_toml(tmp_path, {"demo": {"command": [sys.executable, "demo.py"]}})
+        table = load_script_registry()
+        assert table["demo"].script_path == str(script)
+        run_root = tmp_path / "run"
+        run_root.mkdir()
+        item = _script_item(key="rel-item")
+        context = _script_context(
+            NativeProcessSupervisor(),
+            run_root,
+            args=("{input}", "{cores}", "{mem_gb}", "{item_id}"),
+            outputs={
+                "structures": "final.xyz",
+                "summary": "summary.json",
+                "artifacts": ["*.log"],
+            },
+        )
+        result = ScriptExecutor().execute(item, context)
+        assert result.status.value == "completed", [
+            (item.code, item.message) for item in result.diagnostics
+        ]
+        provenance = dict(result.diagnostics[0].details)
+        assert provenance["argv"][1] == str(script)
+        assert provenance["script_path"] == str(script)
+        second = ScriptExecutor().execute(item, context)
+        assert dict(second.diagnostics[0].details)["item_key"] == provenance["item_key"]
+
+    def test_single_element_relative_command_runs(self, tmp_path: Path) -> None:
+        import stat
+
+        from confflow.execution.script_executor import ScriptExecutor
+
+        body = "#!" + sys.executable + "\nopen('final.xyz', 'w').write('1\\nframe\\nHe 0 0 0\\n')\n"
+        script = _write_script(tmp_path, "solo.py", body)
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        _write_server_toml(tmp_path, {"demo": {"command": ["solo.py"]}})
+        table = load_script_registry()
+        assert table["demo"].script_path == str(script)
+        run_root = tmp_path / "run"
+        run_root.mkdir()
+        result = ScriptExecutor().execute(
+            _script_item(key="solo-item"), _script_context(NativeProcessSupervisor(), run_root)
+        )
+        assert result.status.value == "completed", [
+            (item.code, item.message) for item in result.diagnostics
+        ]
+        assert dict(result.diagnostics[0].details)["argv"][0] == str(script)
+
+
+class TestScriptArtifactBoundaryRegression:
+    """A5: artifact globs stay inside the item directory."""
+
+    def test_dotdot_pattern_rejected_at_compile(self) -> None:
+        table = {"demo": _entry()}
+        for patterns in (["../evil/*.log"], ["sub/../evil.log"], [".."]):
+            step = _script_step()
+            step["outputs"] = {"structures": "final.xyz", "artifacts": patterns}
+            result = compile_workflow(_doc([step]), script_registry=table)
+            assert not result.ok, patterns
+
+    def test_symlink_escape_rejected_at_execution(self, tmp_path: Path) -> None:
+        from confflow.execution.script_executor import ScriptExecutor
+
+        script = _write_script(tmp_path, "demo.py", _SUCCESS_SCRIPT)
+        _write_server_toml(tmp_path, {"demo": {"command": [sys.executable, str(script)]}})
+        run_root = tmp_path / "run"
+        run_root.mkdir()
+        item = _script_item(key="escape-item")
+        context = _script_context(
+            NativeProcessSupervisor(),
+            run_root,
+            args=("{input}", "{cores}", "{mem_gb}", "{item_id}"),
+            outputs={
+                "structures": "final.xyz",
+                "summary": "summary.json",
+                "artifacts": ["*.log"],
+            },
+        )
+        result = ScriptExecutor().execute(item, context)
+        assert result.status.value == "completed"
+        item_key = dict(result.diagnostics[0].details)["item_key"]
+        item_dir = run_root / "script" / "s1" / item_key
+        (run_root / "sibling.log").write_text("outside\n", encoding="utf-8")
+        (item_dir / "evil.log").symlink_to(run_root / "sibling.log")
+        executor = ScriptExecutor()
+        with pytest.raises(DomainError, match="escapes the item directory"):
+            executor._collect_artifacts(
+                {"artifacts": ["*.log"]}, str(item_dir), item, context, item_key
+            )
+
+    def test_handle_lost_with_cancel_is_unconfirmed(self, tmp_path: Path) -> None:
+        from confflow.execution.script_executor import ScriptExecutor
+
+        script = _write_script(tmp_path, "demo.py", _SUCCESS_SCRIPT)
+        _write_server_toml(tmp_path, {"demo": {"command": [sys.executable, str(script)]}})
+        run_root = tmp_path / "run"
+        run_root.mkdir()
+        executor = ScriptExecutor()
+        executor._launcher.launch_and_wait = lambda *a, **k: None  # type: ignore[method-assign]
+        result = executor.execute(
+            _script_item(key="lost-script"),
+            _script_context(NativeProcessSupervisor(), run_root),
+            should_cancel=lambda: True,
+        )
+        assert result.status.value == "failed"
+        assert result.error is not None
+        assert result.error.code == "cancellation_error"
+        assert dict(result.diagnostics[0].details)["confirmed"] is False

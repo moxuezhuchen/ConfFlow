@@ -104,24 +104,28 @@ class ScriptEntry:
     sha256: str
     interpreter: str
     description: str = ""
+    script_arg_index: int = 1
 
 
-def _resolve_script_file(command: tuple[str, ...], config_dir: Path) -> Path:
-    """Return the script file of *command*.
+def _resolve_script_file(command: tuple[str, ...], config_dir: Path) -> tuple[Path, int]:
+    """Return the script file of *command* and its argv index.
 
     The script is the first existing file among the arguments after
     ``argv[0]`` (``["python3", "/path/tspes.py"]``); a single-element
     command must itself be an existing executable file. The interpreter
     alone never counts as the script, so a missing script file fails
-    closed even when the interpreter exists.
+    closed even when the interpreter exists. Relative candidates resolve
+    against *config_dir* (the server.toml directory), never the process
+    working directory.
     """
     ordered = tuple(command[1:]) if len(command) > 1 else tuple(command[:1])
-    for element in ordered:
+    base = 1 if len(command) > 1 else 0
+    for offset, element in enumerate(ordered):
         candidate = Path(element)
         if not candidate.is_absolute():
             candidate = config_dir / candidate
         if candidate.is_file():
-            return candidate
+            return candidate, base + offset
     raise QuotaError(f"registered script command {list(command)!r} names no existing file")
 
 
@@ -155,7 +159,7 @@ def load_script_registry(config: str | Path | None = None) -> dict[str, ScriptEn
             raise QuotaError(
                 f"invalid server config {path}: scripts.{script_id}.description " "must be a string"
             )
-        script_file = _resolve_script_file(tuple(command), path.parent)
+        script_file, script_index = _resolve_script_file(tuple(command), path.parent)
         digest = hashlib.sha256(script_file.read_bytes()).hexdigest()
         entries[str(script_id)] = ScriptEntry(
             id=str(script_id),
@@ -164,5 +168,6 @@ def load_script_registry(config: str | Path | None = None) -> dict[str, ScriptEn
             sha256=digest,
             interpreter=command[0],
             description=description,
+            script_arg_index=script_index,
         )
     return entries

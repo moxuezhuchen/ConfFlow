@@ -47,6 +47,7 @@ from .work_item_executor import (
     pure_cancelled_result,
     select_driving_structure,
 )
+from .xyz_import import import_xyz
 
 __all__ = ["ScriptExecutor", "script_item_key", "serialize_script_input"]
 
@@ -100,6 +101,18 @@ def _diagnostic(
         logical_key=work_item.logical_key,
         details=FrozenDict(details or {}),
     )
+
+
+def _resolved_script_command(entry: Any) -> tuple[str, ...]:
+    """Return *entry.command* with the script element as an absolute path."""
+    parts = list(entry.command)
+    index = getattr(entry, "script_arg_index", 1)
+    if not isinstance(index, int) or isinstance(index, bool):
+        index = 1
+    if index < 0 or index >= len(parts):
+        index = 0 if len(parts) == 1 else 1
+    parts[index] = str(entry.script_path)
+    return tuple(parts)
 
 
 class ScriptExecutor:
@@ -199,8 +212,13 @@ class ScriptExecutor:
         full_args = expand_script_args(
             template, input_path=input_path, cores=cores, mem_gb=mem_gb, item_id=work_item.id
         )
-        interpreter = self._resolve_interpreter(entry.interpreter)
-        argv = (interpreter,) + tuple(entry.command[1:]) + tuple(full_args)
+        resolved = _resolved_script_command(entry)
+        if len(resolved) == 1:
+            interpreter = str(entry.script_path)
+            argv = (interpreter,) + tuple(full_args)
+        else:
+            interpreter = self._resolve_interpreter(resolved[0])
+            argv = (interpreter,) + tuple(resolved[1:]) + tuple(full_args)
         request = NativeExecutionRequest(
             executable=interpreter,
             argv=argv,
@@ -211,7 +229,7 @@ class ScriptExecutor:
             stderr_file="stderr.log",
             metadata=FrozenDict({"script_id": script_id, "item_key": item_key}),
         )
-        launched = self._launcher._launch_and_wait(
+        launched = self._launcher.launch_and_wait(
             context.supervisor,
             request,
             context.poll_interval_seconds,
@@ -227,6 +245,17 @@ class ScriptExecutor:
             "item_key": item_key,
         }
         if launched is None:
+            if should_cancel is not None and should_cancel():
+                return self._fail(
+                    work_item,
+                    context,
+                    wall_start,
+                    monotonic_start,
+                    "cancellation_error",
+                    "script process handle was lost before completion; "
+                    "cancellation could not be confirmed",
+                    details={**provenance, "confirmed": False},
+                )
             return self._fail(
                 work_item,
                 context,
@@ -240,6 +269,9 @@ class ScriptExecutor:
         if cancel_outcome is not None:
             if cancel_outcome.confirmed:
                 return self._cancelled(work_item, context, wall_start, monotonic_start)
+            details = dict(provenance)
+            if execution_result.timed_out:
+                details["timed_out"] = True
             return self._fail(
                 work_item,
                 context,
@@ -247,7 +279,7 @@ class ScriptExecutor:
                 monotonic_start,
                 "cancellation_error",
                 f"cancellation could not be confirmed: {cancel_outcome.detail}",
-                details=provenance,
+                details=details,
             )
         if execution_result.timed_out or execution_result.exit_code is None:
             return self._fail(
@@ -351,8 +383,6 @@ class ScriptExecutor:
         path = self._channel_path(item_dir, declared, "structures")
         if not path.is_file():
             raise DomainError(f"script declared structures file {declared!r} is missing")
-        from ..application.v4_run import import_xyz
-
         try:
             text = path.read_text(encoding="utf-8")
         except OSError as exc:
@@ -432,6 +462,7 @@ class ScriptExecutor:
         ):
             raise DomainError("script artifacts must be a list of non-empty glob patterns")
         base = Path(item_dir)
+        item_real = os.path.realpath(item_dir)
         run_root = os.path.realpath(str(context.run_root))
         matched: list[Path] = []
         for pattern in patterns:
@@ -440,7 +471,10 @@ class ScriptExecutor:
                     matched.append(candidate)
         refs: list[ArtifactRef] = []
         for index, candidate in enumerate(matched):
-            relative = os.path.relpath(os.path.realpath(candidate), run_root).replace(os.sep, "/")
+            candidate_real = os.path.realpath(candidate)
+            if candidate_real != item_real and not candidate_real.startswith(item_real + os.sep):
+                raise DomainError(f"script artifact {candidate.name!r} escapes the item directory")
+            relative = os.path.relpath(candidate_real, run_root).replace(os.sep, "/")
             if relative == ".." or relative.startswith("../"):
                 raise DomainError(f"script artifact {candidate.name!r} escapes the run root")
             digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
