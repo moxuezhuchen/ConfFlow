@@ -525,7 +525,7 @@ def _build_scientific(
             )
             return None, True, diagnostics
         return scientific, True, diagnostics
-    # analysis: the block is optional (an empty analysis is legal).
+    # analysis (R2.2 retired): kept so misplaced/unknown-executor stays fail-closed.
     analysis = step.analysis
     try:
         scientific = ScientificDefinition(

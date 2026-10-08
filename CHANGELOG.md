@@ -66,6 +66,15 @@ published boundary (`confflow.boundary.v4`) byte-identical.
   stricter than the legacy route. `0a9f28d` (IS.2b).
 - **Documentation rewritten** around the V4-only runtime (architecture,
   development, testing, usage, command reference). `4900cb8` (C4.7).
+- **WORKFLOW_V4 typed-remote sections corrected to the retired state.**
+  `docs/architecture/WORKFLOW_V4.md` §§18–21 and §27 described the deleted
+  typed remote system (`confflow/remote`, handoff v2/v3, `confflow.remote.bundle.v1`,
+  `RemoteTransport`/`LocalTransport`) as completed; they are now marked retired
+  with the deleting commits (R1.2 `58e3d28`, R2.2 `383a1f6`, R2.3f `9e479fe`),
+  and the real path (local execution + control-protocol v1) is stated with file
+  names. §5 registry vocabulary fixed (`analysis`/`named_structures`/`path_endpoints`
+  retired, `script`/`ensemble` current). `docs/ARCHITECTURE.md` and `README.md`
+  remote claims corrected the same way.
 
 ### Fixed
 
