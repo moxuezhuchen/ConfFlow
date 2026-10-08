@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -1119,7 +1119,9 @@ def _audit_geometry(
         evidence["drift_routing"] = None
         return RealizationResult(
             target_id=target_id,
-            structure=tuple(tuple(map(float, row)) for row in realized),
+            structure=tuple(
+                cast("tuple[float, float, float]", tuple(map(float, row))) for row in realized
+            ),
             status="REALIZED",
             reason=success_note,
             backend=backend_name,

@@ -133,11 +133,10 @@ class ConfFlowLogger:
         if isinstance(handler, logging.StreamHandler):
             try:
                 handler.setStream(stream)
-            except AttributeError:
-                try:
-                    handler.stream = stream  # type: ignore[attr-defined]
-                except AttributeError:
-                    pass
+            except (AttributeError, ValueError, OSError):
+                # Closed old stream (e.g. a pytest capsys buffer held by
+                # the singleton): setStream flushes it, so repoint directly.
+                handler.stream = stream  # type: ignore[attr-defined]
 
     def add_file_handler(self, log_file: str, level: int = logging.DEBUG):
         """Add a file log handler."""
@@ -214,8 +213,6 @@ def redirect_logging_streams(stream=None, include_root: bool = False) -> None:
             if isinstance(handler, logging.StreamHandler):
                 try:
                     handler.setStream(stream)
-                except AttributeError:
-                    try:
-                        handler.stream = stream  # type: ignore[attr-defined]
-                    except AttributeError:
-                        pass
+                except (AttributeError, ValueError, OSError):
+                    # Closed old stream: repoint directly without flushing it.
+                    handler.stream = stream  # type: ignore[attr-defined]

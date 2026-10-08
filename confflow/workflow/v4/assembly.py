@@ -239,11 +239,11 @@ def _apply_selector(
         if edge.target_port.kind is PortKind.ARTIFACT:
             selected_artifacts: list[ArtifactRef] = []
             for artifact_id in selector.ids:
-                record = artifacts.get(artifact_id)
-                if record is None:
+                artifact_record = artifacts.get(artifact_id)
+                if artifact_record is None:
                     missing.append(artifact_id)
                 else:
-                    selected_artifacts.append(record)
+                    selected_artifacts.append(artifact_record)
             return (
                 StructureSet(),
                 ArtifactSet(tuple(selected_artifacts)),

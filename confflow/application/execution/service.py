@@ -406,12 +406,12 @@ class ExecutionService:
                 return self._repository.compare_and_mutate(
                     record.run_id,
                     record.revision,
-                    lambda current, attempt=attempt, token=token: (
+                    lambda current: (
                         replace(
                             current,
                             state=RunState.QUEUED,
-                            attempt=attempt,
-                            launch_token=token,
+                            attempt=attempt,  # noqa: B023 - sync mutate
+                            launch_token=token,  # noqa: B023 - sync mutate
                             launch_checkpoint=checkpoint_id,
                         ),
                         "queued" if current.state is RunState.PREPARED else "resumed",
@@ -493,8 +493,8 @@ class ExecutionService:
                 return self._repository.compare_and_mutate(
                     record.run_id,
                     record.revision,
-                    lambda current, token=token: (
-                        replace(current, cancel_token=token, cancel_pending=True),
+                    lambda current: (
+                        replace(current, cancel_token=token, cancel_pending=True),  # noqa: B023
                         "cancel_requested",
                     ),
                 )

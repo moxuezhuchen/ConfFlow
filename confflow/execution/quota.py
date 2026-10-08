@@ -24,6 +24,7 @@ except ImportError:  # pragma: no cover - POSIX-only lock
     _fcntl = None  # type: ignore[assignment]
 
 from ..domain.resources import parse_memory_bytes
+from ..persistence.fsatomic import publish_bytes
 
 __all__ = [
     "QuotaCancelled",
@@ -238,17 +239,29 @@ class ServerQuota:
         with open(self._dir / "server-quota.lock", "a+b") as lock:
             if _fcntl is not None:
                 _fcntl.flock(lock.fileno(), _fcntl.LOCK_EX)
+            ledger = self._dir / "server-quota.json"
             try:
-                raw = json.loads((self._dir / "server-quota.json").read_text(encoding="utf-8"))
-                leases = raw.get("leases", {})
-            except (OSError, ValueError):
-                leases = {}
-            leases = leases if isinstance(leases, dict) else {}
+                text = ledger.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                leases: dict = {}
+            except OSError as exc:
+                raise QuotaError(f"cannot read quota ledger {ledger}: {exc}") from exc
+            else:
+                try:
+                    raw = json.loads(text)
+                except ValueError as exc:
+                    raise QuotaError(f"corrupt quota ledger {ledger}: {exc}") from exc
+                if not isinstance(raw, dict):
+                    raise QuotaError(f"corrupt quota ledger {ledger}: top level must be an object")
+                candidate = raw.get("leases", {})
+                if not isinstance(candidate, dict):
+                    raise QuotaError(f"corrupt quota ledger {ledger}: 'leases' must be an object")
+                leases = candidate
             reclaimed = self._reclaim_locked(leases)
             changed = bool(mutate(leases))
             if reclaimed or changed:
-                (self._dir / "server-quota.json").write_text(
-                    json.dumps({"leases": leases}, sort_keys=True), encoding="utf-8"
+                publish_bytes(
+                    str(ledger), json.dumps({"leases": leases}, sort_keys=True).encode("utf-8")
                 )
             return changed
 

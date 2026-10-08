@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 import os
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from ...domain._immutable import FrozenDict
 from ...domain.artifact import ArtifactLocator, ArtifactRef, ArtifactSet
@@ -448,7 +448,7 @@ class OrcaProgramAdapter(ProgramAdapter):
             atoms, coords = geometry
             final_geometry = ParsedGeometry(
                 atoms=tuple(atoms),
-                coordinates=tuple(tuple(point) for point in coords),
+                coordinates=tuple(cast(Any, tuple(point)) for point in coords),
             )
             geometry_output = GeometryOutput.PRODUCED
         else:

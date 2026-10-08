@@ -26,7 +26,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, cast
 
 from ..domain._immutable import FrozenDict
 from ..domain.canonical import canonical_json_bytes
@@ -848,7 +848,7 @@ def _finalize_locked(
             terminal_detail=FrozenDict(),
             updated_wall=wall_now(),
         )
-    winner = ledger.terminal_status
+    winner = cast(str, ledger.terminal_status)
     assert winner is not None
     detail: dict[str, Any] = {
         "manifest_generation_id": None,

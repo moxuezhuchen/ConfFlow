@@ -42,6 +42,7 @@ from .core.exceptions import (
 from .core.io import parse_gaussian_input_text, write_xyz_file
 from .core.path_policy import validate_managed_path
 from .core.utils import get_logger
+from .domain.errors import DomainError
 from .install_provenance import read_install_provenance
 
 # Package initialization suppresses import-time warnings for the real probes.
@@ -224,22 +225,27 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--stop",
         action="store_true",
-        help="Stop all running ConfFlow tasks, including child processes",
+        help=(
+            "Stop all running ConfFlow process trees owned by the current user "
+            "on this machine (same uid only), including child processes"
+        ),
     )
     parser.add_argument(
         "-o",
         "--output",
-        help="Output directory for --rerun-failed",
+        help="Retired; fails closed: --output is legacy execution glue and is rejected.",
     )
     parser.add_argument(
         "--rerun-failed",
         dest="rerun_failed_step_dir",
-        help="Rerun failed.xyz from an existing calc/task step directory",
+        help=(
+            "Retired; fails closed: --rerun-failed is legacy execution " "glue; migration required."
+        ),
     )
     parser.add_argument(
         "--step",
         dest="step",
-        help="Workflow step name or 1-based index for --rerun-failed",
+        help="Retired; fails closed: --step is legacy execution glue and is rejected.",
     )
     parser.add_argument(
         "--version",
@@ -340,7 +346,7 @@ def _is_confflow_process_cmdline(cmdline: list[str]) -> bool:
     if not cmdline or "--stop" in cmdline:
         return False
 
-    entrypoints = {"confflow"}
+    entrypoints = {"confflow", "confflow-control-worker"}
     first = os.path.basename(cmdline[0])
     if first in entrypoints:
         return True
@@ -360,6 +366,16 @@ def _is_confflow_process_cmdline(cmdline: list[str]) -> bool:
     return False
 
 
+def _process_owner_uid(uids: Any) -> int | None:
+    """Return the real uid from a psutil ``uids`` record, if determinable."""
+    real = getattr(uids, "real", None)
+    if isinstance(real, int):
+        return real
+    if isinstance(uids, (tuple, list)) and uids and isinstance(uids[0], int):
+        return int(uids[0])
+    return None
+
+
 def stop_all_confflow_processes() -> int:
     if psutil is None:
         print(
@@ -368,10 +384,17 @@ def stop_all_confflow_processes() -> int:
         )
         return 1
 
-    # Discover candidate ConfFlow processes.
+    # Discover candidate ConfFlow processes. Only this user's processes are
+    # ever touched: a shared login host may run other users' ConfFlow trees
+    # that must be left alone. A process whose owner cannot be determined
+    # keeps the previous behaviour (it is still considered).
+    getuid = getattr(os, "getuid", None)
+    current_uid = getuid() if getuid is not None else None
     confflow_procs = []
     myself = psutil.Process()
-    for p in psutil.process_iter(["pid", "name", "cmdline", "create_time", "cwd", "status"]):
+    for p in psutil.process_iter(
+        ["pid", "name", "cmdline", "create_time", "cwd", "status", "uids"]
+    ):
         try:
             if p.pid == myself.pid:
                 continue
@@ -381,6 +404,11 @@ def stop_all_confflow_processes() -> int:
             cmdline = p.info["cmdline"]
             if not cmdline:
                 continue
+
+            if current_uid is not None:
+                owner_uid = _process_owner_uid(p.info.get("uids"))
+                if owner_uid is not None and owner_uid != current_uid:
+                    continue
 
             if _is_confflow_process_cmdline(cmdline):
                 confflow_procs.append(p)
@@ -496,13 +524,15 @@ def main(
     if args.stop:
         return stop_all_confflow_processes()
 
-    if args.rerun_failed_step_dir:
+    if args.rerun_failed_step_dir is not None or args.step is not None or args.output is not None:
         # Formal runtime cutover (worker I): the legacy rerun-failed glue is
         # execution, not migration diagnostics. Every formal entry runs the
         # single V4 application; a legacy step-directory rerun fails closed.
+        # The retired switches stay parseable so old invocations fail with
+        # this message instead of an argparse usage error.
         print(
             "Error: legacy_workflow_not_executable: "
-            "--rerun-failed is legacy execution glue; migration required",
+            "--rerun-failed/--step/--output are legacy execution glue; migration required",
             file=sys.stderr,
         )
         return ExitCode.RUNTIME_ERROR
@@ -542,6 +572,8 @@ def main(
         require_v4_document_file(config_file)
     except ConfFlowError as error:
         print(f"Error: {error}", file=sys.stderr)
+        if args.verbose:
+            _safe_log_cli_exception("ConfFlow CLI failed", error)
         return ExitCode.RUNTIME_ERROR
 
     try:
@@ -614,17 +646,20 @@ def main(
             work_lease.release()
 
         return ExitCode.SUCCESS
+    except (ConfFlowError, DomainError) as e:
+        # User errors (an invalid workflow or input): the terminal gets a
+        # single "Error: <message>" line and the .txt report keeps the
+        # "[ERROR] ..." record; the full traceback is only logged with
+        # --verbose. The exit code keeps the previous mapping:
+        # ValueError-flavoured user errors are usage errors (1), the rest
+        # are runtime errors (2).
+        print(f"Error: {e}", file=sys.stderr)
+        if args.verbose:
+            _safe_log_cli_exception("ConfFlow CLI failed", e)
+        _append_to_output(output_path, f"[ERROR] {e}")
+        return ExitCode.USAGE_ERROR if isinstance(e, ValueError) else ExitCode.RUNTIME_ERROR
     except ValueError as e:
-        msg = str(e)
-        msg_lower = msg.lower()
-        if "multi-input mode requires" in msg_lower or "element order mismatch" in msg_lower:
-            _append_to_output(output_path, f"[ERROR] Input consistency validation failed: {msg}")
-            _append_to_output(
-                output_path,
-                "Hint: set 'force_consistency: true' under the global config to skip this check.",
-            )
-            return ExitCode.USAGE_ERROR
-        _append_to_output(output_path, f"[ERROR] {msg}")
+        _append_to_output(output_path, f"[ERROR] {e}")
         return ExitCode.USAGE_ERROR
 
     except KeyboardInterrupt as e:

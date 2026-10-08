@@ -597,9 +597,11 @@ def realize_cp_target(
     from .puckering import cp_distance, cremer_pople
 
     try:
-        from ..tolerances import ConfgenTolerances as _CT
+        from ..tolerances import ConfgenTolerances
+
+        _CT: Any = ConfgenTolerances
     except Exception:
-        _CT = None  # type: ignore[assignment]
+        _CT = None
 
     xyz_in = np.asarray(coords, dtype=float)  # type: ignore[arg-type]
     if xyz_in.ndim != 2 or xyz_in.shape[1] != 3 or xyz_in.shape[0] == 0:

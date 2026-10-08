@@ -10,9 +10,18 @@ dead. Timeout policy stays with the caller; ``collect`` never synthesizes it
 and reports wall time from a monotonic stamp. Isolation is POSIX
 session/process-group with pid plus creation-time tokens, never signalling
 the supervisor's own group; a boundary with live descendants stays
-nonterminal; stdout/stderr go to work-dir files. All public methods hold the
-internal ``RLock`` for the whole operation, so ``poll`` serializes against
-``cancel``/``collect`` instead of observing half-updated state.
+nonterminal; stdout/stderr go to work-dir files.
+
+Concurrency: a global ``RLock`` guards only the handle registry structure
+(lookup, insert, tombstone install, removal). Each handle owns a
+per-handle ``RLock`` that serializes ``poll``/``cancel``/``collect`` for
+that same handle, so one handle never observes another operation's
+half-updated record state. The SIGTERM grace wait and the SIGKILL reap
+wait run without holding the global lock, so cancelling one handle never
+blocks ``poll`` on another handle. A proven cancellation installs a
+lightweight tombstone (exit code plus names, no process or streams) that
+keeps answering ``cancel`` with ``"already cancelled"`` and stays
+collectible; ``collect`` drops the tombstone as it would a live record.
 """
 
 from __future__ import annotations
@@ -65,7 +74,7 @@ def _psutil_error_types() -> tuple[type[BaseException], ...]:
 
 
 _PSUTIL_ERRORS = _psutil_error_types()
-_PSUTIL_GONE_ERRORS = tuple(
+_PSUTIL_GONE_ERRORS: tuple[type[BaseException], ...] = tuple(
     error
     for error in (
         getattr(_psutil, "NoSuchProcess", None),
@@ -73,6 +82,7 @@ _PSUTIL_GONE_ERRORS = tuple(
     )
     if isinstance(error, type)
 )
+_OS_PSUTIL_ERRORS: tuple[type[BaseException], ...] = (OSError, *_PSUTIL_ERRORS)
 _SIGKILL = getattr(signal, "SIGKILL", None)
 
 _DETAIL_ALREADY_TERMINAL = "already terminal"
@@ -153,6 +163,24 @@ class _ProcessRecord:
     submitted_at: float = 0.0
     started_monotonic: float = 0.0
     cancel_confirmed: bool = False
+    lock: threading.RLock = field(default_factory=threading.RLock, compare=False)
+
+
+@dataclass
+class _CancelledTombstone:
+    """Lightweight marker retained after a proven cancellation.
+
+    Holds only what ``cancel``/``poll``/``collect`` still promise: the
+    reaped exit code, the stream file names, and the monotonic start stamp
+    for wall-time accounting. The process object, streams, and boundary
+    census are released, so a cancelled-never-collected handle costs
+    almost nothing while ``cancel`` still reports ``"already cancelled"``.
+    """
+
+    exit_code: int | None
+    stdout_name: str
+    stderr_name: str
+    started_monotonic: float
 
 
 class NativeProcessSupervisor:
@@ -175,9 +203,28 @@ class NativeProcessSupervisor:
         self.terminate_timeout = float(terminate_timeout)
         self.kill_timeout = float(kill_timeout)
         self.poll_interval = float(poll_interval)
-        self._records: dict[str, _ProcessRecord] = {}
+        self._records: dict[str, _ProcessRecord | _CancelledTombstone] = {}
         self._sequence = 0
         self._lock = threading.RLock()
+
+    def _live_record_for(self, key: str) -> _ProcessRecord | _CancelledTombstone:
+        """Return the registry entry for ``key``, failing closed when gone."""
+        record = self._records.get(key)
+        if record is None:
+            raise NativeProcessError(f"unknown native handle key {key!r}")
+        return record
+
+    def _install_tombstone(self, key: str, record: _ProcessRecord, exit_code: int | None) -> None:
+        """Replace a proven-cancelled record with its lightweight tombstone."""
+        tombstone = _CancelledTombstone(
+            exit_code=exit_code,
+            stdout_name=record.stdout_name,
+            stderr_name=record.stderr_name,
+            started_monotonic=record.started_monotonic,
+        )
+        with self._lock:
+            if self._records.get(key) is record:
+                self._records[key] = tombstone
 
     def submit(self, request: NativeExecutionRequest) -> NativeHandle:
         """Launch the native process described by ``request``.
@@ -305,9 +352,17 @@ class NativeProcessSupervisor:
             Raised when ``handle.key`` addresses no known process.
         """
         with self._lock:
-            record = self._records.get(handle.key)
-            if record is None:
-                raise NativeProcessError(f"unknown native handle key {handle.key!r}")
+            record = self._live_record_for(handle.key)
+            if isinstance(record, _CancelledTombstone):
+                return NativeStatus(is_terminal=True, exit_code=record.exit_code)
+            record_lock = record.lock
+        # Observation runs under the per-handle lock without the global
+        # lock, so other handles never block on this poll.
+        with record_lock:
+            with self._lock:
+                record = self._live_record_for(handle.key)
+                if isinstance(record, _CancelledTombstone):
+                    return NativeStatus(is_terminal=True, exit_code=record.exit_code)
             self._refresh_process_boundary(record)
             return_code = record.proc.poll()
             if return_code is None:
@@ -361,11 +416,19 @@ class NativeProcessSupervisor:
         ):
             raise ValueError("grace_seconds must be a finite non-negative number")
         with self._lock:
-            record = self._records.get(handle.key)
-            if record is None:
-                raise NativeProcessError(f"unknown native handle key {handle.key!r}")
-            if record.cancel_confirmed:
+            record = self._live_record_for(handle.key)
+            if isinstance(record, _CancelledTombstone) or record.cancel_confirmed:
                 return CancelOutcome(confirmed=True, detail=_DETAIL_ALREADY_CANCELLED)
+            record_lock = record.lock
+        # Only the per-handle lock is held across the bounded waits below;
+        # the global registry lock is taken for short lookups and the
+        # tombstone install, so cancelling one handle never blocks polls
+        # on other handles while same-handle polls stay serialized here.
+        with record_lock:
+            with self._lock:
+                record = self._live_record_for(handle.key)
+                if isinstance(record, _CancelledTombstone) or record.cancel_confirmed:
+                    return CancelOutcome(confirmed=True, detail=_DETAIL_ALREADY_CANCELLED)
             self._refresh_process_boundary(record)
             proc = record.proc
             if proc.poll() is not None and not self._live_boundary_processes(
@@ -387,7 +450,9 @@ class NativeProcessSupervisor:
                         f"failed while reaping native process {handle.key!r}: {exc}"
                     ) from exc
                 record.cancel_confirmed = True
+                exit_code = proc.poll()
                 self._close_record_streams(record)
+                self._install_tombstone(handle.key, record, exit_code)
                 _LOG.debug("cancel of %s confirmed after SIGTERM", handle.key)
                 return CancelOutcome(confirmed=True, detail=_DETAIL_CANCELLED_AFTER_SIGTERM)
             self._signal_boundary(record, signal.SIGTERM, force=True)
@@ -404,12 +469,25 @@ class NativeProcessSupervisor:
                 ) from exc
             if self._wait_for_boundary(record, self.kill_timeout, root_reaped=True):
                 record.cancel_confirmed = True
+                exit_code = proc.poll()
                 self._close_record_streams(record)
+                self._install_tombstone(handle.key, record, exit_code)
                 _LOG.debug("cancel of %s confirmed after SIGKILL", handle.key)
                 return CancelOutcome(confirmed=True, detail=_DETAIL_CANCELLED_AFTER_SIGKILL)
             self._close_record_streams(record)
             _LOG.debug("cancel of %s left a live boundary", handle.key)
             return CancelOutcome(confirmed=False, detail=_DETAIL_BOUNDARY_STILL_LIVE)
+
+    @staticmethod
+    def _tombstone_result(record: _CancelledTombstone) -> NativeExecutionResult:
+        """Build the stored outcome of a proven-cancelled handle."""
+        return NativeExecutionResult(
+            exit_code=record.exit_code,
+            wall_time_seconds=time.monotonic() - record.started_monotonic,
+            timed_out=False,
+            stdout_file=record.stdout_name,
+            stderr_file=record.stderr_name,
+        )
 
     def collect(self, handle: NativeHandle) -> NativeExecutionResult:
         """Reap a terminal process and return its observed outcome.
@@ -436,9 +514,27 @@ class NativeProcessSupervisor:
             the boundary is not terminal yet.
         """
         with self._lock:
-            record = self._records.get(handle.key)
-            if record is None:
-                raise NativeProcessError(f"unknown native handle key {handle.key!r}")
+            record = self._live_record_for(handle.key)
+            if isinstance(record, _CancelledTombstone):
+                result = self._tombstone_result(record)
+                del self._records[handle.key]
+                _LOG.debug("collected native process %s with exit %s", handle.key, record.exit_code)
+                return result
+            record_lock = record.lock
+        # Collection observes under the per-handle lock without the global
+        # lock, so other handles never block on this collect.
+        with record_lock:
+            with self._lock:
+                record = self._live_record_for(handle.key)
+                if isinstance(record, _CancelledTombstone):
+                    result = self._tombstone_result(record)
+                    del self._records[handle.key]
+                    _LOG.debug(
+                        "collected native process %s with exit %s",
+                        handle.key,
+                        record.exit_code,
+                    )
+                    return result
             self._refresh_process_boundary(record)
             return_code = record.proc.poll()
             if return_code is None:
@@ -458,7 +554,9 @@ class NativeProcessSupervisor:
                 stderr_file=record.stderr_name,
             )
             self._close_record_streams(record)
-            del self._records[handle.key]
+            with self._lock:
+                if self._records.get(handle.key) is record:
+                    del self._records[handle.key]
             _LOG.debug("collected native process %s with exit %s", handle.key, return_code)
             return result
 
@@ -606,7 +704,7 @@ class NativeProcessSupervisor:
                             continue
                         if os.getpgid(pid) == pgid and os.getsid(pid) == sid:
                             return True
-                    except (OSError, *_PSUTIL_ERRORS):
+                    except _OS_PSUTIL_ERRORS:
                         continue
             except _PSUTIL_ERRORS:
                 pass
@@ -690,7 +788,7 @@ class NativeProcessSupervisor:
                                 live.add(pid)
                         except ProcessLookupError:
                             continue
-                        except (OSError, *_PSUTIL_ERRORS):
+                        except _OS_PSUTIL_ERRORS:
                             live.add(-3)
                 except _PSUTIL_ERRORS:
                     live.add(-3)

@@ -310,12 +310,14 @@ class _RescueDriver:
         supervisor: ProcessSupervisor,
         item_dir: str,
         should_cancel: Callable[[], bool] | None,
+        work_item: WorkItem | None = None,
     ) -> None:
         self._executor = executor
         self._context = context
         self._supervisor = supervisor
         self._item_dir = item_dir
         self._should_cancel = should_cancel
+        self._work_item = work_item
 
     def run_native(
         self,
@@ -340,11 +342,19 @@ class _RescueDriver:
             stderr_file=request.stderr_file,
             metadata=request.metadata,
         )
-        execution = self._executor._launch_and_wait(
+        quota: tuple[Any, str, str] | None = None
+        if self._work_item is not None:
+            quota = (
+                self._work_item.resources,
+                self._context.run_root,
+                self._work_item.id,
+            )
+        execution = self._executor.launch_and_wait(
             self._supervisor,
             staged_request,
             self._context.poll_interval_seconds,
             should_cancel=self._should_cancel,
+            quota=quota,
         )
         if execution is None:
             return (
@@ -648,7 +658,7 @@ class WorkItemExecutor:
             cancelled = should_cancel is not None and should_cancel()
             if cancelled:
                 return self._finish_cancelled(
-                    work_item, context, wall_start, monotonic_start, confirmed=True
+                    work_item, context, wall_start, monotonic_start, confirmed=False
                 )
             return self._finish_error(
                 work_item,
@@ -665,6 +675,11 @@ class WorkItemExecutor:
                 return self._finish_cancelled(
                     work_item, context, wall_start, monotonic_start, confirmed=True
                 )
+            details: dict[str, Any] = {}
+            if execution_result.timed_out:
+                details["timed_out"] = True
+                if walltime is not None:
+                    details["walltime_seconds"] = walltime
             return self._finish_error(
                 work_item,
                 context,
@@ -673,6 +688,7 @@ class WorkItemExecutor:
                 wall_start,
                 monotonic_start,
                 diagnostics=tuple(diagnostics),
+                details=details or None,
                 recovery=RecoveryInfo(profile=self._recovery_name(context), attempted=False),
             )
         if execution_result.timed_out:
@@ -978,6 +994,24 @@ class WorkItemExecutor:
                 )
         return staged
 
+    def launch_and_wait(
+        self,
+        supervisor: ProcessSupervisor,
+        request: NativeExecutionRequest,
+        poll_interval: float,
+        *,
+        should_cancel: Callable[[], bool] | None,
+        quota: tuple[Any, str, str] | None = None,
+    ) -> tuple[NativeExecutionResult, CancelOutcome | None] | None:
+        """Submit *request* and wait for a terminal outcome (public entry)."""
+        return self._launch_and_wait(
+            supervisor,
+            request,
+            poll_interval,
+            should_cancel=should_cancel,
+            quota=quota,
+        )
+
     def _launch_and_wait(
         self,
         supervisor: ProcessSupervisor,
@@ -1047,13 +1081,40 @@ class WorkItemExecutor:
                     break
                 if walltime is not None and time.monotonic() - monotonic_start > walltime:
                     try:
-                        supervisor.cancel(handle)
-                    except Exception:
-                        pass
+                        timeout_cancel = supervisor.cancel(handle)
+                    except Exception as exc:
+                        return (
+                            NativeExecutionResult(
+                                exit_code=None,
+                                wall_time_seconds=time.monotonic() - monotonic_start,
+                                timed_out=True,
+                                stdout_file=request.stdout_file,
+                                stderr_file=request.stderr_file,
+                            ),
+                            CancelOutcome(
+                                confirmed=False,
+                                detail=f"cancel request failed after timeout: {exc}",
+                            ),
+                        )
+                    if timeout_cancel is not None and not timeout_cancel.confirmed:
+                        return (
+                            NativeExecutionResult(
+                                exit_code=None,
+                                wall_time_seconds=time.monotonic() - monotonic_start,
+                                timed_out=True,
+                                stdout_file=request.stdout_file,
+                                stderr_file=request.stderr_file,
+                            ),
+                            CancelOutcome(
+                                confirmed=False,
+                                detail=f"{timeout_cancel.detail}; timed_out",
+                            ),
+                        )
                     timed_out = True
                     break
                 time.sleep(poll_interval)
             if timed_out:
+                _release_quota()
                 return (
                     NativeExecutionResult(
                         exit_code=None,
@@ -1373,6 +1434,7 @@ class WorkItemExecutor:
             supervisor,
             driver_dir,
             should_cancel,
+            work_item,
         )
         try:
             execution = recovery.execute(recovery_context, driver)

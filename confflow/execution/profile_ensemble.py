@@ -121,11 +121,11 @@ class EnsembleProfile:
         """Normalize parsed ensemble members into domain collections."""
         seed = context.inputs.structure
         if context.inputs.charge is not None:
-            charge = context.inputs.charge
+            charge: int | None = context.inputs.charge
         else:
             charge = seed.charge
         if context.inputs.multiplicity is not None:
-            multiplicity = context.inputs.multiplicity
+            multiplicity: int | None = context.inputs.multiplicity
         else:
             multiplicity = seed.multiplicity
         provenance = _build_provenance(context)

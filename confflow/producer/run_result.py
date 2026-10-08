@@ -19,7 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from ..domain.canonical import canonical_json_bytes, canonical_sha256
@@ -215,7 +215,7 @@ def _iter_run_input_results(run_input_results: Any) -> tuple[Any, ...]:
         return ()
     records: list[Any] = []
     if isinstance(run_input_results, Mapping):
-        collections = run_input_results.values()
+        collections: Iterable[Any] = run_input_results.values()
     else:
         collections = (run_input_results,)
     for collection in collections:

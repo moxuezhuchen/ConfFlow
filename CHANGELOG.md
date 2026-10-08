@@ -67,6 +67,29 @@ published boundary (`confflow.boundary.v4`) byte-identical.
 - **Documentation rewritten** around the V4-only runtime (architecture,
   development, testing, usage, command reference). `4900cb8` (C4.7).
 
+### Fixed
+
+- **Test PATH guard no longer depends on collection order.** The vendor
+  ORCA/Gaussian `PATH` scrub moved from `tests/v4/conftest.py` to
+  `tests/conftest.py`, so every test under `tests/` runs scrubbed
+  (`CONFFLOW_ALLOW_REAL_QC=1` still opts out); `tests.v4.conftest` re-exports
+  `BLOCKED_NATIVE_PREFIXES` and `_scrubbed_path`.
+- **CLI cleanups in `confflow/cli.py`.** Removed the stale
+  `force_consistency` hint and its dedicated `ValueError` branch (the option
+  no longer exists); `--rerun-failed` / `--step` / `-o/--output` stay
+  parseable but are labelled `retired; fails closed` in `--help` and fail
+  closed together; `--stop` also matches `confflow-control-worker` and only
+  stops same-uid process trees; user errors (`ConfFlowError` / `DomainError`)
+  print a single `Error: <message>` line on the terminal with the full
+  traceback only under `--verbose` (exit codes unchanged).
+- **Documentation drift.** `docs/ARCHITECTURE.md` no longer lists the
+  non-existent `confflow/remote/` and `confflow/analysis/` packages;
+  `docs/TESTING.md` states the real coverage gates (`fail_under = 70`, the PR
+  changed-line ≥85% gate and the subsystem floor), drops the retired
+  `release.yml` reference and documents the `pip install -e ".[dev]"`
+  prerequisite for parallel runs; expired `/tmp` baseline paths are replaced
+  with regenerate-from-clean-main instructions.
+
 ## v2.1.6 (2026-08-27) - Attestation-verification fix-forward
 
 ### Fixed
