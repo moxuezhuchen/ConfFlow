@@ -197,13 +197,13 @@ def load_jobdesk() -> JobDeskIntegration:
     if src_text not in sys.path:
         sys.path.insert(0, src_text)
     _purge_conflicting_jobdesk_modules(src)
-    from jobdesk_v2.application.editor.recipes import document_from_recipe_document
     from jobdesk_v2.application.editor.contract.errors import ContractParseError
     from jobdesk_v2.application.editor.contract.v4 import parse_v4_contract_bytes
+    from jobdesk_v2.application.editor.recipes import document_from_recipe_document
     from jobdesk_v2.application.runs.v4_results import parse_result_bytes
 
     def author_v4_document(contract: Any, recipe_id: str) -> Any:
-        """Author one recipe's native V4 document the way JobDesk's editor does."""
+        """Build one recipe's native V4 document the way JobDesk's editor does."""
         for item in contract.recipe_catalog.get("recipes") or ():
             if isinstance(item, dict) and item.get("id") == recipe_id:
                 document = item.get("document")
