@@ -42,7 +42,7 @@ global:
     - "/opt/orca/orca"
 ```
 
-`sandbox_root` restricts managed paths such as `work_dir`, `backup_dir`, and checkpoint input directories to an expected root. `allowed_executables` restricts Gaussian/ORCA executable settings to known single executable targets.
+`sandbox_root` restricts managed paths such as `work_dir` and checkpoint input directories to an expected root. `allowed_executables` restricts Gaussian/ORCA executable settings to known single executable targets.
 
 Even with these settings, run ConfFlow in a dedicated working area and keep unrelated files out of the workflow directory.
 

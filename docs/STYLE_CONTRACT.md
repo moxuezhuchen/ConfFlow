@@ -4,7 +4,7 @@
 
 ## 1) 代码风格
 
-- 格式化：`black` / `ruff format`，行宽 `100`
+- 格式化：`black`，行宽 `100`（`ruff` 只做 lint，不要用 `ruff format` 整体重排，见 `DEVELOPMENT.md` §2）
 - Lint / import 排序：`ruff`（`E,F,I,B,UP,D`）
 - 类型检查：`mypy`
 - 测试：`pytest`
@@ -20,7 +20,8 @@ pytest -q
 
 ### 1.1) 文件头
 
-每个 `.py` 文件必须以如下结构开头：
+每个 `.py` 文件原则上以如下结构开头（历史文件多为例外，实测 476 个 py 文件中
+95 个无 shebang，`ruff` 门禁不检查此项）：
 
 ```python
 #!/usr/bin/env python3
@@ -77,7 +78,7 @@ def load_xyz(path: str) -> list[list[str]]:
 
 ### 1.5) 导出
 
-- 每个公开模块都应声明 `__all__`。
+- 公开模块原则上声明 `__all__`（历史模块多为例外，实测 `confflow/` 内 24 个模块无 `__all__`）。
 - `__all__` 使用多行列表格式，并保留尾逗号。
 - 子包 `__init__.py` 应负责关键符号重导出，并同步维护 `__all__`。
 
@@ -85,10 +86,12 @@ def load_xyz(path: str) -> list[list[str]]:
 
 - 优先使用 `confflow.core.exceptions` 中的自定义异常。
 - 避免在应用层直接抛裸 `RuntimeError` 或 `ValueError`；需要时应映射到更具体的异常类型。
+  例外：pydantic 校验函数惯例抛 `ValueError`（如 `workflow/v4/schema.py` 的拓扑/脚本校验）。
 
 ## 2) 文档风格
 
-- 面向用户的 Markdown 文档统一使用中文说明。
+- 面向用户的 Markdown 文档以中文为主，现状中英并存（`SECURITY_MODEL.md`、`PUBLIC_ALPHA.md`、
+  `CONTROL_PROTOCOL_RFC.md`、`RELEASE.md`、`README.md` 为英文）。
 - 标题层级、列表和代码块保持稳定、简洁，不依赖 Markdown 尾随双空格实现换行。
 - 文档中的代码风格、覆盖率阈值、测试数量、支持版本等事实信息应与仓库当前状态同步。
 - 文档若描述代码注释或 docstring 风格，必须与本文件和 `pyproject.toml` 保持一致。
@@ -101,12 +104,13 @@ def load_xyz(path: str) -> list[list[str]]:
 
 ## 4) 输出契约
 
-- 所有 CLI 命令都将运行日志写入输入目录下的 `<input_basename>.txt`。
+- 顶层 plain-CLI 入口将运行日志写入输入目录下的 `<input_basename>.txt`；`confflow v4 run`
+  的产物为受管运行根目录下的 `run_result.json` 系（见 `COMMAND_REFERENCE.md`）。
 - CLI 退出码统一为：
   - `0`：成功
   - `1`：用法 / 输入 / 配置错误
   - `2`：运行时失败
-- 共享控制台输出助手的文本宽度固定为 `100` 列。
+- 共享控制台输出助手的文本宽度固定为 `80` 列（`confflow/core/console.py::FIXED_WIDTH`）。
 
 ## 5) 变更规则
 

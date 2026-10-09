@@ -34,6 +34,9 @@
   示例环/转子轴使用前必须确认替换）与 `ensemble_refine`
   （多帧 xyz → 去重 → 优化 → 精修 → 频率 → 按能量筛选，`results` 自动绑直接前驱的
   `freq` 步骤；MD 轨迹先抽帧；可选的 N2 脚本预筛需手动插在去重与优化之间）。
+  另有 6 个单算 recipe（`optimize`、`single_point`、`frequency`、`opt_freq`、
+  `transition_state`、`confgen_torsion`），共 8 个，以 `contract --json` 的
+  `supported_recipes` 为准。
   目录见 `confflow/producer/recipes.py` 的 `RECIPE_IDS_V4`。
 
 ## 2. ConfGen TS1 配位实测

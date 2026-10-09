@@ -37,7 +37,9 @@ git pull && pip install .
 - `steps`：每步恰好一个 `executor`，用 `bindings` 声明输入来自哪里（`source.run` 或 `source.step` + `port`）。
   依赖关系只来自 bindings，不来自文件名或列表顺序。
 - 步骤类型：`confgen`（构象生成）、`calculation`（Gaussian / ORCA 计算）、`structure_transform`（精修 `refine`、
-  `deduplicate`、`filter`，YAML 块名 `transform`）、`analysis`（反应/PES 分析）。
+  `deduplicate`、`filter`，YAML 块名 `transform`）、`script`（服务器登记脚本，见 `CONFGEN_CAPABILITIES.md` §1）。
+  `analysis`（反应/PES 分析）已于 R2.2（`383a1f6`）退役：`confflow/analysis/` 不存在，默认 registry 无此
+  capability，`contract --json` 的 `analysis_capabilities` 为空。
 
 没有隐式的清理或去重：想去重就写一个显式的 `structure_transform` 步骤。
 
@@ -152,7 +154,8 @@ confflow v4 run --workflow flow.yaml \
 - 每个步骤发布带类型的 `StepResult`（结构、科学结果、产物）。
 - 整次运行发布 `run_result.json`（`confflow.run_result_manifest.v1`）：步骤状态、digest、结果与产物的可移植定位。
   GUI 客户端只读取它，不重新计算。
-- 反应路径分析产出结构化的反应组结果（TS、前后端点、Gibbs 能、势垒）。
+- 反应路径分析（`analysis` 反应组结果）已于 R2.2（`383a1f6`）/ R2.3a（`e961d3c`）退役，
+  详见 `CONFGEN_CAPABILITIES.md` §5 与 `architecture/WORKFLOW_V4.md` §30。
 
 ## 6. 给 GUI 与脚本用的接口
 

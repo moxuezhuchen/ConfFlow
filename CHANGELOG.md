@@ -108,6 +108,26 @@ published boundary (`confflow.boundary.v4`) byte-identical.
   binding rule) are corrected to the measured values.
   `irc/qst2/qst3/neb/goat/tspes` retired in R2.2 (`383a1f6`, 13→7);
   `ensemble_refine` added by N4 (`c31b32e`, →8).
+- **Documentation drift (review-tail audit).** `docs/architecture/WORKFLOW_V4.md`
+  §28 (TSPES mini gate) and §34 (cross-repo E2E) still described the R2.3a-retired
+  (`e961d3c`) fake-TSPES chain / `assemble_reaction_result` as current fact; both
+  are now marked retired with the design intent kept, and the Final Closure line
+  no longer lists the retired local/remote dual path, IRC fan-out or Analysis/PES.
+  The refine appendix default is corrected to the measured
+  `REFINE_DEFAULT_BOND_SCALE = 1.15`, and the `confflow v4` subcommand count to 6.
+  Companion fixes: `docs/PRODUCER_INTENT.md` Seeds drops the retired GOAT
+  `workflow_identity_only` scope; `docs/USAGE.md` no longer lists `analysis` as a
+  current step type; `docs/CONFGEN_CAPABILITIES.md` names all 8 recipes;
+  `README.md` capability-contract artifacts corrected to the measured
+  `run_result`/`run_generation`, with the four retired content schemas replaced by
+  the current contract/manifest ids; `docs/STYLE_CONTRACT.md` (formatter, shebang,
+  `__all__`, `ValueError`, doc language, console width 80, `.txt` scope),
+  `docs/DEVELOPMENT.md` (dev extras, `REMOVED_LEGACY_MODULES` home in
+  `tools/architecture_policy.py`, archived `docs/refactor/` location),
+  `docs/TESTING.md` (fake_goat/fake_irc/fake_neb are test doubles, not product
+  capabilities), `docs/ARCHITECTURE.md` (worker-handoff wording, empty
+  `analysis_capabilities`) and `docs/SECURITY_MODEL.md` (stale `backup_dir`)
+  corrected to measured values.
 
 ## v2.1.6 (2026-08-27) - Attestation-verification fix-forward
 

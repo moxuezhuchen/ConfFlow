@@ -21,13 +21,15 @@ pytest --collect-only -q | tail -1   # 当前收集到的测试数（文档不�
 - 本地并行需要先 `pip install -e ".[dev]"`（含 pytest-xdist），再 `pytest -q -n auto`；
   `scripts/test.sh` 透传任意 pytest 参数。
 - 真实的 Gaussian / ORCA 不在测试范围内；所有计算类测试都用 `tests/v4/fakes/`（`fake_g16.py`、`fake_orca.py`、
-  `fake_goat.py`、`fake_irc.py`、`fake_neb.py`）这类行为可控的假可执行文件。
+  `fake_goat.py`、`fake_irc.py`、`fake_neb.py`）这类行为可控的假可执行文件。注意：`fake_goat` / `fake_irc` /
+  `fake_neb` 只是测试替身，不代表产品能力——GOAT/IRC/NEB 已于 R2.2（`383a1f6`）退役，
+  `contract --json` 无对应项。
 
 ## 2. 目录
 
 | 位置 | 内容 |
 | --- | --- |
-| `tests/v4/` | V4 的主体：domain、编译器、digest、执行器、持久化、resume、remote、分析、producer 契约/边界/authoring/intent、ConfGen v3（torsion / ring / coordination / 报告）、refine 与拓扑、架构护栏、跨仓测试 |
+| `tests/v4/` | V4 的主体：domain、编译器、digest、执行器、持久化、resume、producer 契约/边界/authoring/intent、ConfGen v3（torsion / ring / coordination / 报告）、refine 与拓扑、架构护栏、跨仓测试（`analysis`、`remote` 目录与多输出机制已退役，见 `architecture/WORKFLOW_V4.md` §§17–21、30） |
 | `tests/science/` | `confflow.science` 的图同构映射与帧比较（含按节点数/剪枝数固定的工作量测试）和带氢分子数据 `data/molecules_h.json` |
 | `tests/` 根目录 | 入口与基础设施：CLI、控制协议适配器与外部 worker、执行服务与 SQLite 仓库、安装/发布溯源与 wheel 安装器、路径策略、日志、I/O、数据表、键感知、示例工作流、退役 wire 的失败关闭 |
 | `tests/fixtures/` | 静态夹具：ConfGen（含 TS1 基准）、控制协议、Gaussian 日志样例 |
@@ -46,7 +48,7 @@ pytest --collect-only -q | tail -1   # 当前收集到的测试数（文档不�
 - **不要用耗时断言性能。** 有预算的算法（例如图映射搜索）把节点数、映射数、剪枝数和判定结果当作固定值来断言。
 - **构象比较类夹具必须使用带氢的真实分子。** 不带氢的夹具会让末端键没有可测二面角，等价性结论没有意义。
 - 比较构象集合时使用只含**真旋转**的 Kabsch RMSD（不含镜像），阈值写明；不要逐原子比较未叠合的坐标。
-- 删除代码时同时删除只守护它的测试；"已删除的模块必须不存在"的护栏保留（`REMOVED_LEGACY_MODULES`）。
+- 删除代码时同时删除只守护它的测试；"已删除的模块必须不存在"的护栏保留（清单 `REMOVED_LEGACY_MODULES` 位于 `tools/architecture_policy.py`）。
 - 用 `tmp_path`，不要自己建临时目录；`importlib.reload` 放进 `try/finally`。
 - 子进程类测试（导入闭包、worker、CLI）要给足超时，并避免依赖机器忙闲。
 
@@ -64,8 +66,8 @@ pytest --collect-only -q | tail -1   # 当前收集到的测试数（文档不�
 
 ## 6. 引擎与契约基线（重构证据）
 
-外部基线（`$BASE`，由 `MANIFEST.json` 钉住 104 个文件）固定了 TS1（三种后端）的 ConfGen 输出、全部引擎报告、契约与边界的 digest；
-`/tmp` 重启即清空，基线不在本仓写死路径，需从干净 main 用 `tools/refactor/` 里的脚本重新生成（`golden_check.py`、
+外部基线（`$BASE`，`MANIFEST.json` 钉住文件清单——“104 个文件”之数在本仓无对应证据，
+`grep 104 tests/ tools/` 无命中，`/tmp` 基线重启即清空，需从干净 main 用 `tools/refactor/` 里的脚本重新生成（`golden_check.py`、
 `capture_engine_reports.py`、`contract_digests.py`、`json_paths_diff.py`，用法见 `tools/refactor/README.md`），
 再逐字节比较。任何会改变科学输出的改动都必须先用它们给出差异，再决定是否更新基线。
 `tests/fixtures/paths_equivalence/` 记录 legacy paths 与 typed v3 声明在含氢分子上的等价性结论。

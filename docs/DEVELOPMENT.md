@@ -14,7 +14,8 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-- `dev` 额外装 black、ruff、mypy、pytest、pytest-cov、build 与类型桩。
+- `dev` 额外装 black、ruff、mypy、pytest、pytest-cov、pytest-xdist、build、jsonschema、
+  referencing、rfc8785 与类型桩（完整清单见 `pyproject.toml` 的 `optional-dependencies`）。
 - `speed` / `all` extra 装 numba；目前没有任何代码路径依赖 numba 加速（`confflow/__init__.py` 只探测它是否可用）。
 - 真实的 Gaussian / ORCA 需要自己安装并取得许可；仓库内测试只用 `tests/v4/fakes/` 里的假可执行文件。
 
@@ -82,7 +83,7 @@ pytest -q                  # 见 TESTING.md；scripts/test.sh 会把所有产物
 
 - `tests/v4/test_architecture_boundaries.py`：包依赖规则、禁止导入前缀、"已删除的模块必须不存在"、导入闭包检查。
 - `scripts/v4_arch_scan.py`、`scripts/architecture_metrics.py`：静态扫描与度量，CI 外也可手动运行。
-- 删除代码时要同时删掉只守护它的测试（以及它们在护栏清单中的条目），并把已删除的模块名加入 `REMOVED_LEGACY_MODULES`。
+- 删除代码时要同时删掉只守护它的测试（以及它们在护栏清单中的条目），并把已删除的模块名加入 `REMOVED_LEGACY_MODULES`（位于 `tools/architecture_policy.py`，由 `tests/v4/test_architecture_boundaries.py` 消费）。
 
 ## 8. 发布
 
@@ -96,5 +97,7 @@ pytest -q                  # 见 TESTING.md；scripts/test.sh 会把所有产物
 ## 9. 重构记录
 
 2026 年的架构瘦身（删除 calc/blocks/legacy CLI、边界瘦身、输入简化、refine 对称映射）的计划、逐卡验收和检查点在
-历史归档：`docs/refactor/`（`PLAN.md`、`LOG.md`、`baseline/` 等）已随 architecture-diet-1 归档（见 `docs/ARCHITECTURE_DIET_1.md` 与 `docs/archive_manifests/architecture_diet_1.json`，按归档提交 SHA/blob 定位）。
+历史归档：`docs/refactor/`（`PLAN.md`、`LOG.md`、`baseline/` 等）已随 architecture-diet-1 归档出树
+（`ls docs/refactor` 不存在；内容见 `docs/archive_manifests/architecture_diet_1.json`，
+按归档提交 SHA/blob 定位，另见 `docs/ARCHITECTURE_DIET_1.md`）。
 等价性证据 `paths_equivalence/` 已迁至 `tests/fixtures/paths_equivalence/`。验收协议在 `docs/process/ACCEPTANCE.md`，通用规则在 `docs/process/RULES.md`，验收工具在 `tools/refactor/` 与并列的 `tools/refactor-acc/`。这些文件是历史记录与证据，普通开发不需要改它们。

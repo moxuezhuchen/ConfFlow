@@ -127,13 +127,14 @@ seeds, scheduler, machine/execution, annotations, labels, input
 descriptions, output paths.  Explicit seeds are preserved verbatim and
 audited as `explicit` — even on steps that are not stochastically
 required (e.g. an uncapped typed ConfGen carrying a user seed);
-full-enumeration typed ConfGen without a user seed gets none; capped ConfGen and GOAT
-get derived-or-explicit seeds in strict `confgen.seed` /
+full-enumeration typed ConfGen without a user seed gets none; capped ConfGen
+gets derived-or-explicit seeds in strict `confgen.seed` /
 `calculation.seed`.  Seeds assign after machine and checkpoint updates,
-so checkpoint edges move seeds.  GOAT seeds are workflow identity only
-(`seed_scope: workflow_identity_only`) — never injected into
-`native.goat` (ORCA `RANDOMSEED` is boolean; installed ORCA 6.1.1 has no
-integer RNG seed), so no native determinism is promised.
+so checkpoint edges move seeds.  (GOAT retired in R2.2 (`383a1f6`):
+`seed_scope_for_step` now returns only `native_sampling` for confgen or
+`None` — `grep workflow_identity_only confflow/` is empty and
+`needs_seed` returns False for `executor == calculation`, so calculation
+steps never derive seeds.)
 
 ## Presets (Phase 7)
 
