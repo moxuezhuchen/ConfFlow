@@ -688,16 +688,15 @@ StructureSet 表达（1/20/100 输入下 ExecutionPlan step 数不变，已钉�
 - 现行事实：worker 按 program 经 PATH 解析可执行文件、不携带 producer 绝对路径的原则，
   由控制协议 v1 worker 延续（见 V4-4 章首横幅）。
 
-## 28. TSPES mini gate（事实）
+## 28. TSPES mini gate（已退役，R2.3a `e961d3c`）
 
-- 20 TS（group rxn-00..19）→ 20 IRC items → 40 endpoints →
-  40 opt items → 40 optimized → 40 SP items → 40 results，全经 production
-  adapter/profile/executor（IRC 解析 shim 已被真实布线取代，F 的 shim
-  测试继续通过）。
-- 按 `(group_key, role)` dict 重组回答每 TS 双向结果，无 list 索引。
-- 19/20：require_all 下 FAILED，38 endpoints durable，retry 恰好 1
-  native → 最终 40；allow_partial 发布 38-subset 且失败组明确缺席。
-- Partial consumption 规则延续 V4-1（multi-output 不绕过）。
+> 以下为退役前记录，不代表现行代码：R2.3a 删除 `confflow/analysis/`（11 个文件）与
+> `scripts/e2e_confflow_v4.py`（fake TSPES 链），`assemble_reaction_result` 在
+> `confflow/` 内零命中（全仓仅 `tests/v4/test_v46_cross_repo_e2e.py:32` docstring
+> 提及 1 次，且同文件声明该链已退役）。设计意图保留：按 `(group_key, role)`
+> 重组双向结果（无 list 索引），partial 策略显式（`require_complete` 默认整步失败，
+> `accept_subset` 缺组省略）。退役前数字（20 TS → 40 endpoints、19/20、
+> `incomplete_path` 等）当时有效，现无对应物。
 
 ## 29. V4-5 非目标与遗留风险
 
@@ -715,6 +714,7 @@ WorkItem / WorkItemResult / StepResult / WorkItemExecutor / ProgramAdapter /
 WorkItemStore / remote handoff-result / multi-output / named-input 契约，
 可直接实现 Analysis executor、Gibbs/PES aggregation、Producer contract、
 JobDesk 集成、legacy V2/V3 retirement。
+（注：Analysis executor 在 V4-6 落地后已于 R2.3a `e961d3c` 退役，见 §30。）
 
 
 ---
@@ -804,7 +804,8 @@ XYZ / typed input
   min_xyz）零发布。
 - CLI：`confflow v4 contract --json`（machine JSON）、
   `confflow v4 validate --workflow/--stdin --json`（结构化诊断）、
-  `confflow v4 run ...`（见 §32）。
+  `confflow v4 run ...`（见 §32；另有 `boundary`/`canonical`/`authoring`，
+  共 6 个子命令，见 `confflow/v4cli.py::_build_parser`）。
 - Drift 门：schema 变而 manifest 不变 → fail；registry 变而 contract
   不变 → fail；recipe 不可编译 → fail。
 
@@ -818,7 +819,7 @@ XYZ / typed input
   计算步按 work item resume，从未启动的步继续——永不全重跑。
 - **XYZ importer**：`import_xyz`（多 block，`xyz:<index>` 稳定 id，
   路径仅 provenance）。
-- **CLI 切面**：`confflow/v4cli.py`（`cli.py` 仅加 3 行 dispatch）。
+- **CLI 切面**：`confflow/v4cli.py`（`cli.py` 仅加一个 `v4` 分支 dispatch）。
   Legacy V2/V3 文档 → `legacy_workflow_not_executable` + migration
   提示，无自动迁移、无 fallback。
 - **Legacy 退役**（E 审计结论执行）：仅删除被证无 production 引用的
@@ -843,16 +844,15 @@ XYZ / typed input
 - 跨仓库只走 wire（contract bytes/validation response/submission/
   manifest），JobDesk 永不 `import confflow`（AST 门）。
 
-## 34. Cross-repo E2E（事实）
+## 34. Cross-repo E2E（已退役，R2.3a `e961d3c`）
 
-- 至少一个门使用真实 producer bytes（`generate_contract_bytes` →
-  JobDesk 解析 → recipe 建 workflow → 同字节 ConfFlow 验证 →
-  fake 执行 → 20→40 管线 → 真实 `assemble_reaction_result`×20 →
-  manifest → JobDesk 解析/展示）。
-- TSPES fake 全链：20 TS → 20 IRC items → 40 endpoints → opt/freq/
-  SP → 20 ReactionGroups（每组 5 结果）→ manifest 自洽（引用可解、
-  checksum 对字节、provenance 一致）。
-- 失败矩阵 13 项全结构化失败、无静默回退。
+> 以下为退役前记录，不代表现行代码：fake 执行 → 20→40 管线 → 真实
+> `assemble_reaction_result`×20 → manifest 的全链、20 ReactionGroups（每组 5 结果）、
+> 失败矩阵 13 项，均随 `confflow/analysis/` 与 `scripts/e2e_confflow_v4.py` 删除而退役
+> （`grep assemble_reaction_result confflow/` 零命中）。
+> 现行 E2E 事实以 `tests/v4/test_v46_cross_repo_e2e.py` 为准：真实 producer bytes →
+> JobDesk 解析 → recipe 建 workflow → 同字节验证 → fake counts 执行 → manifest →
+> JobDesk 解析/展示（`USING_REAL_ANALYSIS is False`，无 analysis 环节）。
 
 ## 35. V4-6 遗留与风险
 
@@ -868,8 +868,9 @@ XYZ / typed input
 
 FINAL CLOSURE READINESS：YES — 在不再改变核心架构的前提下，可直接
 执行最终验收（JobDesk → 真实 producer contract → 真实 V4 workflow →
-真实 Gaussian/ORCA → 中断/resume → local/remote → IRC fan-out →
-端点 Opt/Freq/SP → Analysis/PES → manifest → JobDesk）。
+真实 Gaussian/ORCA → 中断/resume → 端点 Opt/Freq/SP → manifest → JobDesk）。
+（原句中的 local/remote 双路径、IRC fan-out、Analysis/PES 均已退役：
+remote 见 V4-4 章首横幅，IRC/Analysis 见 R2.2 `383a1f6` / R2.3a `e961d3c`。）
 
 ---
 
@@ -889,8 +890,8 @@ FINAL CLOSURE READINESS：YES — 在不再改变核心架构的前提下，可�
   （缺省为 ConfGen 的默认值 1.15）。`refine` 用 ConfGen 的同一构图函数（`planner.build_typed_graph`）建图，
   因此同一份声明在两边得到完全相同的边集合；映射必须保持非共价边的类型（反应键连在不同原子对上的
   两个几何相同的结构不会被合并）。索引越界、与结构原子数不符、矛盾的类型一律报错。
-  未提供时，拓扑仍由几何感知得到（`bond_scale`，默认 1.2），行为不变；同时给出 `bond_scale` 与
+  未提供时，拓扑仍由几何感知得到（`bond_scale`，默认 1.15，与 ConfGen 默认一致），行为不变；同时给出 `bond_scale` 与
   `topology_bonds` 属于冲突，报错。
 - **与旧 refine 工具的 `AddBond`/`DelBond` 的差异（已接受）：** 同一原子对同时出现在 add 与 del 时，
   旧实现先删后加（add 胜），ConfGen 与新实现先加后删（del 胜）；非法条目旧为静默忽略，新为报错；
-  声明了拓扑时感知用的 `bond_scale` 由 1.2 变为 ConfGen 的 1.15；来源由逐帧注释改为步骤参数。
+  声明了拓扑时感知用的 `bond_scale` 与 ConfGen 默认一致取 1.15（实测 `REFINE_DEFAULT_BOND_SCALE = 1.15`）；来源由逐帧注释改为步骤参数。
