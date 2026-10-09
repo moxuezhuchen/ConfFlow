@@ -120,8 +120,8 @@ published boundary (`confflow.boundary.v4`) byte-identical.
   current step type; `docs/CONFGEN_CAPABILITIES.md` names all 8 recipes;
   `README.md` capability-contract artifacts corrected to the measured
   `run_result`/`run_generation`, with the four retired content schemas replaced by
-  the current contract/manifest ids; `docs/STYLE_CONTRACT.md` (formatter, shebang,
-  `__all__`, `ValueError`, doc language, console width 80, `.txt` scope),
+  the current contract/manifest ids; `docs/STYLE_CONTRACT.md` (formatter,
+  console width 80, `.txt` scope),
   `docs/DEVELOPMENT.md` (dev extras, `REMOVED_LEGACY_MODULES` home in
   `tools/architecture_policy.py`, archived `docs/refactor/` location),
   `docs/TESTING.md` (fake_goat/fake_irc/fake_neb are test doubles, not product

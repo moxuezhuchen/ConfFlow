@@ -20,8 +20,7 @@ pytest -q
 
 ### 1.1) 文件头
 
-每个 `.py` 文件原则上以如下结构开头（历史文件多为例外，实测 476 个 py 文件中
-95 个无 shebang，`ruff` 门禁不检查此项）：
+每个 `.py` 文件必须以如下结构开头：
 
 ```python
 #!/usr/bin/env python3
@@ -78,7 +77,7 @@ def load_xyz(path: str) -> list[list[str]]:
 
 ### 1.5) 导出
 
-- 公开模块原则上声明 `__all__`（历史模块多为例外，实测 `confflow/` 内 24 个模块无 `__all__`）。
+- 每个公开模块都应声明 `__all__`。
 - `__all__` 使用多行列表格式，并保留尾逗号。
 - 子包 `__init__.py` 应负责关键符号重导出，并同步维护 `__all__`。
 
@@ -86,12 +85,10 @@ def load_xyz(path: str) -> list[list[str]]:
 
 - 优先使用 `confflow.core.exceptions` 中的自定义异常。
 - 避免在应用层直接抛裸 `RuntimeError` 或 `ValueError`；需要时应映射到更具体的异常类型。
-  例外：pydantic 校验函数惯例抛 `ValueError`（如 `workflow/v4/schema.py` 的拓扑/脚本校验）。
 
 ## 2) 文档风格
 
-- 面向用户的 Markdown 文档以中文为主，现状中英并存（`SECURITY_MODEL.md`、`PUBLIC_ALPHA.md`、
-  `CONTROL_PROTOCOL_RFC.md`、`RELEASE.md`、`README.md` 为英文）。
+- 面向用户的 Markdown 文档统一使用中文说明。
 - 标题层级、列表和代码块保持稳定、简洁，不依赖 Markdown 尾随双空格实现换行。
 - 文档中的代码风格、覆盖率阈值、测试数量、支持版本等事实信息应与仓库当前状态同步。
 - 文档若描述代码注释或 docstring 风格，必须与本文件和 `pyproject.toml` 保持一致。
