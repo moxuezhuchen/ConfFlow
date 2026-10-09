@@ -98,8 +98,11 @@ WORKFLOW_SCHEMA_V4 = "confflow.workflow.v4"
 VALIDATION_SCHEMA_V1 = "confflow.configuration-validation.v1"
 RESULT_MANIFEST_SCHEMA_V1 = "confflow.run_result_manifest.v1"
 REACTION_PROFILE_CAPABILITY = "confflow.contract.analysis.reaction_profile.v1"
-HANDOFF_CAPABILITY = "confflow.control.worker-handoff.v3"
-RESULT_CAPABILITY = "confflow.control.worker-result.v3"
+# R2.2 (383a1f6) / R2.3f (9e479fe): the typed remote transport
+# (confflow.remote, worker-handoff v2/v3, worker-result v2/v3) is retired;
+# the live contract carries no remote section and the only handoff envelope
+# is control-protocol v1 (confflow/worker_handoff.py HANDOFF_SCHEMA).  The
+# retired v3 capability strings are therefore NOT defined here anymore.
 
 # Every artifact digest below is "sha256:" + hex(sha256(canonical JSON)).
 
@@ -242,7 +245,9 @@ def build_contract_envelope_double(
         "result_schema": result_schema,
         "result_schema_sha256": _canonical_sha256(result_schema),
         "validation_response_schema": VALIDATION_SCHEMA_V1,
-        "remote_capability": {"handoff": HANDOFF_CAPABILITY, "result": RESULT_CAPABILITY},
+        # R2.2: no remote section (retired with confflow.remote; the live
+        # contract published by confflow.producer.contract has no
+        # remote_capability member).
     }
     unsigned = {key: value for key, value in envelope.items() if key != "contract_digest"}
     envelope["contract_digest"] = _canonical_sha256(unsigned)
@@ -585,10 +590,6 @@ class TestContractRoundtrip:
         assert parsed["analysis_capabilities"] == [
             {"name": "reaction_profile", "contract_version": REACTION_PROFILE_CAPABILITY}
         ]
-        assert parsed["remote_capability"] == {
-            "handoff": HANDOFF_CAPABILITY,
-            "result": RESULT_CAPABILITY,
-        }
         assert parsed["validation_response_schema"] == VALIDATION_SCHEMA_V1
 
     def test_digest_reverification_is_canonical(self) -> None:
@@ -644,7 +645,6 @@ class TestContractRoundtrip:
             "result_schema",
             "result_schema_sha256",
             "validation_response_schema",
-            "remote_capability",
         ):
             assert key in envelope, key
 
