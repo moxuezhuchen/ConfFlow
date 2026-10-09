@@ -788,7 +788,13 @@ XYZ / typed input
   `confflow.configuration-validation.v1`（V4 诊断字段天然兼容）。
 - 内容全部由真实源生成（零复制）：V4 workflow schema bytes、
   editor manifest（pointer 逐个验证存在于 schema，否则 build 失败）、
-  recipe catalog（11 个全部真实编译，TSPES = 8 步真链）、registry
+  recipe catalog（8 个全部真实编译：optimize/single_point/frequency/
+  opt_freq/transition_state/confgen_torsion/monomer_conformers/
+  ensemble_refine；实测以 `confflow/producer/recipes.py` 的
+  `RECIPE_IDS_V4` 与 `confflow v4 contract --json` 的 recipe 目录为准。
+  退役：`irc/qst2/qst3/neb/goat/tspes` 已于 R2.2（`383a1f6`）从契约删除
+  （13→7），`ensemble_refine` 由 N4（`c31b32e`）加入（→8）；旧文“11 个、
+  TSPES 真链”已失效）、registry
   capabilities、ports/pairing/cardinality、resources、
   completion/scheduler、native escape-hatch、analysis capabilities、
   result schema（`remote_capability`（handoff/result）已于 R2.2（`383a1f6`）从契约删除，现行契约无 remote 段）。

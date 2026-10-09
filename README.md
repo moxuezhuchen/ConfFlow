@@ -281,7 +281,9 @@ V4 capabilities at a glance:
 
 - **Producer Contract** (`confflow.configuration-contract.v4`): workflow
   schema, editor manifest, recipe catalog (optimize/single_point/
-  frequency/opt_freq/transition_state/irc/qst2/qst3/neb/goat/tspes),
+  frequency/opt_freq/transition_state/confgen_torsion/monomer_conformers/
+  ensemble_refine — 8 个，实测以 `confflow/producer/recipes.py` 的
+  `RECIPE_IDS_V4` 为准；`irc/qst2/qst3/neb/goat/tspes` 已于 R2.2 退役),
   registry capabilities, ports, resources, analysis + result schemas —
   all generated from the real registries, all digest-pinned. JobDesk
   edits, validates, and submits through this contract.

@@ -25,8 +25,8 @@ including `topology` patch fields — no guessed chemistry),
 `freeze: []` is a valid explicit clear), `recipe` (optional reviewed
 `producer.recipes` id as the base chain), `cards` (optional reusable
 templates, see below), `role_cards` (optional recipe role mapping, see
-below), `recipe_cards` (optional `tspes` normal mode
-`{low_level, single_point}`, see below),
+below), `recipe_cards` (retired in R2.2 with the `tspes` recipe:
+declaring it fails closed, see below),
 `steps` (step intents; required unless a recipe supplies the chain).
 
 Step: `card` (`<type>@v1`, required; mapping refs reject unknown keys),
@@ -59,8 +59,10 @@ Non-applicable fields are rejected, never silently dropped (a seed or
 program on a transform, a program/role/adapter/profile/checks/recovery
 on a confgen, a preset on a calculation).
 
-Cards v1: `opt, sp, freq, opt_freq, ts, ts_freq, irc, goat, qst2, qst3, neb,
-confgen, refine, deduplicate`.  Plain `ts`/`qst2`/`qst3` legs expect a
+Cards v1: `opt, sp, freq, opt_freq, ts, ts_freq,
+confgen, refine, deduplicate` (9 个，实测以 `confflow/producer/cards.py`
+的 `CARD_TYPES` 为准；`irc, goat, qst2, qst3, neb` 已于 R2.2
+(`383a1f6`) 退役，引用它们会 fail closed).  Plain `ts` legs expect a
 produced geometry (`geometry_required`); only the `*_freq` cards expect
 frequency output (`ts_freq` carries `imaginary_frequency_count`
 expected 1).  `opt_freq` expects geometry plus frequencies.  Unknown
@@ -95,19 +97,22 @@ and purpose-card defaults (adapter/profile/checks/check_params/recovery)
 replace catalog demo values per stage.  Plain-card role mismatches are
 refused unless mapped by explicit step id.
 
-`recipe_cards: {low_level: '<family>', single_point: '<sp>'}` (currently
-`tspes` only) generates that role mapping mechanically (`ts`/`freq`/`opt`/
-`irc` from the low-level family, `sp` shared twice from the single-point
-card).  Explicit `role_cards` still win on conflicts.  Provenance records
-`named_card`, `role_card`, `family_variant`, and `purpose` alongside the
-existing keys (never replacing them).
+`recipe_cards: {low_level: '<family>', single_point: '<sp>'}` is retired:
+the only recipe family that accepted the normal mode (`tspes`) was
+removed in R2.2 (`383a1f6`), so declaring `recipe_cards` now fails
+closed (`confflow/producer/intent/recipes.py::recipe_cards_to_role_cards`
+raises for every recipe).  Explicit `role_cards` is the only shortcut.
+Provenance records `named_card`, `role_card`, `family_variant`, and
+`purpose` alongside the existing keys (never replacing them).
 
 ## Linear bindings (Phase 4)
 
 Omitted `bindings` wire the linear predecessor: head <- the (unique)
 default run structure input; step N <- step N-1 `structures`.  `from`
-overrides for branches.  Named cards (`qst2`/`qst3`/`neb`) always need
-explicit bindings.  Zero/multiple candidates fail instead of guessing.
+overrides for branches.  No current card requires explicit bindings
+(every `requires_explicit_bindings` in `confflow/producer/cards.py` is
+false); the old QST/NEB explicit-bindings rule retired with those cards
+in R2.2.  Zero/multiple candidates fail instead of guessing.
 
 ## Seeds (Phase 2)
 

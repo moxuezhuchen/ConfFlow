@@ -98,6 +98,16 @@ published boundary (`confflow.boundary.v4`) byte-identical.
   `release.yml` reference and documents the `pip install -e ".[dev]"`
   prerequisite for parallel runs; expired `/tmp` baseline paths are replaced
   with regenerate-from-clean-main instructions.
+- **Documentation drift (recipe catalog).** The live recipe catalog is 8
+  recipes (`optimize/single_point/frequency/opt_freq/transition_state/
+  confgen_torsion/monomer_conformers/ensemble_refine`, per
+  `confflow/producer/recipes.py::RECIPE_IDS_V4` and
+  `confflow v4 contract --json`): `docs/architecture/WORKFLOW_V4.md` §31
+  ("11 个、TSPES 真链"), `README.md` (11-id list) and
+  `docs/PRODUCER_INTENT.md` (card list, `tspes recipe_cards` lane, QST/NEB
+  binding rule) are corrected to the measured values.
+  `irc/qst2/qst3/neb/goat/tspes` retired in R2.2 (`383a1f6`, 13→7);
+  `ensemble_refine` added by N4 (`c31b32e`, →8).
 
 ## v2.1.6 (2026-08-27) - Attestation-verification fix-forward
 
