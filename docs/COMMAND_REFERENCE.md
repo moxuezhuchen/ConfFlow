@@ -92,4 +92,4 @@ confflow --stop
 ## 辅助入口
 
 - `confflow-control-worker`：控制协议 v1 的外部 worker（排队的启动意图），见 `docs/CONTROL_PROTOCOL_RFC.md`。
-- `confflow-fixture-agent`：显式启用的、不做计算的生命周期夹具，仅用于测试。
+- `confflow-fixture-agent`：显式启用的、不做计算的生命周期夹具，仅用于测试（不随包 `project.scripts` 安装；本机 `/usr/local/bin` 的副本为遗留安装产物）。

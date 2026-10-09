@@ -88,7 +88,7 @@
       "prod_files": 26,
       "prod_loc_limit": 10488,
       "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
-      "reason": "2026-10-08 mypy arg-type 收紧：上限=实测值，待用户确认"
+      "reason": "2026-10-08 mypy arg-type 收紧：上限=实测值，用户已于 2026-10-09 确认"
     },
     {
       "id": "persistence",
@@ -122,7 +122,7 @@
       "prod_files": 14,
       "prod_loc_limit": 5940,
       "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
-      "reason": "2026-10-08 mypy arg-type 收紧：上限=实测值，待用户确认"
+      "reason": "2026-10-08 mypy arg-type 收紧：上限=实测值，用户已于 2026-10-09 确认"
     },
     {
       "id": "execution",
@@ -170,7 +170,7 @@
       "prod_files": 2,
       "prod_loc_limit": 317,
       "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
-      "reason": "2026-10-08 mypy arg-type 收紧：上限=实测值，待用户确认"
+      "reason": "2026-10-08 mypy arg-type 收紧：上限=实测值，用户已于 2026-10-09 确认"
     },
     {
       "id": "common",
@@ -184,5 +184,5 @@
   ],
   "tests_total_files": 246,
   "tests_total_loc_limit": 97692,
-  "tests_total_reason": "2026-10-08 review 修复（A1-A6 执行层缺陷、C2 mypy 收紧、C3 进程监管）：上限=实测值，用户已于 2026-10-08 确认；E 轮覆盖率补测；2026-10-08 mypy cast 根因修正的回归测试，待用户确认"
+  "tests_total_reason": "2026-10-08 review 修复（A1-A6 执行层缺陷、C2 mypy 收紧、C3 进程监管）：上限=实测值，用户已于 2026-10-08 确认；E 轮覆盖率补测；2026-10-08 mypy cast 根因修正的回归测试，用户已于 2026-10-09 确认"
 }

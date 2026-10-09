@@ -4,7 +4,7 @@
 
 ## 1) 代码风格
 
-- 格式化：`black` / `ruff format`，行宽 `100`
+- 格式化：`black`，行宽 `100`（`ruff` 只做 lint，不要用 `ruff format` 整体重排，见 `DEVELOPMENT.md` §2）
 - Lint / import 排序：`ruff`（`E,F,I,B,UP,D`）
 - 类型检查：`mypy`
 - 测试：`pytest`
@@ -101,12 +101,13 @@ def load_xyz(path: str) -> list[list[str]]:
 
 ## 4) 输出契约
 
-- 所有 CLI 命令都将运行日志写入输入目录下的 `<input_basename>.txt`。
+- 顶层 plain-CLI 入口将运行日志写入输入目录下的 `<input_basename>.txt`；`confflow v4 run`
+  的产物为受管运行根目录下的 `run_result.json` 系（见 `COMMAND_REFERENCE.md`）。
 - CLI 退出码统一为：
   - `0`：成功
   - `1`：用法 / 输入 / 配置错误
   - `2`：运行时失败
-- 共享控制台输出助手的文本宽度固定为 `100` 列。
+- 共享控制台输出助手的文本宽度固定为 `80` 列（`confflow/core/console.py::FIXED_WIDTH`）。
 
 ## 5) 变更规则
 

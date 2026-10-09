@@ -28,16 +28,17 @@ record. Returns `{"resources", "scheduler", "provenance"}`.
   `on_failure` (`continue`/`fail_fast`) is preserved verbatim.
 - **Operational schema (coordinated authoring/UI surface).** `executable`
   accepts a plain path string, `None`, or a per-program mapping of program
-  names to paths. `binding_id` names the execution binding. The endpoint
-  aliases `remote`, `remote_target`, and `target` canonicalize to `target`
-  and conflict with each other when they disagree. `env`, `sandbox`,
+  names to paths. `binding_id` names the execution binding.
+  The `remote` / `remote_target` / `target` endpoint locators are retired
+  with remote delivery (R2.2): profiles declaring any of them fail closed
+  (`confflow/producer/machine.py` R2.2 comment). `env`, `sandbox`,
   `allowed_executables`, and `walltime_seconds` are validated. All
   operational fields travel in `provenance` only.
 - **Digest contract.** Returned `resources` are scientific (they move step
   and definition digests). Scheduler width, `on_failure`, and every
   operational field are digest-inert provenance.
 
-## `wire_checkpoint_reuse(document, target, source, mode="checkpoint", *, allow_method_change=False)`
+## `wire_checkpoint_reuse(document, target_step_id, source_step_id, mode="checkpoint", *, allow_method_change=False, registry=None)`
 
 Adds one semantic checkpoint edge to a copied strict V4 document: the target
 gains a `checkpoint` input binding fed by the source `artifacts` output with

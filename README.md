@@ -103,12 +103,8 @@ Capability contract (JSON, schema version **4**):
     "control_worker": true
   },
   "artifacts": {
-    "run_summary": "run_summary.json",
-    "workflow_stats": "workflow_stats.json",
-    "workflow_state": ".workflow_state.json",
-    "run_report": "{basename}.txt",
-    "min_xyz": "{basename}min.xyz",
-    "output_manifest": "output_manifest.json"
+    "run_result": "run_result.json",
+    "run_generation": "run_generation.json"
   },
   "commands": {
     "bash": true,
@@ -189,24 +185,25 @@ no consumer for this handoff and must not silently send its private
   handoff. It is `true` only on POSIX hosts with secure directory-descriptor
   primitives; Windows installs report `false` and must not accept worker
   handoffs.
-* **Six artifacts**, in addition to the v3 set:
-  * `output_manifest` — machine-readable multi-terminal output
-    index written alongside the run artifacts.
-  * `run_summary`, `workflow_stats`, `workflow_state`, `run_report`,
-    `min_xyz` — unchanged.
+* **Two artifacts** (实测 `confflow --capabilities --json` 的 `artifacts` 段为准)：
+  * `run_result` — `run_result.json`（整次运行的 durable manifest，GUI 只读它）。
+  * `run_generation` — `run_generation.json`。
+  * 旧文中的 `output_manifest` / `run_summary` / `workflow_stats` /
+    `workflow_state` / `run_report` / `min_xyz` 不再是能力契约产物
+    （`{basename}.txt` / `{basename}min.xyz` 仍作为 control-worker sidecar 存在，见上）。
 
-### Four content schemas stamped into producer artifacts
+### Producer / run-result content schemas
 
-Each producer artifact carries a stable `content_schema` field. The
-producer contract enumerates them; JobDesk matches the exact string,
-not a prefix.
+`confflow v4 contract --json` 的 `content_schema` 为单个字符串
+`confflow.configuration-contract.v4`；整次运行发布 `run_result.json`
+（`confflow.run_result_manifest.v1`，见 `docs/USAGE.md` §5）。
+旧文中的 `run_summary` / `workflow_stats` / `workflow_state` /
+`output_manifest` 四表（`confflow.run_summary.v1` 等）已退役，不再发布：
 
 | Artifact | Filename | content_schema |
 | --- | --- | --- |
-| run_summary | `run_summary.json` | `confflow.run_summary.v1` |
-| workflow_stats | `workflow_stats.json` | `confflow.workflow_stats.v1` |
-| workflow_state | `.workflow_state.json` | `confflow.workflow_state.v1` |
-| output_manifest | `output_manifest.json` | `confflow.output_manifest.v1` |
+| configuration contract | （`v4 contract --json`） | `confflow.configuration-contract.v4` |
+| run result manifest | `run_result.json` | `confflow.run_result_manifest.v1` |
 
 ### Release / install provenance — three layers (offline pipeline retired)
 
@@ -281,7 +278,9 @@ V4 capabilities at a glance:
 
 - **Producer Contract** (`confflow.configuration-contract.v4`): workflow
   schema, editor manifest, recipe catalog (optimize/single_point/
-  frequency/opt_freq/transition_state/irc/qst2/qst3/neb/goat/tspes),
+  frequency/opt_freq/transition_state/confgen_torsion/monomer_conformers/
+  ensemble_refine — 8 个，实测以 `confflow/producer/recipes.py` 的
+  `RECIPE_IDS_V4` 为准；`irc/qst2/qst3/neb/goat/tspes` 已于 R2.2 退役),
   registry capabilities, ports, resources, analysis + result schemas —
   all generated from the real registries, all digest-pinned. JobDesk
   edits, validates, and submits through this contract.
@@ -370,7 +369,8 @@ ConfFlow is not recommended for unattended use or for non-isolated production co
 
 | Command | Purpose |
 | --- | --- |
-| `confflow` | Run the formal V4 runtime (`confflow v4 run` / `confflow v4 validate` / `confflow v4 contract --json`) |
+| `confflow v4` | Run the formal V4 runtime (`run` / `validate` / `contract --json`, plus `boundary` / `canonical` / `authoring`) |
+| `confflow` (top level) | Legacy plain-CLI thin entry into the same V4 application (`<input.xyz> -c <workflow> [-w <run-root>] [--resume]`) |
 
 Examples:
 

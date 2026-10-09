@@ -29,7 +29,7 @@ confflow/
   persistence/   持久化：逐 work item 的 SQLite 存储、发布协议、复用判定、孤儿回收、run state
   application/   应用层：正式 V4 入口 `v4_entry`、整次运行 `v4_run`、执行服务与仓库（SQLite）
   worker_handoff.py worker_staging.py worker_attempt.py worker_sidecars.py worker_supervision.py
-               远程执行边界：producer-owned worker-handoff envelope、安全 staging、attempt 管理与结果 sidecar
+               远程执行边界：producer-owned worker-handoff envelope、安全 staging、attempt 管理与结果 sidecar（typed 远程传输已退役，跨进程只走控制协议 v1）
   producer/      对客户端发布的契约与工具：contract / boundary / authoring / intent、cards、presets、
                  editor manifest、recipes、字节级校验、run result 投影、种子与机器检查点辅助
   config/        契约 schema id 的唯一权威（无依赖）
@@ -89,7 +89,7 @@ confflow/
 
 ## 5. 契约与摘要
 
-- **配置契约**由真实注册表生成（工作流 JSON schema、editor manifest、recipe 目录、能力、端口、资源、分析与结果 schema），
+- **配置契约**由真实注册表生成（工作流 JSON schema、editor manifest、recipe 目录、能力、端口、资源与结果 schema；`analysis` 能力已退役，`analysis_capabilities` 为空），
   全部用 digest 钉住；客户端据此编辑、校验、提交。
 - **边界协议**（`confflow.boundary.v4`）声明规范化算法（JCS）、authoring 请求/响应 schema 与兼容性词汇；已发布的契约 digest
   由 `tests/` 与外部基线（`$BASE`，由 `MANIFEST.json` 钉住，需从干净 main 用 `tools/refactor/` 里的脚本重新生成，
@@ -114,8 +114,8 @@ confflow/
 
 - `domain` 不 import 任何其他 `confflow.*`；`workflow/v4` 与 `execution` 只依赖 `domain`、`execution`、`workflow/v4`
   以及各自文档化的 `science` 入口。
-- 已退役的模块必须从磁盘上消失：`tests/v4/test_architecture_boundaries.py` 的 `REMOVED_LEGACY_MODULES`
-  与"模块必须不存在"测试保证它们不会被悄悄恢复；禁止导入前缀与静态扫描见 `scripts/v4_arch_scan.py`。
+- 已退役的模块必须从磁盘上消失：`tools/architecture_policy.py` 的 `REMOVED_LEGACY_MODULES`
+  （由 `tests/v4/test_architecture_boundaries.py` 消费）与"模块必须不存在"测试保证它们不会被悄悄恢复；禁止导入前缀与静态扫描见 `scripts/v4_arch_scan.py`。
 - worker 的导入闭包不得加载编译器或重依赖包（`test_worker_run_import_closure_is_compiler_free`）。
 
 ## 8. 已退役
