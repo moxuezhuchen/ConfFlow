@@ -75,6 +75,19 @@ published boundary (`confflow.boundary.v4`) byte-identical.
   names. §5 registry vocabulary fixed (`analysis`/`named_structures`/`path_endpoints`
   retired, `script`/`ensemble` current). `docs/ARCHITECTURE.md` and `README.md`
   remote claims corrected the same way.
+- **Style contract revised** (`docs/STYLE_CONTRACT.md`): shebang is required
+  only for directly executable entry scripts (files with
+  `if __name__ == "__main__":` meant to be run directly, and CLI scripts
+  under `scripts/` / `tools/`), not for library modules; `__all__` is
+  required on public package entries (each package's `__init__.py`) and
+  public modules imported by other subsystems, and advisory for
+  subsystem-internal modules; the bare-`ValueError` ban is kept with an
+  exception that pydantic validators (`field_validator` /
+  `model_validator`) must raise `ValueError` (or pydantic's own error
+  types); internal development/architecture/process docs use Chinese and
+  external-facing docs use English (currently `README.md`,
+  `docs/SECURITY_MODEL.md`, `docs/PUBLIC_ALPHA.md`, `docs/RELEASE.md`,
+  `docs/CONTROL_PROTOCOL_RFC.md`).
 
 ### Fixed
 
