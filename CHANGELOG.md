@@ -81,13 +81,17 @@ published boundary (`confflow.boundary.v4`) byte-identical.
   under `scripts/` / `tools/`), not for library modules; `__all__` is
   required on public package entries (each package's `__init__.py`) and
   public modules imported by other subsystems, and advisory for
-  subsystem-internal modules; the bare-`ValueError` ban is kept with an
-  exception that pydantic validators (`field_validator` /
-  `model_validator`) must raise `ValueError` (or pydantic's own error
-  types); internal development/architecture/process docs use Chinese and
-  external-facing docs use English (currently `README.md`,
+  subsystem-internal modules; the bare-`ValueError` guidance is kept
+  (avoid, not a ban) with an exception that pydantic validators
+  (`field_validator` / `model_validator`) may raise `ValueError` (or
+  pydantic's own error types); internal development/architecture/process
+  docs use Chinese and external-facing docs (users, integrators,
+  contributors) use English (currently `README.md`, the root GitHub
+  community files `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`,
   `docs/SECURITY_MODEL.md`, `docs/PUBLIC_ALPHA.md`, `docs/RELEASE.md`,
-  `docs/CONTROL_PROTOCOL_RFC.md`).
+  `docs/CONTROL_PROTOCOL_RFC.md`, and the producer-interface docs for
+  client integrators `docs/PRODUCER_INTENT.md`,
+  `docs/MACHINE_CHECKPOINT_HELPERS.md`).
 
 ### Fixed
 

@@ -87,12 +87,12 @@ def load_xyz(path: str) -> list[list[str]]:
 ### 1.6) 异常
 
 - 优先使用 `confflow.core.exceptions` 中的自定义异常。
-- 禁止在应用层直接抛裸 `RuntimeError` 或 `ValueError`；需要时应映射到更具体的异常类型。
-- 例外：pydantic 校验函数（`field_validator` / `model_validator`）内必须抛 `ValueError`（或 pydantic 自身的错误类型），因为框架只把这类异常转换为校验错误。
+- 避免在应用层直接抛裸 `RuntimeError` 或 `ValueError`；需要时应映射到更具体的异常类型。
+- 例外：pydantic 校验函数（`field_validator` / `model_validator`）内可抛 `ValueError`（或 pydantic 自身的错误类型），因为框架只把这类异常转换为校验错误。
 
 ## 2) 文档风格
 
-- 仓库内部的开发/架构/流程文档使用中文；面向外部读者的文档使用英文。当前属于后一类的文件：`README.md`、`docs/SECURITY_MODEL.md`、`docs/PUBLIC_ALPHA.md`、`docs/RELEASE.md`、`docs/CONTROL_PROTOCOL_RFC.md`。
+- 仓库内部的开发/架构/流程文档使用中文；面向外部读者（使用者、集成方、贡献者）的文档使用英文，当前包括 `README.md`、根目录的 GitHub 社区文件（`SECURITY.md`、`CONTRIBUTING.md`、`CODE_OF_CONDUCT.md`）、`docs/SECURITY_MODEL.md`、`docs/PUBLIC_ALPHA.md`、`docs/RELEASE.md`、`docs/CONTROL_PROTOCOL_RFC.md`，以及供客户端集成方阅读的 producer 接口文档 `docs/PRODUCER_INTENT.md`、`docs/MACHINE_CHECKPOINT_HELPERS.md`。
 - 标题层级、列表和代码块保持稳定、简洁，不依赖 Markdown 尾随双空格实现换行。
 - 文档中的代码风格、覆盖率阈值、测试数量、支持版本等事实信息应与仓库当前状态同步。
 - 文档若描述代码注释或 docstring 风格，必须与本文件和 `pyproject.toml` 保持一致。
