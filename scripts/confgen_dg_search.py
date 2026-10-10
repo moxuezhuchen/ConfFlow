@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""DG seeds, constrained xTB relaxation, and audit for one complex.
-
-Registered script: stdlib plus NumPy plus ``confflow`` only.
-"""
+"""DG seeds, constrained xTB relaxation, and audit for one complex."""
 
 from __future__ import annotations
 
@@ -22,26 +19,10 @@ from typing import Any
 import numpy as np
 
 from confflow.science.bonding import covalent_radius
-from confflow.science.confgen import coordination, graph
-from confflow.science.confgen.dg_seed import DGSeedError, DGSeedSettings, generate_dg_seeds
+from confflow.science.confgen import coordination, graph, search
 from confflow.science.confgen.graph import ForbiddenTrans
 from confflow.science.data import get_atomic_number
 
-Pairs = list[tuple[int, int]]
-Bonds = set[tuple[int, int]]
-Sel = tuple[Any, list[int], Pairs, Pairs, float]
-Ctx = tuple[np.ndarray, list[str], Any, list[int], list[str], Any, Pairs, float]
-CHECKS = (
-    "converged",
-    "topology",
-    "coordination_class",
-    "stereo",
-    "reaction_distance",
-    "metal_donor_distance",
-    "donor_orientation",
-    "contacts",
-)
-R_TOL, MD_TOL, C_SCALE, D_TOL = 0.02, 0.03, 0.70, 30.0
 HARTREE_TO_KCAL = 627.5094740631
 _CONV = "GEOMETRY OPTIMIZATION CONVERGED"
 _POL = "REJECTED_BY_POLICY"
@@ -57,7 +38,7 @@ def _idx(value: str, name: str, natoms: int) -> int:
     return number - 1
 
 
-def _pairs(text: str, name: str, natoms: int) -> Pairs:
+def _pairs(text: str, name: str, natoms: int) -> list[tuple[int, int]]:
     out = []
     for chunk in [p.strip() for p in text.split(",") if p.strip()]:
         sides = chunk.split("-")
@@ -70,10 +51,6 @@ def _pairs(text: str, name: str, natoms: int) -> Pairs:
     if not out:
         raise ValueError(f"{name} must hold at least one pair")
     return out
-
-
-def _dist(xyz: np.ndarray, i: int, j: int) -> float:
-    return float(np.linalg.norm(xyz[i] - xyz[j]))
 
 
 def _read_xyz(path: str) -> tuple[list[str], np.ndarray]:
@@ -116,58 +93,27 @@ def _write_xyz(path: Path, els: list[str], frames: list[tuple[np.ndarray, str]])
                 handle.write(f"{sym} {x:.6f} {y:.6f} {z:.6f}\n")
 
 
-def _rad(symbol: str) -> float:
-    radius = covalent_radius(get_atomic_number(symbol))
-    if radius is None:
-        raise ValueError(f"element {symbol!r} has no usable covalent radius")
-    return float(radius)
-
-
-def perceive_bond_set(
-    xyz: np.ndarray, els: list[str], metal: int | None, fp: Pairs, scale: float
-) -> Bonds:
-    """Perceive covalent bonds: non-metal pairs under the scaled radii sum."""
-    radii = [_rad(s) for s in els]
+def perceive_bond_set(xyz, els, metal, fp, scale) -> set[tuple[int, int]]:
+    radii = []
+    for sym in els:
+        radius = covalent_radius(get_atomic_number(sym))
+        if radius is None:
+            raise ValueError(f"element {sym!r} has no usable covalent radius")
+        radii.append(float(radius))
     skip = {(min(a, b), max(a, b)) for a, b in fp}
-    bonds: Bonds = set()
+    bonds: set[tuple[int, int]] = set()
     for i in range(len(els)):
         if i == metal:
             continue
         for j in range(i + 1, len(els)):
             if j == metal or (i, j) in skip:
                 continue
-            if _dist(xyz, i, j) < scale * (radii[i] + radii[j]):
+            if float(np.linalg.norm(xyz[i] - xyz[j])) < scale * (radii[i] + radii[j]):
                 bonds.add((i, j))
     return bonds
 
 
-def _adj(n: int, bonds: Bonds, metal: int | None) -> list[list[int]]:
-    adj: list[list[int]] = [[] for _ in range(n)]
-    for i, j in bonds:
-        adj[i].append(j)
-        adj[j].append(i)
-    for i, row in enumerate(adj):
-        adj[i] = sorted(k for k in row if k != metal)
-    if metal is not None:
-        adj[metal] = []
-    return adj
-
-
-def _sep(adj: list[list[int]], src: int) -> list[float]:
-    dist = [float("inf")] * len(adj)
-    dist[src] = 0.0
-    queue = [src]
-    while queue:
-        node = queue.pop(0)
-        for peer in adj[node]:
-            if dist[peer] == float("inf"):
-                dist[peer] = dist[node] + 1.0
-                queue.append(peer)
-    return dist
-
-
-def build_topology(els: list[str], ref: np.ndarray, sel: Sel, shape: str | None) -> tuple[Any, ...]:
-    """Build the typed graph and coordination spec from the reference geometry."""
+def build_topology(els, ref, sel, shape) -> tuple[Any, ...]:
     metal, donors, pairs, forbid, scale = sel
     ref_bonds = perceive_bond_set(ref, els, metal, pairs, scale)
     atoms = tuple(graph.AtomRef(index=i, element=e) for i, e in enumerate(els))
@@ -178,7 +124,6 @@ def build_topology(els: list[str], ref: np.ndarray, sel: Sel, shape: str | None)
     topo = graph.TypedGraph(atoms, tuple(edges), metal, tuple(sorted(pairs)), "confgen_dg_search")
     if metal is None:
         return topo, None, ref_bonds
-    assert shape is not None
     site_of = {d: f"{els[d]}{d + 1}" for d in donors}
     cons = []
     for k, (a, b) in enumerate(forbid):
@@ -186,85 +131,6 @@ def build_topology(els: list[str], ref: np.ndarray, sel: Sel, shape: str | None)
     order = [graph.BindingSite(site_of[d], "atom", (d,), 1) for d in donors]
     spec = graph.CoordinationSpec(metal, tuple(order), (shape,), "enumerate", tuple(cons))
     return topo, spec, ref_bonds
-
-
-def audit_checks(
-    new: np.ndarray, ctx: Ctx, cmd: tuple[int, ...], conv: bool, centers: tuple[int, ...] = ()
-) -> list[str]:
-    """Audit relaxed *new* against the reference; return failed check names."""
-    ref, els, metal, donors, sites, shape, pairs, scale = ctx
-    failed = [] if conv else ["converged"]
-    ref_bonds = perceive_bond_set(ref, els, metal, pairs, scale)
-    try:
-        new_bonds = perceive_bond_set(new, els, metal, pairs, scale)
-    except ValueError:
-        new_bonds = set()
-        failed.append("topology")
-    if "topology" not in failed and new_bonds != ref_bonds:
-        failed.append("topology")
-    if metal is not None:
-        group = coordination.shapes.proper_rotation_group(shape)
-        try:
-            seen = coordination.perception.perceive_donors(
-                np.asarray(new, dtype=float), metal, donors, sites, shape
-            )
-            got = coordination.enumeration.canonical_representative(tuple(seen.best_class), group)
-            ok = bool(seen.unambiguous) and got == tuple(cmd)
-        except ValueError:
-            ok = False
-        if not ok:
-            failed.append("coordination_class")
-    adj = _adj(len(els), ref_bonds, metal)
-    stereo = True
-    for i in centers:
-        if not 0 <= i < len(els) or len(adj[i]) != 4:
-            continue
-        pick = tuple(adj[i][:4])
-        before = coordination.realization.signed_volume(np.asarray(ref, dtype=float), i, pick)
-        after = coordination.realization.signed_volume(np.asarray(new, dtype=float), i, pick)
-        same = (before > 0.0) == (after > 0.0) if before and after else before == after == 0.0
-        stereo = stereo and same
-    if not stereo:
-        failed.append("stereo")
-    for i, j in pairs:
-        if abs(_dist(new, i, j) - _dist(ref, i, j)) > R_TOL:
-            failed.append("reaction_distance")
-            break
-    for d in donors:
-        if abs(_dist(new, metal, d) - _dist(ref, metal, d)) > MD_TOL:
-            failed.append("metal_donor_distance")
-            break
-    if metal is not None:
-        worst = 0.0
-        for d in donors:
-            for x in adj[d]:
-                v_ref, w_ref = ref[metal] - ref[d], ref[x] - ref[d]
-                v_new, w_new = new[metal] - new[d], new[x] - new[d]
-                n_ref = float(np.linalg.norm(v_ref) * np.linalg.norm(w_ref))
-                n_new = float(np.linalg.norm(v_new) * np.linalg.norm(w_new))
-                if n_ref < 1e-12 or n_new < 1e-12:
-                    continue
-                a_ref = float(
-                    np.degrees(np.arccos(np.clip(float(np.dot(v_ref, w_ref)) / n_ref, -1.0, 1.0)))
-                )
-                a_new = float(
-                    np.degrees(np.arccos(np.clip(float(np.dot(v_new, w_new)) / n_new, -1.0, 1.0)))
-                )
-                worst = max(worst, abs(a_new - a_ref))
-        if worst > D_TOL:
-            failed.append("donor_orientation")
-    radii, clash = [_rad(s) for s in els], False
-    for i in range(len(els)):
-        if i == metal:
-            continue
-        sep = _sep(adj, i)
-        far = [j for j in range(i + 1, len(els)) if j != metal and sep[j] > 3.0]
-        clash = any(_dist(new, i, j) < C_SCALE * (radii[i] + radii[j]) for j in far)
-        if clash:
-            break
-    if clash:
-        failed.append("contacts")
-    return [name for name in CHECKS if name in failed]
 
 
 def _first_frame(path: Path, n: int) -> np.ndarray | None:
@@ -286,7 +152,6 @@ def _xtb(path: str) -> str | None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the script command-line parser (no braces in any option)."""
     p = argparse.ArgumentParser(description="DG seeds, constrained xTB relaxation, and audit.")
     p.add_argument("frame", nargs="?", default="", help="input xyz frame ({input} in steps)")
     p.add_argument("--input", required=False, help="input xyz (one frame)")
@@ -323,24 +188,21 @@ def _validated(args: argparse.Namespace) -> tuple[Any, ...]:
         raise ValueError("--metal, --donors and --shape must be given together or all omitted")
     pairs = _pairs(args.forming, "--forming", n) if args.forming else []
     forbid = _pairs(args.forbid_trans, "--forbid-trans", n) if args.forbid_trans else []
-    metal, donors, shape = None, [], None
+    metal, donors = None, []
     if trio[0]:
-        assert args.donors is not None and args.shape is not None
         metal = _idx(str(args.metal), "--metal", n)
-        parts = [p.strip() for p in args.donors.split(",") if p.strip()]
-        if not parts:
+        donors = [_idx(p, "--donors", n) for p in map(str.strip, args.donors.split(",")) if p]
+        if not donors:
             raise ValueError("--donors must hold at least one index")
-        donors = [_idx(p, "--donors", n) for p in parts]
-        shape = args.shape
         if metal in donors:
             raise ValueError("--metal must not be one of --donors")
         if len(set(donors)) != len(donors):
             raise ValueError("--donors must hold distinct atoms")
         if any(i not in donors or j not in donors for i, j in forbid):
             raise ValueError("--forbid-trans pairs must both be donor atoms")
-        need = coordination.shapes.get_shape(shape).coordination_number
+        need = coordination.shapes.get_shape(args.shape).coordination_number
         if need != len(donors):
-            raise ValueError(f"--shape {shape!r} needs {need} donors")
+            raise ValueError(f"--shape {args.shape!r} needs {need} donors")
     elif forbid:
         raise ValueError("--forbid-trans needs --metal, --donors and --shape")
     if min(args.count, args.cores, args.max_cycles) < 1:
@@ -392,12 +254,8 @@ def _relax(exe, work, xyz, cfg):
     wall = time.monotonic() - tick
     (work / "xtb.out").write_text(out, encoding="utf-8")
     found = re.findall(r"TOTAL ENERGY\s+([+-]?\d+(?:\.\d+)?)\s*Eh", out)
-    conv = (
-        proc is not None
-        and proc.returncode == 0
-        and _CONV in out
-        and (work / "xtbopt.xyz").is_file()
-    )
+    ok = proc is not None and proc.returncode == 0 and _CONV in out
+    conv = ok and (work / "xtbopt.xyz").is_file()
     energy = float(found[-1]) if found else None
     payload = {"in_sha256": digest, "energy_eh": energy, "converged": conv, "wall_s": wall}
     done.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
@@ -405,18 +263,14 @@ def _relax(exe, work, xyz, cfg):
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the DG search pipeline; return a process exit code."""
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
         els, ref, metal, donors, pairs, forbid, frag, src = _validated(args)
     except ValueError as exc:
         parser.error(str(exc))
-    n = len(els)
-    scale, shape = args.bond_scale, args.shape
     xtp = args.xtb or os.environ.get("CONFFLOW_XTB", "") or "xtb"
-    exe = _xtb(xtp)
-    if exe is None:
+    if (exe := _xtb(xtp)) is None:
         sys.stderr.write(f"error: xTB executable not found: {xtp!r}\n")
         return 1
     try:
@@ -425,124 +279,49 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, subprocess.SubprocessError):
         out = ""
     version = next((line.strip() for line in out.splitlines() if line.strip()), "")
+    mode, timeout, scale = args.small_ring_torsions, args.embed_timeout, args.bond_scale
     try:
-        graph, spec, _ = build_topology(els, ref, (metal, donors, pairs, forbid, scale), shape)
+        topo, spec, _ = build_topology(els, ref, (metal, donors, pairs, forbid, scale), args.shape)
     except ValueError as exc:
         sys.stderr.write(f"error: invalid topology: {exc}\n")
         return 1
-    sites = [s.id for s in spec.binding_sites] if spec is not None else []
-    classes: list[Any] = [None]
-    group: Any = None
-    if metal is not None:
-        try:
-            pipe = coordination.enumeration.enumerate_targets(spec, shape)
-        except ValueError as exc:
-            sys.stderr.write(f"error: enumeration failed: {exc}\n")
-            return 1
-        classes = list(pipe["shape_classes"])
-        group = coordination.shapes.proper_rotation_group(shape)
-    ctx: Ctx = (ref, els, metal, donors, sites, shape, pairs, scale)
     work = Path(args.workdir)
     work.mkdir(parents=True, exist_ok=True)
-    restrained = ([(metal, d) for d in donors] if metal is not None else []) + list(pairs)
-    cinp: str | None = None
-    if restrained:
+    settings = search.SearchSettings(args.count, args.seed, mode, timeout, tuple(frag), scale)
+
+    def _relax_many(starts, restraints):
         lines = ["$constrain", "  force constant=1.0"]
-        for i, j in restrained:
-            lines.append(f"  distance: {i + 1}, {j + 1}, {_dist(ref, i, j):.5f}")
-        cinp = "\n".join(lines + ["$end"]) + "\n"
-    cfg = (els, cinp, args.charge, args.uhf, args.max_cycles)
-    targets: list[dict[str, Any]] = []
-    structures: list[dict[str, Any]] = []
-    cmds: dict[str, tuple[int, ...]] = {}
-    jobs: list[tuple[str, int, np.ndarray, Path, bool]] = []
-    centers: tuple[int, ...] = ()
-    skipped = (
-        []
-        if metal is not None
-        else ["coordination_class", "metal_donor_distance", "donor_orientation"]
-    )
-    frag_charges = tuple(frag)
-    for t, cls in enumerate(classes):
-        tid = f"t{t:02d}"
-        placement = [] if cls is None else [int(v) for v in cls.representative]
-        if cls is not None:
-            cmds[tid] = coordination.enumeration.canonical_representative(placement, group)
-        mode = args.small_ring_torsions
-        n_on = (args.count + 1) // 2 if mode == "both" else (args.count if mode == "on" else 0)
-        # Seed formula: on-call seed = seed * 1000 + 2 * target + 1, off-call
-        # seed = seed * 1000 + 2 * target + 2; start numbering is contiguous.
-        calls: list[tuple[int, int, bool]] = []
-        if n_on:
-            calls.append((n_on, args.seed * 1000 + 2 * t + 1, True))
-        if args.count - n_on:
-            calls.append((args.count - n_on, args.seed * 1000 + 2 * t + 2, False))
-        starts: list[np.ndarray] = []
-        flags: list[bool] = []
-        err: str | None = None
-        for need, rseed, on in calls:
-            setting = DGSeedSettings(
-                need, rseed, on, timeout_seconds=args.embed_timeout, fragment_charges=frag_charges
-            )
-            try:
-                made = generate_dg_seeds(graph, spec, ref, placement, shape or "", setting)
-            except DGSeedError as exc:
-                if err is None:
-                    err = str(exc)
-                continue
-            if not centers and getattr(made, "stereo_centers", ()):
-                centers = tuple(int(c) for c in made.stereo_centers)
-            starts += [np.asarray(s, dtype=float) for s in made.coords]
-            flags += [on] * len(made.coords)
-        rec: dict[str, Any] = {"id": tid, "placement": placement, "generated": len(starts)}
-        tp = []
-        if cls is not None:
-            at = {v: s for s, v in enumerate(placement)}
-            for ends in coordination.shapes.get_shape(shape).trans_pairs:
-                i, j = sorted(ends)
-                tp.append(sorted((sites[at[i]], sites[at[j]])))
-            tp.sort()
-        rec.update(trans_pairs=tp, relaxed=0, passed=0, error=err)
-        targets.append(rec)
-        jobs += [
-            (tid, k, s, work / f"{tid}_s{k:02d}", on)
-            for k, (s, on) in enumerate(zip(starts, flags))
-        ]
-    with futures.ThreadPoolExecutor(max_workers=args.cores) as pool:
-        outs = list(pool.map(lambda j: _relax(exe, j[3], j[2], cfg), jobs))
-    passing: list[tuple[float, str, int, np.ndarray]] = []
-    for (tid, k, _xyz, here, on), (e, c, w) in zip(jobs, outs):
-        opt = _first_frame(here / "xtbopt.xyz", n) if c else None
-        bad = (
-            ["converged"] if opt is None else audit_checks(opt, ctx, cmds.get(tid, ()), c, centers)
-        )
-        item = targets[int(tid[1:])]
-        item["relaxed"] = int(item["relaxed"]) + (opt is not None)
-        item["passed"] = int(item["passed"]) + (not bad)
-        if not bad:
-            assert opt is not None
-            passing.append((float(e or 0.0), tid, k, opt))
-        entry = {"target": tid, "start": k, "energy_eh": e, "passed": not bad}
-        entry.update(failed_checks=bad, wall_s=w, small_ring_torsions=on, skipped_checks=skipped)
-        structures.append(entry)
-    passing.sort(key=lambda row: (row[0], row[1], row[2]))
-    settings = dict(vars(args), xtb=xtp, input=src)
-    summary = {"settings": settings, "targets": targets, "structures": structures}
+        for i, j, d in restraints:
+            lines.append(f"  distance: {i + 1}, {j + 1}, {d:.5f}")
+        cinp = "\n".join(lines + ["$end"]) + "\n" if restraints else None
+        cfg = (els, cinp, args.charge, args.uhf, args.max_cycles)
+
+        def _one(s):
+            here = work / f"{s.target}_s{s.index:02d}"
+            energy, conv, wall = _relax(exe, here, s.coords, cfg)
+            opt = _first_frame(here / "xtbopt.xyz", len(els)) if conv else None
+            return search.RelaxOutcome(opt, energy, conv, wall)
+
+        with futures.ThreadPoolExecutor(max_workers=args.cores) as pool:
+            return list(pool.map(_one, starts))
+
+    try:
+        run = search.run_search(topo, spec, ref, args.shape, settings, _relax_many)
+    except search.SearchError as exc:
+        sys.stderr.write(f"error: enumeration failed: {exc}\n")
+        return 1
+    summary = {"settings": dict(vars(args), xtb=xtp, input=src), **run.summary()}
     summary["xtb"] = {"executable": exe, "version": version}
-    summary["fragment_charges"] = [{"atom": a + 1, "charge": q} for a, q in frag]
-    totals = {"targets": len(targets), "generated": len(structures), "passed": len(passing)}
-    totals["relaxed"] = sum(int(t["relaxed"]) for t in targets)
-    summary["totals"] = totals
     text = json.dumps(summary, sort_keys=True, indent=2) + "\n"
     Path(args.summary).write_text(text, encoding="utf-8")
-    if not passing:
+    if not run.passing:
         sys.stderr.write("error: no structure passed all audit checks\n")
         return 2
-    low = passing[0][0]
-    frames = []
-    for e, tid, k, xyz in passing:
-        tag = f"target={tid} start={k} energy_eh={e:.6f} rel_kcal={(e - low) * HARTREE_TO_KCAL:.3f}"
-        frames.append((xyz, tag))
+    low, frames = float(run.passing[0].energy_eh or 0.0), []
+    for r in run.passing:
+        energy = float(r.energy_eh or 0.0)
+        tag = f"target={r.target} start={r.start} energy_eh={energy:.6f} rel_kcal={(energy - low) * HARTREE_TO_KCAL:.3f}"
+        frames.append((r.coords, tag))
     _write_xyz(Path(args.out), els, frames)
     return 0
 

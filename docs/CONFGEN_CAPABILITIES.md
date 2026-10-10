@@ -165,6 +165,7 @@ description = "TS refinement entry"
   ConfGen 工作流只能冻原子、不能做距离约束，因此该协议以 N2 登记脚本形式提供，
   不动 engine/schema/executor/registry（见 `confflow/execution/script_registry.py`、
   `confflow/execution/script_executor.py`，测试见 `tests/test_script_steps.py`）。
+  搜索流水线本体为包内纯模块 `confflow/science/confgen/search.py`（DG 出发 → 约束 → 审计；仅 numpy 与 confgen 科学导入，无子进程/文件 I/O/argparse），脚本只保留 I/O 与 xTB 子进程调用。
 - `--metal`、`--donors`、`--shape` 要么全给、要么全不给（其它组合即 argparse 错误）；全不给即
   无金属路径，此时 `--forbid-trans` 不允许，`coordination_class` 与 `metal_donor_distance`
   记为 `skipped` 且不判失败（记在每个 structure 的 `skipped_checks`）。

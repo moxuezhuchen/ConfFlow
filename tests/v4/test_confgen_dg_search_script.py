@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Registered DG-search script: fake-xTB runs, audit units, step integration."""
+"""Registered DG-search script: fake-xTB runs, CLI errors, resume, step integration."""
 
 from __future__ import annotations
 
@@ -16,10 +16,7 @@ import numpy as np
 import pytest
 
 from confflow.execution.xyz_import import import_xyz
-from confflow.science.confgen.coordination import enumeration
-from confflow.science.confgen.coordination.perception import perceive_donors
-from confflow.science.confgen.coordination.shapes import proper_rotation_group
-from confflow.science.confgen.graph import CoordinationSpec
+from confflow.science.confgen import search
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "confgen_dg_search.py"
@@ -97,7 +94,6 @@ def _write_fake(tmp_path: Path) -> Path:
 
 
 def _toy() -> tuple[list[str], np.ndarray]:
-    """Square-planar Pt(NH3)2Cl2 toy: 11 atoms, donors N,N,Cl,Cl."""
     els, pos = ["Pt"], [np.zeros(3)]
     donors = [("N", (2.0, 0.0, 0.0)), ("N", (-2.0, 0.0, 0.0))]
     donors += [("Cl", (0.0, 2.0, 0.0)), ("Cl", (0.0, -2.0, 0.0))]
@@ -154,23 +150,9 @@ def _base_args(tmp: Path, xyz: Path, fake: Path, *extra: str, tag: str = "") -> 
     )
 
 
-def _spec(els: list[str], ref: np.ndarray, forbid: list[tuple[int, int]]) -> CoordinationSpec:
-    sel = (0, [1, 2, 3, 4], [(1, 3)], forbid, 1.25)
-    return DG.build_topology(els, ref, sel, _SHAPE)[1]
-
-
-def _ctx(els: list[str], ref: np.ndarray) -> tuple:
-    sites = [s.id for s in _spec(els, ref, []).binding_sites]
-    seen = perceive_donors(np.asarray(ref), 0, [1, 2, 3, 4], sites, _SHAPE)
-    cmd = enumeration.canonical_representative(
-        tuple(seen.best_class), proper_rotation_group(_SHAPE)
-    )
-    return (ref, els, 0, [1, 2, 3, 4], sites, _SHAPE, [(1, 3)], 1.25), cmd
-
-
 def _stub(monkeypatch: pytest.MonkeyPatch, ref: np.ndarray) -> None:
     monkeypatch.setattr(
-        DG, "generate_dg_seeds", lambda *a, **k: SimpleNamespace(coords=(np.asarray(ref),))
+        search, "generate_dg_seeds", lambda *a, **k: SimpleNamespace(coords=(np.asarray(ref),))
     )
 
 
@@ -213,22 +195,6 @@ def test_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
 
-def test_forbid_trans(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    els, ref = _toy()
-    xyz = tmp_path / "toy.xyz"
-    _write_xyz(xyz, els, ref)
-    fake = _write_fake(tmp_path)
-    _stub(monkeypatch, ref)
-    assert DG.main(_base_args(tmp_path, xyz, fake, "--forbid-trans", "2-3")) in (0, 2)
-    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
-    full = enumeration.enumerate_targets(_spec(els, ref, []), _SHAPE)
-    assert len(full["shape_classes"]) == 3
-    limited = enumeration.enumerate_targets(_spec(els, ref, [(1, 2)]), _SHAPE)
-    want = sorted(tuple(c.representative) for c in limited["shape_classes"])
-    assert sorted(tuple(t["placement"]) for t in summary["targets"]) == want
-    assert len(want) == 2
-
-
 def test_resume_skips_xtb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     els, ref = _toy()
     xyz = tmp_path / "toy.xyz"
@@ -242,58 +208,6 @@ def test_resume_skips_xtb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert first == 3 and (tmp_path / "work" / "t00_s00" / "done.json").is_file()
     assert DG.main(args) == 0
     assert (tmp_path / "count.txt").read_text(encoding="utf-8").count("x") == first
-
-
-def test_audit_checks() -> None:
-    els, ref = _toy()
-    ctx, cmd = _ctx(els, ref)
-    assert DG.audit_checks(np.asarray(ref), ctx, cmd, True) == []
-    assert DG.audit_checks(np.asarray(ref), ctx, cmd, False) == ["converged"]
-    broken = np.array(ref, copy=True)
-    broken[5] += (3.0, 0.0, 0.0)
-    assert "topology" in DG.audit_checks(broken, ctx, cmd, True)
-    swapped = np.array(ref, copy=True)
-    swapped[[1, 3]] = swapped[[3, 1]]
-    assert "coordination_class" in DG.audit_checks(swapped, ctx, cmd, True)
-    stretched = np.array(ref, copy=True)
-    stretched[3, 0] += 0.10
-    assert "reaction_distance" in DG.audit_checks(stretched, ctx, cmd, True)
-    pulled = np.array(ref, copy=True)
-    pulled[2, 0] += 0.10
-    assert DG.audit_checks(pulled, ctx, cmd, True) == ["metal_donor_distance"]
-    clashed = np.array(ref, copy=True)
-    clashed[8] = clashed[5] + (0.30, 0.0, 0.0)
-    assert "contacts" in DG.audit_checks(clashed, ctx, cmd, True)
-    tet = np.array([[1, 1, 1], [1, -1, -1], [-1, 1, -1], [-1, -1, 1]], dtype=float)
-    tet /= np.linalg.norm(tet, axis=1, keepdims=True)
-    sref = np.zeros((6, 3))
-    sref[0] = (10.0, 0.0, 0.0)
-    sref[2:] = tet * 1.09
-    snew = np.array(sref, copy=True)
-    snew[:, 0] *= -1.0
-    sctx = (sref, ["He", "C", "H", "H", "H", "H"], 0, [1], ["C2"], "tetrahedral", [], 1.25)
-    failed = DG.audit_checks(snew, sctx, (0,), True, (1,))
-    assert "stereo" in failed and "topology" not in failed
-
-
-def test_donor_orientation() -> None:
-    els, ref = _toy()
-    ctx, cmd = _ctx(els, ref)
-    assert "donor_orientation" not in DG.audit_checks(np.asarray(ref), ctx, cmd, True)
-    unit = (ref[0] - ref[1]) / np.linalg.norm(ref[0] - ref[1])
-    perp = np.cross(unit, (0.0, 0.0, 1.0))
-    perp /= np.linalg.norm(perp)
-    bond = float(np.linalg.norm(ref[5] - ref[1]))
-
-    def _placed(deg: float) -> np.ndarray:
-        rad = np.radians(deg)
-        direction = np.cos(rad) * unit + np.sin(rad) * perp
-        moved = np.array(ref, copy=True)
-        moved[5] = ref[1] + bond * direction
-        return moved
-
-    assert DG.audit_checks(_placed(170.0), ctx, cmd, True) == ["donor_orientation"]
-    assert DG.audit_checks(_placed(130.0), ctx, cmd, True) == []
 
 
 def test_xtb_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -319,29 +233,6 @@ def test_xtb_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert all("topology" in r["failed_checks"] for r in broken["structures"])
 
 
-def test_dg_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from confflow.science.confgen.dg_seed import DGSeedError
-
-    els, ref = _toy()
-    xyz = tmp_path / "toy.xyz"
-    _write_xyz(xyz, els, ref)
-    fake = _write_fake(tmp_path)
-    calls: list[int] = []
-
-    def _flaky(*args, **kwargs):
-        calls.append(1)
-        if len(calls) == 1:
-            raise DGSeedError("infeasible bounds for this class")
-        return SimpleNamespace(coords=(np.asarray(ref),))
-
-    monkeypatch.setattr(DG, "generate_dg_seeds", _flaky)
-    assert DG.main(_base_args(tmp_path, xyz, fake)) == 0
-    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
-    assert summary["targets"][0]["error"] == "infeasible bounds for this class"
-    assert summary["targets"][0]["generated"] == 0
-    assert summary["totals"]["generated"] == 2
-
-
 def test_cli_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     els, ref = _toy()
     xyz = tmp_path / "toy.xyz"
@@ -349,7 +240,20 @@ def test_cli_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     fake = _write_fake(tmp_path)
     assert DG.main(_base_args(tmp_path, xyz, fake, "--xtb", "/nonexistent/xtb")) == 1
     assert "not found" in capsys.readouterr().err
-    for extra in (("--metal", "99"), ("--shape", "nope")):
+    for extra in (
+        ("--metal", "99"),
+        ("--shape", "nope"),
+        ("--shape", "octahedral"),
+        ("--donors", ""),
+        ("--donors", "1,2,3,4"),
+        ("--donors", "2,2,3,4"),
+        ("--forbid-trans", "2-6"),
+        ("--count", "0"),
+        ("--bond-scale", "0"),
+        ("--embed-timeout", "-1"),
+        ("--fragment-charge", "2"),
+        ("--fragment-charge", "2:x"),
+    ):
         with pytest.raises(SystemExit) as exc:
             DG.main(_base_args(tmp_path, xyz, fake, *extra))
         assert exc.value.code == 2
@@ -419,27 +323,6 @@ def test_step_integration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert result.results[0].value["totals"]["passed"] >= 1
 
 
-def test_stereo_true_centres_only() -> None:
-    from confflow.science.confgen.dg_seed import DGSeedSettings, generate_dg_seeds
-    from confflow.science.confgen.graph import AtomRef, EdgeType, TypedEdge, TypedGraph
-
-    mol, els, ref = _embed("CC[C@H](O)Cl")
-    bonds = sorted(tuple(sorted((b.GetBeginAtomIdx(), b.GetEndAtomIdx()))) for b in mol.GetBonds())
-    atoms = tuple(AtomRef(index=i, element=e) for i, e in enumerate(els))
-    edges = tuple(TypedEdge(a=a, b=b, type=EdgeType.COVALENT) for a, b in bonds)
-    cfg = DGSeedSettings(1, 7)
-    seeds = generate_dg_seeds(TypedGraph(atoms=atoms, edges=edges), None, ref, [], "bogus", cfg)
-    assert seeds.stereo_centers == (2,)
-    ctx = (ref, els, None, [], [], "", [], 1.25)
-    hydros = [n.GetIdx() for n in mol.GetAtomWithIdx(1).GetNeighbors() if n.GetSymbol() == "H"]
-    swapped = np.array(ref, copy=True)
-    swapped[hydros[::-1]] = swapped[hydros]
-    assert DG.audit_checks(swapped, ctx, (), True, seeds.stereo_centers) == []
-    mirrored = np.array(ref, copy=True)
-    mirrored[:, 0] *= -1.0
-    assert DG.audit_checks(mirrored, ctx, (), True, seeds.stereo_centers) == ["stereo"]
-
-
 def test_metal_free_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     mol, els, ref = _embed("C[C@H]1CC[C@@H](O)C1")
     xyz = tmp_path / "org.xyz"
@@ -448,12 +331,9 @@ def test_metal_free_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     assert DG.main(_free_args(tmp_path, xyz, fake, "--forming", "1-2")) == 0
     summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
     assert [t["id"] for t in summary["targets"]] == ["t00"]
+    want_skipped = ("coordination_class", "metal_donor_distance", "donor_orientation")
     for row in summary["structures"]:
-        assert row["skipped_checks"] == [
-            "coordination_class",
-            "metal_donor_distance",
-            "donor_orientation",
-        ]
+        assert tuple(row["skipped_checks"]) == want_skipped
         assert not {"coordination_class", "metal_donor_distance"} & set(row["failed_checks"])
     cinp = (tmp_path / "work" / "t00_s00" / "c.inp").read_text(encoding="utf-8")
     assert cinp.count("distance:") == 1 and "distance: 1, 2," in cinp
@@ -464,30 +344,3 @@ def test_metal_free_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     assert rows and all("--input" not in row["argv"] for row in rows)
     for extra in ("--metal 1", "--donors 1,2", "--shape x", "--forbid-trans 1-2"):
         pytest.raises(SystemExit, DG.main, _free_args(tmp_path, xyz, fake, *extra.split()))
-
-
-def test_small_ring_split(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    els, ref = _toy()
-    xyz = tmp_path / "toy.xyz"
-    _write_xyz(xyz, els, ref)
-    fake = _write_fake(tmp_path)
-    calls: list[tuple[int, int, bool]] = []
-
-    def _spy(graph, spec, reference, placement, shape, settings):
-        calls.append((settings.count, settings.random_seed, settings.small_ring_torsions))
-        return SimpleNamespace(coords=(np.asarray(ref),) * settings.count, stereo_centers=())
-
-    def _run(tag, *extra):
-        return DG.main(_base_args(tmp_path, xyz, fake, *extra, tag=tag))
-
-    monkeypatch.setattr(DG, "generate_dg_seeds", _spy)
-    assert _run("x", "--count", "3") == 0
-    assert [(c, on) for c, _, on in calls] == [(2, True), (1, False)] * 3
-    assert [s for _, s, _ in calls] == [1001, 1002, 1003, 1004, 1005, 1006]
-    calls.clear()
-    assert _run("4", "--count", "4") == 0
-    assert [(c, on) for c, _, on in calls] == [(2, True), (2, False)] * 3
-    assert [s for _, s, _ in calls] == [1001, 1002, 1003, 1004, 1005, 1006]
-    summary = json.loads((tmp_path / "summary4.json").read_text(encoding="utf-8"))
-    want = [True, True, False, False] * 3
-    assert [s["small_ring_torsions"] for s in summary["structures"]] == want
