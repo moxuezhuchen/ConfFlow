@@ -356,3 +356,41 @@ def test_strained_placement_timeout_returns_promptly() -> None:
     result = generate_dg_seeds(graph, spec, ref, [0, 2, 3, 5, 4, 1], "octahedral", settings)
     assert time.monotonic() - tick < 30.0
     assert len(result.coords) <= 3
+
+
+def _organic_graph(smiles="CC[C@H](O)Cl", pairs=()):
+    from rdkit import Chem
+    from rdkit.Chem import rdDistGeom
+
+    mol = Chem.AddHs(Chem.MolFromSmiles(smiles))
+    params = rdDistGeom.ETKDGv3()
+    params.randomSeed = 42
+    assert rdDistGeom.EmbedMolecule(mol, params) == 0
+    ref = np.array(mol.GetConformer().GetPositions(), dtype=float)
+    els = [atom.GetSymbol() for atom in mol.GetAtoms()]
+    bonds = sorted(tuple(sorted((b.GetBeginAtomIdx(), b.GetEndAtomIdx()))) for b in mol.GetBonds())
+    atoms = tuple(AtomRef(index=i, element=e) for i, e in enumerate(els))
+    edges = tuple(TypedEdge(a=a, b=b, type=EdgeType.COVALENT) for a, b in bonds)
+    return TypedGraph(atoms=atoms, edges=edges, reaction_pairs=tuple(pairs)), ref
+
+
+def test_spec_none_metal_free_embedding() -> None:
+    graph, ref = _organic_graph("C=C", ((0, 1),))
+    plain = generate_dg_seeds(graph, None, ref, [], "ignored-shape", DGSeedSettings(2, 7))
+    assert len(plain.coords) > 0 and plain.stereo_centers == ()
+    chiral, crel = _organic_graph()
+    result = generate_dg_seeds(chiral, None, crel, [], "ignored-shape", DGSeedSettings(2, 7))
+    assert len(result.coords) > 0 and result.stereo_centers == (2,)
+    assert result.to_dict()["stereo_centers"] == [2]
+    json.dumps(result.to_dict())
+    with pytest.raises(DGSeedError):
+        generate_dg_seeds(chiral, None, crel, [0], "ignored-shape", DGSeedSettings(2, 7))
+    metal_graph = TypedGraph(atoms=(AtomRef(0, "Zn"), AtomRef(1, "H")), edges=(), metal_center=0)
+    with pytest.raises(DGSeedError):
+        generate_dg_seeds(metal_graph, None, np.zeros((2, 3)), [], "x", DGSeedSettings(1, 1))
+    graph1, spec1, ref1 = _load_ts1()
+    commanded = list(_perceived_class(ref1, spec1))
+    centres = generate_dg_seeds(
+        graph1, spec1, ref1, commanded, "octahedral", DGSeedSettings(1, 11)
+    ).stereo_centers
+    assert centres and all(isinstance(c, int) for c in centres)

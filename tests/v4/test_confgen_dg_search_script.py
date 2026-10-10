@@ -62,7 +62,11 @@ if mode == "crash":
     sys.exit(3)
 els, xyz = read_xyz(sys.argv[1])
 limits = []
-for line in open("c.inp"):
+try:
+    cinp_lines = open("c.inp")
+except OSError:
+    cinp_lines = []
+for line in cinp_lines:
     m = re.match(r"\\s*distance:\\s*(\\d+),\\s*(\\d+),\\s*([\\d.]+)", line)
     if m:
         limits.append((int(m.group(1)) - 1, int(m.group(2)) - 1, float(m.group(3))))
@@ -120,13 +124,33 @@ def _write_xyz(path: Path, els: list[str], xyz: np.ndarray) -> None:
             handle.write(f"{sym} {x:.6f} {y:.6f} {z:.6f}\n")
 
 
-def _base_args(tmp: Path, xyz: Path, fake: Path, *extra: str) -> list[str]:
+def _embed(smiles):
+    from rdkit import Chem
+    from rdkit.Chem import rdDistGeom
+
+    mol = Chem.AddHs(Chem.MolFromSmiles(smiles))
+    params = rdDistGeom.ETKDGv3()
+    params.randomSeed = 42
+    assert rdDistGeom.EmbedMolecule(mol, params) == 0
+    els = [atom.GetSymbol() for atom in mol.GetAtoms()]
+    return mol, els, np.array(mol.GetConformer().GetPositions(), dtype=float)
+
+
+def _free_args(tmp: Path, xyz: Path, fake: Path, *extra: str, tag: str = "") -> list[str]:
+    return (
+        ["--input", str(xyz), "--count", "2", "--seed", "1", "--cores", "2", "--xtb", str(fake)]
+        + ["--workdir", str(tmp / f"work{tag}"), "--out", str(tmp / f"structures{tag}.xyz")]
+        + ["--summary", str(tmp / f"summary{tag}.json"), *extra]
+    )
+
+
+def _base_args(tmp: Path, xyz: Path, fake: Path, *extra: str, tag: str = "") -> list[str]:
     return (
         ["--input", str(xyz), "--metal", "1", "--donors", "2,3,4,5"]
         + ["--shape", _SHAPE, "--forming", "2-4", "--count", "1"]
         + ["--seed", "1", "--cores", "2", "--xtb", str(fake)]
-        + ["--workdir", str(tmp / "work"), "--out", str(tmp / "structures.xyz")]
-        + ["--summary", str(tmp / "summary.json"), *extra]
+        + ["--workdir", str(tmp / f"work{tag}"), "--out", str(tmp / f"structures{tag}.xyz")]
+        + ["--summary", str(tmp / f"summary{tag}.json"), *extra]
     )
 
 
@@ -248,7 +272,7 @@ def test_audit_checks() -> None:
     snew = np.array(sref, copy=True)
     snew[:, 0] *= -1.0
     sctx = (sref, ["He", "C", "H", "H", "H", "H"], 0, [1], ["C2"], "tetrahedral", [], 1.25)
-    failed = DG.audit_checks(snew, sctx, (0,), True)
+    failed = DG.audit_checks(snew, sctx, (0,), True, (1,))
     assert "stereo" in failed and "topology" not in failed
 
 
@@ -373,3 +397,73 @@ def test_step_integration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert result.status.value == "completed", [str(d.message) for d in result.diagnostics]
     assert len(result.structures) >= 1 and len(result.results) == 1
     assert result.results[0].value["totals"]["passed"] >= 1
+
+
+def test_stereo_true_centres_only() -> None:
+    from confflow.science.confgen.dg_seed import DGSeedSettings, generate_dg_seeds
+    from confflow.science.confgen.graph import AtomRef, EdgeType, TypedEdge, TypedGraph
+
+    mol, els, ref = _embed("CC[C@H](O)Cl")
+    bonds = sorted(tuple(sorted((b.GetBeginAtomIdx(), b.GetEndAtomIdx()))) for b in mol.GetBonds())
+    atoms = tuple(AtomRef(index=i, element=e) for i, e in enumerate(els))
+    edges = tuple(TypedEdge(a=a, b=b, type=EdgeType.COVALENT) for a, b in bonds)
+    cfg = DGSeedSettings(1, 7)
+    seeds = generate_dg_seeds(TypedGraph(atoms=atoms, edges=edges), None, ref, [], "bogus", cfg)
+    assert seeds.stereo_centers == (2,)
+    ctx = (ref, els, None, [], [], "", [], 1.25)
+    hydros = [n.GetIdx() for n in mol.GetAtomWithIdx(1).GetNeighbors() if n.GetSymbol() == "H"]
+    swapped = np.array(ref, copy=True)
+    swapped[hydros[::-1]] = swapped[hydros]
+    assert DG.audit_checks(swapped, ctx, (), True, seeds.stereo_centers) == []
+    mirrored = np.array(ref, copy=True)
+    mirrored[:, 0] *= -1.0
+    assert DG.audit_checks(mirrored, ctx, (), True, seeds.stereo_centers) == ["stereo"]
+
+
+def test_metal_free_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    mol, els, ref = _embed("C[C@H]1CC[C@@H](O)C1")
+    xyz = tmp_path / "org.xyz"
+    _write_xyz(xyz, els, ref)
+    fake = _write_fake(tmp_path)
+    assert DG.main(_free_args(tmp_path, xyz, fake, "--forming", "1-2")) == 0
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert [t["id"] for t in summary["targets"]] == ["t00"]
+    for row in summary["structures"]:
+        assert row["skipped_checks"] == ["coordination_class", "metal_donor_distance"]
+        assert not {"coordination_class", "metal_donor_distance"} & set(row["failed_checks"])
+    cinp = (tmp_path / "work" / "t00_s00" / "c.inp").read_text(encoding="utf-8")
+    assert cinp.count("distance:") == 1 and "distance: 1, 2," in cinp
+    monkeypatch.setenv("FAKE_XTB_RECORD", str(tmp_path / "record.jsonl"))
+    assert DG.main(_free_args(tmp_path, xyz, fake, tag="2")) == 0
+    text = (tmp_path / "record.jsonl").read_text(encoding="utf-8")
+    rows = [json.loads(line) for line in text.splitlines()]
+    assert rows and all("--input" not in row["argv"] for row in rows)
+    for extra in ("--metal 1", "--donors 1,2", "--shape x", "--forbid-trans 1-2"):
+        pytest.raises(SystemExit, DG.main, _free_args(tmp_path, xyz, fake, *extra.split()))
+
+
+def test_small_ring_split(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    els, ref = _toy()
+    xyz = tmp_path / "toy.xyz"
+    _write_xyz(xyz, els, ref)
+    fake = _write_fake(tmp_path)
+    calls: list[tuple[int, int, bool]] = []
+
+    def _spy(graph, spec, reference, placement, shape, settings):
+        calls.append((settings.count, settings.random_seed, settings.small_ring_torsions))
+        return SimpleNamespace(coords=(np.asarray(ref),) * settings.count, stereo_centers=())
+
+    def _run(tag, *extra):
+        return DG.main(_base_args(tmp_path, xyz, fake, *extra, tag=tag))
+
+    monkeypatch.setattr(DG, "generate_dg_seeds", _spy)
+    assert _run("x", "--count", "3") == 0
+    assert [(c, on) for c, _, on in calls] == [(2, True), (1, False)] * 3
+    assert [s for _, s, _ in calls] == [1001, 1002, 1003, 1004, 1005, 1006]
+    calls.clear()
+    assert _run("4", "--count", "4") == 0
+    assert [(c, on) for c, _, on in calls] == [(2, True), (2, False)] * 3
+    assert [s for _, s, _ in calls] == [1001, 1002, 1003, 1004, 1005, 1006]
+    summary = json.loads((tmp_path / "summary4.json").read_text(encoding="utf-8"))
+    want = [True, True, False, False] * 3
+    assert [s["small_ring_torsions"] for s in summary["structures"]] == want

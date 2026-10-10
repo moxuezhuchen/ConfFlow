@@ -49,7 +49,9 @@ class DGSeedSettings:
     random_seed : int
         RDKit embedding seed (deterministic for fixed inputs).
     small_ring_torsions : bool
-        RDKit ETKDGv3 ``useSmallRingTorsions`` switch.
+        RDKit ETKDGv3 ``useSmallRingTorsions`` switch. On concentrates on
+        low-energy ring forms and suppresses others; off gives broader ring
+        coverage with fewer low-energy starts.
     max_iterations : int
         RDKit embedding iteration budget.
     core_tolerance : float
@@ -92,6 +94,7 @@ class DGSeedResult:
     coords: tuple[np.ndarray, ...]
     requested: int
     fragment_charges: tuple[tuple[tuple[int, ...], int], ...]
+    stereo_centers: tuple[int, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-compatible summary (no arrays).
@@ -107,6 +110,7 @@ class DGSeedResult:
             "fragment_charges": [
                 [list(indices), int(charge)] for indices, charge in self.fragment_charges
             ],
+            "stereo_centers": [int(c) for c in self.stereo_centers],
         }
 
 
@@ -121,7 +125,9 @@ def _candidate_bonds(graph: TypedGraph) -> set[tuple[int, int]]:
     return bonds
 
 
-def _split_fragments(natoms: int, metal: int, bonds: set[tuple[int, int]]) -> list[list[int]]:
+def _split_fragments(
+    natoms: int, metal: int | None, bonds: set[tuple[int, int]]
+) -> list[list[int]]:
     """Split non-metal atoms into connected components over candidate bonds."""
     adjacency: dict[int, set[int]] = {i: set() for i in range(natoms) if i != metal}
     for first, second in bonds:
@@ -152,18 +158,13 @@ def _split_fragments(natoms: int, metal: int, bonds: set[tuple[int, int]]) -> li
 
 def _validate_inputs(
     graph: TypedGraph,
-    spec: CoordinationSpec,
+    spec: CoordinationSpec | None,
     reference: np.ndarray,
     placement: Sequence[int],
     shape: str,
     settings: DGSeedSettings,
-) -> tuple[np.ndarray, list[int], list[int], int, Any]:
+) -> tuple[np.ndarray, list[int], list[int], int | None, Any]:
     """Validate inputs fail-closed, returning reference/donors/order/metal/shape."""
-    donors: list[int] = []
-    for site in spec.binding_sites:
-        if site.hapticity != 1 or len(site.atoms) != 1:
-            raise DGSeedError(f"binding site {site.id!r} must hold exactly one atom")
-        donors.append(int(site.atoms[0]))
     count = settings.count
     if isinstance(count, bool) or not isinstance(count, int) or count < 1:
         raise DGSeedError(f"count must be a positive int, got {settings.count!r}")
@@ -175,6 +176,17 @@ def _validate_inputs(
         raise DGSeedError(f"reference shape {ref.shape} needs {(graph.natoms, 3)}")
     if not bool(np.all(np.isfinite(ref))):
         raise DGSeedError("reference geometry must hold only finite values")
+    if spec is None:
+        if graph.metal_center is not None:
+            raise DGSeedError("graph holds a metal center but no coordination spec was given")
+        if list(placement):
+            raise DGSeedError("placement must be empty when no coordination spec is given")
+        return ref, [], [], None, None
+    donors: list[int] = []
+    for site in spec.binding_sites:
+        if site.hapticity != 1 or len(site.atoms) != 1:
+            raise DGSeedError(f"binding site {site.id!r} must hold exactly one atom")
+        donors.append(int(site.atoms[0]))
     try:
         template = get_shape(shape)
     except (ValueError, KeyError, TypeError) as exc:
@@ -295,7 +307,7 @@ def _perceive_fragment(
 
 def generate_dg_seeds(
     graph: TypedGraph,
-    spec: CoordinationSpec,
+    spec: CoordinationSpec | None,
     reference: np.ndarray,
     placement: Sequence[int],
     shape: str,
@@ -307,8 +319,11 @@ def generate_dg_seeds(
     ----------
     graph : TypedGraph
         Typed topology authority (bonds read from its edges, never distances).
-    spec : CoordinationSpec
-        Coordination scope carrying the metal center and binding sites.
+    spec : CoordinationSpec or None
+        Coordination scope carrying the metal center and binding sites. None
+        means metal-free: ``placement`` must be empty, ``shape`` is ignored,
+        fragments are perceived over all atoms, and only reaction-pair bounds
+        apply (no polyhedron bounds, no coordinate map).
     reference : numpy.ndarray
         Trusted ``(n_atoms, 3)`` reference geometry.
     placement : Sequence[int]
@@ -377,15 +392,28 @@ def generate_dg_seeds(
         flags = Chem.SanitizeFlags.SANITIZE_ALL ^ Chem.SanitizeFlags.SANITIZE_PROPERTIES
         Chem.SanitizeMol(mol, sanitizeOps=flags)
         Chem.AssignStereochemistryFrom3D(mol)
+        stereo = tuple(
+            sorted(
+                index
+                for index in range(graph.natoms)
+                if mol.GetAtomWithIdx(index).GetChiralTag()
+                in (
+                    Chem.rdchem.ChiralType.CHI_TETRAHEDRAL_CW,
+                    Chem.rdchem.ChiralType.CHI_TETRAHEDRAL_CCW,
+                )
+            )
+        )
     except Exception as exc:
         raise DGSeedError(f"Failed to assemble the RDKit molecule: {exc}") from exc
 
-    vertices = np.asarray(template.vertices, dtype=float)
-    unit = vertices / np.linalg.norm(vertices, axis=1, keepdims=True)
-    targets: dict[int, np.ndarray] = {metal: np.zeros(3)}
-    for slot, donor in enumerate(donors):
-        radius = float(np.linalg.norm(ref[metal] - ref[donor]))
-        targets[donor] = radius * unit[order[slot]]
+    targets: dict[int, np.ndarray] = {}
+    if metal is not None and template is not None:
+        vertices = np.asarray(template.vertices, dtype=float)
+        unit = vertices / np.linalg.norm(vertices, axis=1, keepdims=True)
+        targets[metal] = np.zeros(3)
+        for slot, donor in enumerate(donors):
+            radius = float(np.linalg.norm(ref[metal] - ref[donor]))
+            targets[donor] = radius * unit[order[slot]]
     neighbors: dict[int, set[int]] = {i: set() for i in range(graph.natoms)}
     for atom in mol.GetAtoms():
         for peer in atom.GetNeighbors():
@@ -417,6 +445,8 @@ def generate_dg_seeds(
                 _set_pair(second, peer, dist, settings.forming_neighbor_tolerance)
     donor_set = set(donors)
     for donor in donors:
+        if metal is None:
+            break
         for peer in sorted(neighbors[donor]):
             if peer == metal or peer in donor_set:
                 continue
@@ -425,11 +455,12 @@ def generate_dg_seeds(
             if pair in reactions:
                 tol = settings.forming_neighbor_tolerance
             _set_pair(metal, peer, _ref_dist(metal, peer), tol)
-    core = [metal] + list(donors)
-    for rank, first in enumerate(core):
-        for second in core[rank + 1 :]:
-            dist = float(np.linalg.norm(targets[first] - targets[second]))
-            _set_pair(first, second, dist, settings.core_tolerance)
+    core = [] if metal is None else [metal] + list(donors)
+    if metal is not None:
+        for rank, first in enumerate(core):
+            for second in core[rank + 1 :]:
+                dist = float(np.linalg.norm(targets[first] - targets[second]))
+                _set_pair(first, second, dist, settings.core_tolerance)
     if not DoTriangleSmoothing(bounds):
         raise DGSeedError("triangle smoothing of the DG bounds matrix failed")
 
@@ -442,7 +473,8 @@ def generate_dg_seeds(
     params.useSmallRingTorsions = settings.small_ring_torsions
     params.timeout = settings.timeout_seconds
     params.SetBoundsMat(bounds)
-    params.SetCoordMap({i: Point3D(*targets[i]) for i in core})
+    if core:
+        params.SetCoordMap({i: Point3D(*targets[i]) for i in core})
     try:
         conf_ids = rdDistGeom.EmbedMultipleConfs(mol, requested, params)
     except Exception as exc:
@@ -452,4 +484,9 @@ def generate_dg_seeds(
         for conf_id in conf_ids
         if int(conf_id) >= 0
     )
-    return DGSeedResult(coords=starts, requested=requested, fragment_charges=tuple(used))
+    return DGSeedResult(
+        coords=starts,
+        requested=requested,
+        fragment_charges=tuple(used),
+        stereo_centers=stereo,
+    )

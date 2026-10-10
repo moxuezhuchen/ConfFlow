@@ -153,15 +153,25 @@ description = "TS refinement entry"
   找不到即 fail-closed。
 - 超过整机容量的申请立即失败，不等待；等待中取消立即生效。
 
-## 8. DG 搜索脚本（配位 DG 出发 → 约束 xTB → 审计）
+## 8. DG 搜索脚本（DG 出发 → 约束 xTB → 审计）
 
 - 脚本 `scripts/confgen_dg_search.py`（独立 CLI，`main(argv=None) -> int`，仅标准库 + NumPy +
-  `confflow` 导入）对一个给定的单金属配合物做：策略过滤后的每个配位类各做若干 DG 出发构象
-  （`confflow/science/confgen/dg_seed.py`，行为不动），每个出发构象在谐振距离约束下做 GFN2-xTB
-  优化（金属–给体与反应对回到参考距离），再逐个审计；只写出全部通过的结构（按能量排序）。
+  `confflow` 导入）对一个给定的分子做：有金属时，策略过滤后的每个配位类各做若干 DG 出发构象；
+  无金属时只有一个 target（`t00`，无配位类）。DG 出发来自
+  `confflow/science/confgen/dg_seed.py`（`spec=None` 即无金属路径：`placement` 为空、`shape`
+  被忽略，片段在全部原子上感知，只保留反应对 bounds），每个出发构象在谐振距离约束下做 GFN2-xTB
+  优化（金属–给体与反应对回到参考距离，无金属时只有反应对；无任何约束时 xTB 不带 `--input`），
+  再逐个审计；只写出全部通过的结构（按能量排序）。
   ConfGen 工作流只能冻原子、不能做距离约束，因此该协议以 N2 登记脚本形式提供，
   不动 engine/schema/executor/registry（见 `confflow/execution/script_registry.py`、
   `confflow/execution/script_executor.py`，测试见 `tests/test_script_steps.py`）。
+- `--metal`、`--donors`、`--shape` 要么全给、要么全不给（其它组合即 argparse 错误）；全不给即
+  无金属路径，此时 `--forbid-trans` 不允许，`coordination_class` 与 `metal_donor_distance`
+  记为 `skipped` 且不判失败（记在每个 structure 的 `skipped_checks`）。
+- 小环 torsion 开关 `--small-ring-torsions {both,on,off}`（默认 `both`）：`both` 时每个 target
+  前 `ceil(count/2)` 个出发用开、后 `floor(count/2)` 个用关（种子公式见脚本内注释），每个出发
+  的开关记在每个 structure 的 `small_ring_torsions`；开偏向低能环形并压住其它构象，关覆盖更广
+  但低能出发更少（同 `dg_seed.py` 中 `small_ring_torsions` docstring 的一句话）。
 - 服务器登记（`command` 中首个存在文件即脚本，找不到即 fail-closed）：
   ```toml
   [scripts.confgen_dg_search]
@@ -180,16 +190,18 @@ description = "TS refinement entry"
     outputs: {structures: "structures.xyz", summary: "summary.json"}
     bindings: {structure: {source: {run: structures}}}
   ```
-  `{input}` 按位置传给脚本（另有等效 `--input`）；`--xtb` 缺省读 `$CONFFLOW_XTB`，
+  `{input}` 按位置传给脚本（另有等效 `--input`）；无金属时 args 去掉
+  `--metal/--donors/--shape`，其余相同；`--xtb` 缺省读 `$CONFFLOW_XTB`，
   找不到可执行文件即在开工前 fail-closed；已写过同内容 `done.json` 的出发目录自动续跑。
 - 审计（相对输入参考逐项记录，一项不过即不通过）：`converged`（收敛标记且 `xtbopt.xyz` 存在）；
   `topology`（同规则感知的共价键集与参考一致，反应对永不计入）；
-  `coordination_class`（`perceive_donors` 无歧义且归一到被命令类）；
-  `stereo`（四配位碳的符号体积不变号）；`reaction_distance`（反应对 ±0.02 Å）；
-  `metal_donor_distance`（金属–给体 ±0.03 Å）；`contacts`（相隔 3 根键以上且去金属的原子对，
+  `coordination_class`（`perceive_donors` 无歧义且归一到被命令类，无金属时记 `skipped`）；
+  `stereo`（只比参考上 RDKit 标出的真四面体手性中心，即 `DGSeedResult.stereo_centers`，
+  的符号体积；CH2/CH3 的等价 H 互换不再误判）；`reaction_distance`（反应对 ±0.02 Å）；
+  `metal_donor_distance`（金属–给体 ±0.03 Å，无金属时记 `skipped`）；`contacts`（相隔 3 根键以上且去金属的原子对，
   不短于 0.70 倍半径和；仓内无独立 vdW 半径表，沿用共价半径表，与
   `coordination/realization.py` 的 clash guard 一致）。
 - 退出码：至少一个通过为 0；零通过仍写 `summary.json`、不写空 xyz，退出码为 2 并在 stderr 说明。
 - 限度：出发构象必须经 xTB 松弛（测试用假 xTB，不依赖真二进制）；电荷启发式带有
-  `--fragment-charge ATOM:Q` 覆盖；只支持单金属、`hapticity=1`；结果是约束下的 GFN2 极小点，
-  不是验证过的过渡态。
+  `--fragment-charge ATOM:Q` 覆盖；配位路径只支持单金属、`hapticity=1`，无金属路径无此限制；
+  结果是约束下的 GFN2 极小点，不是验证过的过渡态。
