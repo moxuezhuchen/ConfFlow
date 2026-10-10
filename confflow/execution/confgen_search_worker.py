@@ -25,8 +25,8 @@ from typing import Any, Literal
 import numpy as np
 
 import confflow.science.confgen.search as search
-from confflow.science.confgen.coordination.stage import resolve_axis_spec
 from confflow.science.confgen.graph import TypedGraph
+from confflow.science.confgen.search_spec import resolve_search_coordination
 
 HARTREE_TO_KCAL = 627.5094740631
 _CONV = "GEOMETRY OPTIMIZATION CONVERGED"
@@ -118,7 +118,7 @@ def _load_job(path: str) -> dict[str, Any]:
         if not isinstance(coord_raw, dict):
             raise _JobError("job field 'coordination' must be a mapping or null")
         try:
-            spec = resolve_axis_spec(coord_raw)
+            spec = resolve_search_coordination(coord_raw)
         except ValueError as exc:
             raise _JobError(f"job coordination is malformed: {exc}") from exc
         if not isinstance(shape, str) or not shape:

@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 
-"""ConfGen search mode: DG search as a mode of the confgen step.
+"""ConfGen search mode: DG search as the single confgen engine.
 
-Native scope carries ``search`` instead of rings/torsions/paths. Graph,
-coordination and shape come from ``build_context``; one supervised worker
-runs restrained xTB; passing structures import as plain members.
+Native scope carries ``schema_version: 4`` with an optional ``search``
+section. Graph, coordination spec and shape come from
+:mod:`confflow.science.confgen.search_spec`; one supervised worker runs
+restrained xTB; passing structures import as plain members. A confgen step
+that consumes the members of an earlier confgen step treats them as plain
+structures: no chained confgen state is read here.
 """
 
 from __future__ import annotations
@@ -18,8 +21,10 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from confflow.science.confgen.coordination.stage import resolve_axis_spec
-from confflow.science.confgen.model import build_context
+from confflow.science.confgen.search_spec import (
+    build_search_context,
+    resolve_search_starts,
+)
 from confflow.science.topology import should_persist_working_graph
 
 from ..domain._immutable import FrozenDict, thaw_value
@@ -144,13 +149,10 @@ def _run(
 ) -> WorkItemResult:
     scientific = context.scientific
     native = dict(scientific.native)
-    section = native.get("search")
-    if not isinstance(section, Mapping):
-        raise DomainError("confgen search scope is missing its search section")
     seed, raw_seed = scientific.seed, native.get("seed")
     if seed is not None and raw_seed is not None and int(raw_seed) != int(seed):
         raise DomainError(
-            "confgen v3 seed conflict: step seed "
+            "confgen v4 seed conflict: step seed "
             f"{seed!r} disagrees with native seed {raw_seed!r}; "
             "the top-level step seed is the sole authority"
         )
@@ -158,33 +160,32 @@ def _run(
         seed = raw_seed
     if seed is None:
         raise DomainError(
-            "confgen v3 search requires an explicit top-level seed "
+            "confgen v4 search requires an explicit top-level seed "
             "(the seed is the sole stochastic authority)"
         )
     if isinstance(seed, bool) or not isinstance(seed, int):
-        raise DomainError(f"confgen v3 seed must be an integer or null, got {seed!r}")
+        raise DomainError(f"confgen v4 seed must be an integer, got {seed!r}")
     executor._reject_freeze(work_item, context)
     driving = executor._driving(work_item)
-    input_key, upstream = executor._chained_input_state(work_item, driving)
-    spec = {k: v for k, v in native.items() if k != "search"}
+    spec = dict(native)
     spec["seed"] = int(seed)
-    scope = upstream.get("inherited_scope")
     try:
-        science_context = build_context(driving, spec, input_key, inherited_scope=scope)
+        science = build_search_context(driving, spec)
     except ValueError as exc:
-        raise DomainError(f"confgen v3 spec rejected: {exc}") from exc
-    coord_section = science_context.resolved_spec.get("coordination")
-    coord, shape = None, None
-    if isinstance(coord_section, Mapping):
-        coord = resolve_axis_spec(dict(coord_section))
-        if len(coord.shapes) != 1:
-            raise DomainError(
-                "confgen search requires exactly one coordination shape "
-                f"(resolved {list(coord.shapes)!r}); declare a single shape"
-            )
-        shape = coord.shapes[0]
+        raise DomainError(f"confgen v4 spec rejected: {exc}") from exc
+    section = native.get("search")
+    if section is not None and not isinstance(section, Mapping):
+        raise DomainError("confgen search section must be a mapping or null")
+    try:
+        starts = resolve_search_starts(section, has_coordination=science.spec is not None)
+    except ValueError as exc:
+        raise DomainError(f"confgen v4 search rejected: {exc}") from exc
+    coord_section = science.coordination_section
+    coord, shape = science.spec, science.shape
+    if coord_section is not None and (coord is None or shape is None):
+        raise DomainError("confgen search coordination did not resolve to one shape")
     base, natoms = int(native.get("index_base", 1)), len(driving.atoms)
-    raw_charges = section.get("fragment_charges", [])
+    raw_charges = section.get("fragment_charges", []) if isinstance(section, Mapping) else []
     frag = tuple((int(e["atom"]) - base, int(e["charge"])) for e in raw_charges)
     for atom, _ in frag:
         if atom < 0 or atom >= natoms:
@@ -192,12 +193,19 @@ def _run(
                 f"confgen search fragment charge atom {atom + base} is out of range for {natoms} atoms"
             )
     charge, multiplicity = driving.charge, driving.multiplicity
-    overrides = scientific.overrides
-    if overrides.get("charge") is not None:
-        charge = int(overrides["charge"])
-    if overrides.get("multiplicity") is not None:
-        multiplicity = int(overrides["multiplicity"])
-    if charge is None or multiplicity is None:
+    defaults = getattr(context, "scientific_defaults", None)
+    if charge is None and defaults is not None:
+        charge = getattr(defaults, "charge", None)
+    if multiplicity is None and defaults is not None:
+        multiplicity = getattr(defaults, "multiplicity", None)
+    if (
+        charge is None
+        or multiplicity is None
+        or isinstance(charge, bool)
+        or not isinstance(charge, int)
+        or isinstance(multiplicity, bool)
+        or not isinstance(multiplicity, int)
+    ):
         raise DomainError("confgen search requires a resolved charge and multiplicity")
     binding = context.execution_binding
     xtb = binding.executable if binding is not None else None
@@ -216,17 +224,25 @@ def _run(
     os.makedirs(attempt, exist_ok=True)
     rundir = os.path.join(attempt, "search_run")
     os.makedirs(rundir, exist_ok=True)
+    settings_doc = dict(section) if isinstance(section, Mapping) else {}
+    settings_doc.setdefault("small_ring_torsions", "both")
+    settings_doc.setdefault("embed_timeout_seconds", 120)
+    settings_doc.setdefault("max_cycles", 1000)
+    settings_doc.setdefault("bond_scale", 1.25)
+    settings_doc["starts"] = starts
+    settings_doc["seed"] = int(seed)
+    settings_doc["fragment_charges"] = [[a, q] for a, q in frag]
     job_path = os.path.join(attempt, "search_job.json")
     job_doc = {
         "atoms": list(driving.atoms),
         "reference": [[float(x), float(y), float(z)] for x, y, z in driving.coordinates],
-        "graph": science_context.graph.to_mapping(convention="internal0"),
+        "graph": science.graph.to_mapping(convention="internal0"),
         "coordination": thaw_value(coord_section) if isinstance(coord_section, Mapping) else None,
         "shape": shape,
         "charge": int(charge),
         "uhf": int(multiplicity) - 1,
-        "settings": {**section, "seed": int(seed), "fragment_charges": [[a, q] for a, q in frag]},
-        "max_cycles": int(section.get("max_cycles", 1000)),
+        "settings": settings_doc,
+        "max_cycles": int(settings_doc.get("max_cycles", 1000)),
         "xtb": xtb,
         "cores": cores,
         "workdir": os.path.join(rundir, "starts"),
@@ -313,9 +329,6 @@ def _run(
             with open(path, "rb") as handle:
                 checksum = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
             relative = os.path.relpath(os.path.realpath(path), run_root).replace(os.sep, "/")
-            metadata = {"seed": int(seed)}
-            if upstream.get("result_id") is not None:
-                metadata["input_confgen_state"] = upstream["result_id"]
             refs.append(
                 ArtifactRef(
                     id=f"{work_item.id}/{name}",
@@ -325,7 +338,7 @@ def _run(
                     producer_step_id=work_item.step_id,
                     producer_work_item_id=work_item.id,
                     subject_structure_id=driving.id,
-                    metadata=FrozenDict(metadata),
+                    metadata=FrozenDict({"seed": int(seed), "starts": starts}),
                 )
             )
         return ArtifactSet(tuple(refs))
@@ -339,25 +352,13 @@ def _run(
         persist = should_persist_working_graph(driving)
         inherit_patch = driving.topology_patch if persist else None
         inherit_graph = (
-            tuple(tuple(int(v) for v in row) for row in science_context.adjacency)
-            if persist
-            else None
+            tuple(tuple(int(v) for v in row) for row in science.adjacency) if persist else None
         )
         low = min(float(r.get("energy_eh") or 0.0) for r in ordered)
         members: list[StructureRecord] = []
         for rank, rec in enumerate(ordered):
             energy = rec.get("energy_eh")
             coords = tuple((float(x), float(y), float(z)) for x, y, z in frames[rank].coordinates)
-            metadata = {
-                CONFORMER_MEMBER_METADATA_KEY: rank,
-                "seed": int(seed),
-                "energy_eh": energy,
-                "rel_kcal": (float(energy or 0.0) - low) * _HARTREE_TO_KCAL,
-                "search_target": rec.get("target"),
-                "search_start": rec.get("start"),
-            }
-            if upstream.get("result_id") is not None:
-                metadata["input_confgen_state"] = upstream["result_id"]
             members.append(
                 StructureRecord(
                     conformer_output_id(work_item.logical_key, rank),
@@ -372,7 +373,17 @@ def _run(
                     "conformer",
                     rank,
                     group_key,
-                    FrozenDict(metadata),
+                    FrozenDict(
+                        {
+                            CONFORMER_MEMBER_METADATA_KEY: rank,
+                            "seed": int(seed),
+                            "starts": starts,
+                            "energy_eh": energy,
+                            "rel_kcal": (float(energy or 0.0) - low) * _HARTREE_TO_KCAL,
+                            "search_target": rec.get("target"),
+                            "search_start": rec.get("start"),
+                        }
+                    ),
                     inherit_patch,
                     inherit_graph,
                 )
@@ -395,6 +406,7 @@ def _run(
                     "generated": totals.get("generated"),
                     "relaxed": totals.get("relaxed"),
                     "passed": totals.get("passed"),
+                    "starts": starts,
                     "failed_checks": counts,
                 }
             ),

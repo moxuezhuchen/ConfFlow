@@ -28,11 +28,10 @@ def _write(root: Path, rel: str, content: str) -> None:
     p.write_text(content, encoding="utf-8")
 
 
-def test_contract_uses_default_registry_and_ap090_clean() -> None:
+def test_contract_uses_no_confgen_registry_and_ap090_clean() -> None:
     text = (_REAL_ROOT / "confflow/producer/contract.py").read_text(encoding="utf-8")
     assert "build_default_registry" not in text
-    assert "from ..science.confgen.registry import default_registry" in text
-    assert "registry = default_registry()" in text
+    assert "science.confgen.registry" not in text
     hits = [v for v in scan(_REAL_ROOT, rule_ids=("AP-090",)) if v["rule"] == "AP-090"]
     bad = [v for v in hits if v["path"] == "confflow/producer/contract.py"]
     assert bad == []
@@ -123,12 +122,11 @@ def test_fifteen_patterns_byte_identical() -> None:
         "confflow/execution/transform_executor.py": ["confflow.science.confgen.registry"],
         "confflow/execution/confgen_search_worker.py": [
             "confflow.science.confgen.search",
-            "confflow.science.confgen.coordination.stage",
+            "confflow.science.confgen.search_spec",
             "confflow.science.confgen.graph",
         ],
         "confflow/execution/confgen_search_run.py": [
-            "confflow.science.confgen.coordination.stage",
-            "confflow.science.confgen.model",
+            "confflow.science.confgen.search_spec",
             "confflow.science.topology",
         ],
     }

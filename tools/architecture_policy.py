@@ -1029,22 +1029,21 @@ R.append(
         # transform_executor.py may import exactly
         # confflow.science.confgen.registry (A4a/AG2 channel), and only the
         # confgen-search pair below may import exactly its listed science
-        # modules (Card B: worker owns xTB/graph handling, the search runner
-        # reuses the typed-context authorities). Any other science module in
-        # those files, or the same modules in any other file, still trips
-        # AP-002.
+        # modules (Card C: the search runner/worker own the v4 search-spec
+        # authority plus the typed-graph/search science they execute).
+        # Any other science module in those files, or the same modules in
+        # any other file, still trips AP-002.
         "exempt_precise_imports": {
             "confflow/execution/transform_executor.py": [
                 "confflow.science.confgen.registry",
             ],
             "confflow/execution/confgen_search_worker.py": [
                 "confflow.science.confgen.search",
-                "confflow.science.confgen.coordination.stage",
+                "confflow.science.confgen.search_spec",
                 "confflow.science.confgen.graph",
             ],
             "confflow/execution/confgen_search_run.py": [
-                "confflow.science.confgen.coordination.stage",
-                "confflow.science.confgen.model",
+                "confflow.science.confgen.search_spec",
                 "confflow.science.topology",
             ],
         },

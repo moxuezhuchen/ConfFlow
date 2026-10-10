@@ -236,7 +236,6 @@ def confgen_step(
     bindings: Mapping[str, Any] | None = None,
     native: Mapping[str, Any] | None = None,
     seed: int | None = 42,
-    overrides: Mapping[str, Any] | None = None,
     enabled: bool | None = None,
 ) -> dict[str, Any]:
     """Build a confgen step mapping."""
@@ -245,21 +244,11 @@ def confgen_step(
         confgen = {"native": dict(native)}
     else:
         confgen = {
-            "schema_version": 3,
-            "torsions": [
-                {
-                    "id": "t1",
-                    "bond": [2, 3],
-                    "model": "relative_rotation_grid",
-                    "angles": [0, 120, 240],
-                    "treatment": "enumerate",
-                }
-            ],
+            "schema_version": 4,
+            "search": {"starts": 2},
         }
     if seed is not None:
         confgen["seed"] = seed
-    if overrides is not None:
-        confgen["overrides"] = dict(overrides)
     step: dict[str, Any] = {
         "id": step_id,
         "executor": "confgen",

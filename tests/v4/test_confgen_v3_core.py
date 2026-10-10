@@ -1385,6 +1385,7 @@ def test_typed_forming_add_bond_rides_workflow_wire():
     """
     from confflow.science.confgen.graph import EdgeType
     from confflow.science.confgen.model import edge_kind_of
+    from confflow.science.confgen.search_spec import build_search_context
     from confflow.workflow.v4.confgen_schema import ConfgenModelV3
 
     record = StructureRecord(
@@ -1396,7 +1397,7 @@ def test_typed_forming_add_bond_rides_workflow_wire():
     assert [list(row) for row in bare.adjacency] == [[1, 2], [0], [0]]
     scope = ConfgenModelV3.model_validate(
         {
-            "schema_version": 3,
+            "schema_version": 4,
             "index_base": 1,
             "seed": 1,
             "topology": {"add_bond": [{"atoms": [2, 3], "kind": "FORMING"}]},
@@ -1406,7 +1407,7 @@ def test_typed_forming_add_bond_rides_workflow_wire():
     assert wire["topology"]["add_bond"] == [
         {"atoms": [2, 3], "kind": "FORMING", "provenance": "explicit"}
     ]
-    context = build_context(record, dict(wire))
+    context = build_search_context(record, dict(wire))
     assert [list(row) for row in context.adjacency] == [list(row) for row in bare.adjacency]
     assert context.graph.reaction_pairs == ((1, 2),)
     assert edge_kind_of(context.graph, 1, 2) is EdgeType.FORMING

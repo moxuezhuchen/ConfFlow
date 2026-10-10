@@ -475,22 +475,19 @@ class TestCapabilityVocabulary:
         assert not result.ok
         assert "unknown_transform_kind" in _error_reasons(result)
 
-    def test_confgen_seed_is_required_only_for_capped_sampling(self) -> None:
+    def test_confgen_seed_is_always_required(self) -> None:
         bindings = {"structure": {"source": {"run": "structures"}}}
 
-        def doc_with(seed: int | None, *, cap: int | None) -> dict:
-            step = confgen_step("s_conf", bindings=bindings, seed=seed)
-            if cap is not None:
-                step["confgen"]["sampling"] = {"cap": cap}
-            return v4_doc([step], inputs=STRUCTURE_INPUTS)
+        def doc_with(seed: int | None) -> dict:
+            return v4_doc(
+                [confgen_step("s_conf", bindings=bindings, seed=seed)], inputs=STRUCTURE_INPUTS
+            )
 
-        # Full enumeration has no randomness: no seed needed.
-        assert compile_doc(doc_with(None, cap=None)).ok
-        # A capped sample is stochastic: the seed is the sole authority.
-        capped = compile_doc(doc_with(None, cap=3))
-        assert not capped.ok
-        assert "invalid_value" in _error_reasons(capped)
-        assert compile_doc(doc_with(7, cap=3)).ok
+        # The DG search is stochastic: a seed is always required.
+        missing = compile_doc(doc_with(None))
+        assert not missing.ok
+        assert "missing_required_member" in _error_reasons(missing)
+        assert compile_doc(doc_with(7)).ok
 
     def test_confgen_with_seed_compiles(self) -> None:
         doc = v4_doc(

@@ -4,7 +4,7 @@
 
 Stochastic step without explicit seed gets stable seed derived by SHA-256 over JCS canonical bytes of the whole seed-free scientific workflow identity (never Python ``hash()``, never circular digest); scientific changes move the seed, operational changes do not; explicit step seed preserved verbatim; strict V4 compiler remains authority, wrong decision fails closed there.
 Identity INCLUDES per assigned step id: program, card-determined adapter/profile/checks/recovery, native mapping, charge/multiplicity/freeze overrides; normalized per-item resources (cores_per_item/memory_per_item with schema fallbacks via ``domain.resources.parse_memory_bytes``, so 1GiB equals 1024MiB, omitted equals defaults); scientific acceptance state ``enabled`` (absent True) and ``completion`` (absent require_all/deny, digest-covered); whole-workflow science plus bindings/upstream edges sorted by stable step id (wire order never moves seed); declared structure-input identity (names/kinds/cardinality/pairing with defaults, topology edge sets, global scientific defaults, stable ids); topology provenance excluded, only add/delete edge sets move seed canonicalized so [2,1] equals [1,2]; input description excluded.
-Identity EXCLUDES: all seeds, scheduler policy, machine/execution bindings, annotations, labels, output paths. Full-enumeration typed ConfGen v3 without sampling.cap is deterministic and gets no seed; legacy ConfGen and capped typed ConfGen require a seed.
+Identity EXCLUDES: all seeds, scheduler policy, machine/execution bindings, annotations, labels, output paths. Typed ConfGen v4 (DG search) is stochastic and always requires a seed.
 """
 
 from __future__ import annotations
@@ -218,9 +218,6 @@ def needs_seed(step: Mapping[str, Any]) -> bool:
         block = _confgen_block(step)
         if block is None:
             return False
-        if block.get("schema_version") == 3:
-            sampling = block.get("sampling")
-            return isinstance(sampling, Mapping) and sampling.get("cap") is not None
         return True
     return False
 

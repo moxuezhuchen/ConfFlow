@@ -14,15 +14,7 @@ from confflow.workflow.v4.compiler import compile_workflow
 
 GLOBALS = {"charge": 0, "multiplicity": 1}
 
-TORSIONS = [
-    {
-        "id": "t1",
-        "bond": [1, 2],
-        "model": "relative_rotation_grid",
-        "angles": [0, 120, 240],
-        "treatment": "enumerate",
-    }
-]
+SEARCH_NATIVE = {"schema_version": 4, "search": {"starts": 8}}
 
 
 def _capped_intent(**top: Any) -> dict[str, Any]:
@@ -32,11 +24,7 @@ def _capped_intent(**top: Any) -> dict[str, Any]:
         "steps": [
             {
                 "card": "confgen@v1",
-                "native": {
-                    "schema_version": 3,
-                    "torsions": copy.deepcopy(TORSIONS),
-                    "sampling": {"cap": 50},
-                },
+                "native": copy.deepcopy(SEARCH_NATIVE),
             }
         ],
     }
@@ -155,9 +143,8 @@ class TestSeedInputSemantics:
                         "id": "aaa",
                         "card": "confgen@v1",
                         "native": {
-                            "schema_version": 3,
-                            "torsions": copy.deepcopy(TORSIONS),
-                            "sampling": {"cap": 50},
+                            "schema_version": 4,
+                            "search": {"starts": 8},
                         },
                         "bindings": {"structure": {"source": {"run": "structures"}}},
                     },
@@ -243,9 +230,8 @@ class TestPartialMachineResources:
                     {
                         "card": "confgen@v1",
                         "native": {
-                            "schema_version": 3,
-                            "torsions": copy.deepcopy(TORSIONS),
-                            "sampling": {"cap": 50},
+                            "schema_version": 4,
+                            "search": {"starts": 8},
                         },
                         "resources": resources,
                     }
@@ -297,9 +283,8 @@ class TestMultiCheckpointWithStochastic:
                     "card": "confgen@v1",
                     "from": "run:structures",
                     "native": {
-                        "schema_version": 3,
-                        "torsions": copy.deepcopy(TORSIONS),
-                        "sampling": {"cap": 10},
+                        "schema_version": 4,
+                        "search": {"starts": 8},
                     },
                 },
             ],
@@ -343,9 +328,8 @@ class TestMultiCheckpointWithStochastic:
                     "from": "run:structures",
                     "seed": 12345,
                     "native": {
-                        "schema_version": 3,
-                        "torsions": copy.deepcopy(TORSIONS),
-                        "sampling": {"cap": 10},
+                        "schema_version": 4,
+                        "search": {"starts": 8},
                     },
                 },
             ],
@@ -461,10 +445,7 @@ class TestFinalUxAudits:
                     {
                         "card": "confgen@v1",
                         "seed": 999,
-                        "native": {
-                            "schema_version": 3,
-                            "torsions": copy.deepcopy(TORSIONS),
-                        },
+                        "native": copy.deepcopy(SEARCH_NATIVE),
                     }
                 ],
             }

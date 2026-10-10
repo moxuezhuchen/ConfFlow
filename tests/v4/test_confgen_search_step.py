@@ -26,23 +26,22 @@ from confflow.execution.output_identity import CONFORMER_MEMBER_METADATA_KEY
 from confflow.execution.process import NativeProcessSupervisor
 from confflow.execution.quota import QuotaCancelled, QuotaError
 from confflow.execution.work_item_executor import ItemExecutionContext, WorkItemExecutor
-from confflow.science.confgen.model import ConfgenStateKey
 from confflow.workflow.v4.compiler import compile_workflow
-from confflow.workflow.v4.confgen_schema import ConfgenModelV3
+from confflow.workflow.v4.confgen_schema import REMOVED_ENGINES_MESSAGE, ConfgenModelV3
 from confflow.workflow.v4.validation import _confgen_seed_requirement
 from tests.v4._dg_search_helpers import _embed, _toy, _write_fake
 
 _SEARCH = {"starts": 2, "embed_timeout_seconds": 20, "max_cycles": 100, "bond_scale": 1.25}
 _SITES = [{"id": f"s{i}", "atoms": [d]} for i, d in enumerate((2, 3, 4, 5))]
 
-# Byte-exact wire pin: sha256 of the canonical minimal-scope wire captured
-# from HEAD code before the search key existed (absence, not null).
-_WIRE_BEFORE_DIGEST = "453caa356bef0116229d76378dccb0bcd4daf6f8f04ff7ddde43cd92fb2d4cb4"
+# Byte-exact wire pin: sha256 of the canonical minimal v4 scope wire
+# (schema_version 4, seed 1; search absent means all defaults).
+_WIRE_V4_DIGEST = "6a8663a8615b096fc0c68d462d49318dab8cd9e784a3d5782bbf4df2d089a20d"
 
 
 def _scope(**over: Any) -> dict[str, Any]:
     scope: dict[str, Any] = {
-        "schema_version": 3,
+        "schema_version": 4,
         "coordination": {"metal_center": 1, "binding_sites": _SITES, "shapes": ["square_planar"]},
         "seed": 7,
         "search": dict(_SEARCH),
@@ -136,11 +135,31 @@ def test_schema_rejections() -> None:
             ]
         },
         {"paths": [{"start": 1, "end": 2, "move": "start", "step": 120}]},
+        {"limits": {"max_declared_states": 10}},
+        {"exclusions": []},
+        {"stereochemistry": {}},
+        {"overrides": {}},
+        {"strict_path_bond_check": True},
+        {
+            "coordination": {
+                "metal_center": 1,
+                "binding_sites": _SITES,
+                "shapes": ["square_planar"],
+                "backend": "rigid",
+            }
+        },
+        {"tolerances": {"clash_threshold": 0.5}},
     ):
         with pytest.raises(ValidationError):
             ConfgenModelV3.model_validate(_scope(**extra))
-    with pytest.raises(ValidationError, match="explicit top-level seed"):
+    with pytest.raises(ValidationError, match="seed"):
         ConfgenModelV3.model_validate(_scope(seed=None))
+    with pytest.raises(ValidationError, match="at least 1 item"):
+        ConfgenModelV3.model_validate(
+            _scope(coordination={"metal_center": 1, "binding_sites": _SITES, "shapes": []})
+        )
+    with pytest.raises(ValidationError, match="removed"):
+        ConfgenModelV3.model_validate({"schema_version": 3})
     for search in (
         {"starts": 0},
         {"small_ring_torsions": "x"},
@@ -150,7 +169,7 @@ def test_schema_rejections() -> None:
     ):
         with pytest.raises(ValidationError):
             ConfgenModelV3.model_validate(_scope(search={**_SEARCH, **search}))
-    assert _confgen_seed_requirement({"schema_version": 3, "search": {"starts": 1}}) is not None
+    assert _confgen_seed_requirement({"schema_version": 4}) is not None
     doc = {
         "schema": "confflow.workflow.v4",
         "inputs": {"structures": {"kind": "structure", "cardinality": "many"}},
@@ -172,10 +191,71 @@ def test_schema_search_ok_and_wire_identity() -> None:
     assert model.search is not None and model.search.starts == 2
     assert model.search.small_ring_torsions == "both" and model.search.fragment_charges == []
     assert model.scientific_native()["search"]["starts"] == 2
-    now = ConfgenModelV3.model_validate({"schema_version": 3}).scientific_native()
+    assert ConfgenModelV3.model_validate(_scope(search=None)).search is None
+    now = ConfgenModelV3.model_validate({"schema_version": 4, "seed": 1}).scientific_native()
     assert "search" not in now
     digest = hashlib.sha256(json.dumps(now, sort_keys=True).encode()).hexdigest()
-    assert digest == _WIRE_BEFORE_DIGEST
+    assert digest == _WIRE_V4_DIGEST
+
+
+def test_schema_v3_rejected_with_removal_message() -> None:
+    with pytest.raises(ValidationError, match="ring, torsion, path"):
+        ConfgenModelV3.model_validate({"schema_version": 3, "seed": 1})
+    assert "schema_version: 4" in REMOVED_ENGINES_MESSAGE
+
+
+def test_removal_message_spelling_is_pinned() -> None:
+    from confflow.execution.confgen_executor import _REMOVED_ENGINES_MESSAGE as _exec_msg
+    from confflow.producer.intent.capabilities.confgen import (
+        REMOVED_ENGINES_MESSAGE as _cap_msg,
+    )
+    from confflow.science.confgen.search_spec import REMOVED_ENGINES_MESSAGE as _spec_msg
+
+    assert _exec_msg == _spec_msg == _cap_msg == REMOVED_ENGINES_MESSAGE
+
+
+def test_search_spec_rejections() -> None:
+    from confflow.science.confgen.search_spec import (
+        normalize_search_spec,
+        resolve_search_coordination,
+        resolve_search_starts,
+    )
+
+    base: dict[str, Any] = {"schema_version": 4, "index_base": 1, "seed": 1}
+    with pytest.raises(ValueError, match="ring, torsion, path"):
+        normalize_search_spec({"schema_version": 3, "seed": 1})
+    with pytest.raises(ValueError, match="unknown keys"):
+        normalize_search_spec({**base, "rings": []})
+    with pytest.raises(ValueError, match="unknown keys"):
+        normalize_search_spec({**base, "tolerances": {"clash_threshold": 0.5}})
+    with pytest.raises(ValueError, match="unknown keys"):
+        normalize_search_spec({**base, "coordination": {"metal_center": 1, "backend": "rigid"}})
+    coord = {
+        "metal_center": 0,
+        "binding_sites": [{"id": f"s{i}", "atoms": [i + 1]} for i in range(4)],
+        "shapes": ["tetrahedral"],
+    }
+    with pytest.raises(ValueError, match="unknown keys"):
+        resolve_search_coordination({**coord, "budgets": {}})
+    bad_site = dict(coord)
+    bad_site["binding_sites"] = [
+        {"id": f"s{i}", "atoms": [i + 1], **({"treatment": "enumerate"} if i == 0 else {})}
+        for i in range(4)
+    ]
+    with pytest.raises(ValueError, match="unknown keys"):
+        resolve_search_coordination(bad_site)
+    bad_constraint = dict(coord)
+    bad_constraint["constraints"] = [
+        {"id": "C00", "sites": ["s0", "s1"], "provenance": "p", "proof": {}}
+    ]
+    with pytest.raises(ValueError, match="unknown keys"):
+        resolve_search_coordination(bad_constraint)
+    with pytest.raises(ValueError, match="exactly one"):
+        resolve_search_coordination({**coord, "shapes": ["auto"]})
+    with pytest.raises(ValueError, match="at least one|exactly one"):
+        resolve_search_coordination({**coord, "shapes": []})
+    with pytest.raises(ValueError, match="integer >= 1"):
+        resolve_search_starts({"starts": 0}, has_coordination=True)
 
 
 def _summary(out: Any, tmp: Path, role: str = "search_summary") -> dict[str, Any]:
@@ -253,8 +333,9 @@ def test_pre_launch_failures(tmp_path: Path) -> None:
         tmp_path,
     )
     assert out.status.value == "failed" and "spec rejected" in out.diagnostics[0].message
-    auto = {"metal_center": 1, "binding_sites": _SITES, "shapes": "auto"}
-    out, _ = _run(_native(coordination=auto), driving, fake, tmp_path)
+    auto = dict(ConfgenModelV3.model_validate(_scope()).scientific_native())
+    auto["coordination"] = {"metal_center": 1, "binding_sites": _SITES, "shapes": "auto"}
+    out, _ = _run(FrozenDict(auto), driving, fake, tmp_path)
     assert out.status.value == "failed" and "exactly one" in out.diagnostics[0].message
     frag = {**_SEARCH, "fragment_charges": [{"atom": 99, "charge": 0}]}
     out, _ = _run(_native(search=frag), driving, fake, tmp_path)
@@ -334,11 +415,12 @@ def test_import_validation(tmp_path: Path) -> None:
             search_run._read_validated(driving, _write(tag, summary, xyz))
 
 
-def test_chained_upstream_state(tmp_path: Path) -> None:
+def test_upstream_results_are_plain_structures(tmp_path: Path) -> None:
+    """Upstream confgen results carry no chained state: members are plain structures."""
     driving = _driving_metal()
     record = ScientificResult(
         kind="confgen_state",
-        value=ConfgenStateKey().to_dict(),
+        value={"schema_version": 4},
         subject_structure_id="m1",
         source_step_id="up",
         source_work_item_id="wu",
@@ -356,9 +438,37 @@ def test_chained_upstream_state(tmp_path: Path) -> None:
     )
     assert out.status.value == "completed", [str(d.message) for d in out.diagnostics]
     assert len(out.results) == 0
-    assert all(
-        dict(m.metadata).get("input_confgen_state") == record.result_id for m in out.structures
-    )
+    assert all("input_confgen_state" not in dict(m.metadata) for m in out.structures)
+
+
+def test_v3_scope_fails_with_removal_message(tmp_path: Path) -> None:
+    driving = _driving_metal()
+    native = FrozenDict({"schema_version": 3, "seed": 7, "search": dict(_SEARCH)})
+    out, _ = _run(native, driving, _write_fake(tmp_path), tmp_path)
+    assert out.status.value == "failed"
+    assert "ring, torsion, path" in out.diagnostics[0].message
+
+
+def test_default_starts_resolution(tmp_path: Path) -> None:
+    """Absent search / null starts resolve to 8 with coordination, 400 without."""
+    from confflow.science.confgen.search_spec import resolve_search_starts
+
+    assert resolve_search_starts(None, has_coordination=True) == 8
+    assert resolve_search_starts(None, has_coordination=False) == 400
+    assert resolve_search_starts({"starts": None}, has_coordination=True) == 8
+    assert resolve_search_starts({"starts": 3}, has_coordination=False) == 3
+    driving = _driving_metal()
+    scope = _scope(seed=7)
+    scope.pop("search", None)
+    native = FrozenDict(ConfgenModelV3.model_validate(scope).scientific_native())
+    out, _ = _run(native, driving, _write_fake(tmp_path), tmp_path)
+    assert out.status.value == "completed", [str(d.message) for d in out.diagnostics]
+    jobs = list(tmp_path.rglob("search_job.json"))
+    assert len(jobs) == 1
+    assert json.loads(jobs[0].read_text())["settings"]["starts"] == 8
+    summary = _summary(out, tmp_path)
+    assert summary["settings"]["starts"] == 8
+    assert dict(out.structures[0].metadata)["starts"] == 8
 
 
 def test_end_to_end_binding(tmp_path: Path) -> None:

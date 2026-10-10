@@ -28,6 +28,20 @@ _SKIPPED_FREE = ("coordination_class", "metal_donor_distance", "donor_orientatio
 _R_TOL, _MD_TOL, _C_SCALE, _D_TOL = 0.02, 0.03, 0.70, 30.0
 
 
+def _signed_volume(coords: np.ndarray, center: int, neighbors: Sequence[int]) -> float:
+    """Return the signed volume of the tetrahedron around *center*.
+
+    Local copy of the stereo-volume helper (same arithmetic as the retired
+    coordination realization module): the search audit is the only surviving
+    reader, so the helper lives here.
+    """
+    selected = np.asarray([coords[n] for n in neighbors[:4]], dtype=float)
+    mat = np.column_stack(
+        [selected[1] - selected[0], selected[2] - selected[0], selected[3] - selected[0]]
+    )
+    return float(np.linalg.det(mat) / 6.0)
+
+
 class SearchError(ValueError):
     pass
 
@@ -346,8 +360,8 @@ def audit_structure(
         if not 0 <= i < len(elements) or len(adj[i]) != 4:
             continue
         pick = tuple(adj[i][:4])
-        before = coordination.realization.signed_volume(ref, i, pick)
-        after = coordination.realization.signed_volume(new, i, pick)
+        before = _signed_volume(ref, i, pick)
+        after = _signed_volume(new, i, pick)
         same = (before > 0.0) == (after > 0.0) if before and after else before == after == 0.0
         stereo = stereo and same
     if not stereo:
