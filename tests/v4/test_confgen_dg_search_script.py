@@ -276,6 +276,26 @@ def test_audit_checks() -> None:
     assert "stereo" in failed and "topology" not in failed
 
 
+def test_donor_orientation() -> None:
+    els, ref = _toy()
+    ctx, cmd = _ctx(els, ref)
+    assert "donor_orientation" not in DG.audit_checks(np.asarray(ref), ctx, cmd, True)
+    unit = (ref[0] - ref[1]) / np.linalg.norm(ref[0] - ref[1])
+    perp = np.cross(unit, (0.0, 0.0, 1.0))
+    perp /= np.linalg.norm(perp)
+    bond = float(np.linalg.norm(ref[5] - ref[1]))
+
+    def _placed(deg: float) -> np.ndarray:
+        rad = np.radians(deg)
+        direction = np.cos(rad) * unit + np.sin(rad) * perp
+        moved = np.array(ref, copy=True)
+        moved[5] = ref[1] + bond * direction
+        return moved
+
+    assert DG.audit_checks(_placed(170.0), ctx, cmd, True) == ["donor_orientation"]
+    assert DG.audit_checks(_placed(130.0), ctx, cmd, True) == []
+
+
 def test_xtb_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     els, ref = _toy()
     xyz = tmp_path / "toy.xyz"
@@ -429,7 +449,11 @@ def test_metal_free_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
     assert [t["id"] for t in summary["targets"]] == ["t00"]
     for row in summary["structures"]:
-        assert row["skipped_checks"] == ["coordination_class", "metal_donor_distance"]
+        assert row["skipped_checks"] == [
+            "coordination_class",
+            "metal_donor_distance",
+            "donor_orientation",
+        ]
         assert not {"coordination_class", "metal_donor_distance"} & set(row["failed_checks"])
     cinp = (tmp_path / "work" / "t00_s00" / "c.inp").read_text(encoding="utf-8")
     assert cinp.count("distance:") == 1 and "distance: 1, 2," in cinp

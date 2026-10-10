@@ -198,7 +198,7 @@ description = "TS refinement entry"
   `coordination_class`（`perceive_donors` 无歧义且归一到被命令类，无金属时记 `skipped`）；
   `stereo`（只比参考上 RDKit 标出的真四面体手性中心，即 `DGSeedResult.stereo_centers`，
   的符号体积；CH2/CH3 的等价 H 互换不再误判）；`reaction_distance`（反应对 ±0.02 Å）；
-  `metal_donor_distance`（金属–给体 ±0.03 Å，无金属时记 `skipped`）；`contacts`（相隔 3 根键以上且去金属的原子对，
+  `metal_donor_distance`（金属–给体 ±0.03 Å，无金属时记 `skipped`）；`donor_orientation`（每个给体的金属–给体–取代基夹角与参考至多差 30.0°，无金属时记 `skipped`）；`contacts`（相隔 3 根键以上且去金属的原子对，
   不短于 0.70 倍半径和；仓内无独立 vdW 半径表，沿用共价半径表，与
   `coordination/realization.py` 的 clash guard 一致）。
 - 退出码：至少一个通过为 0；零通过仍写 `summary.json`、不写空 xyz，退出码为 2 并在 stderr 说明。

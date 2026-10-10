@@ -38,9 +38,10 @@ CHECKS = (
     "stereo",
     "reaction_distance",
     "metal_donor_distance",
+    "donor_orientation",
     "contacts",
 )
-R_TOL, MD_TOL, C_SCALE = 0.02, 0.03, 0.70
+R_TOL, MD_TOL, C_SCALE, D_TOL = 0.02, 0.03, 0.70, 30.0
 HARTREE_TO_KCAL = 627.5094740631
 _CONV = "GEOMETRY OPTIMIZATION CONVERGED"
 _POL = "REJECTED_BY_POLICY"
@@ -233,6 +234,25 @@ def audit_checks(
         if abs(_dist(new, metal, d) - _dist(ref, metal, d)) > MD_TOL:
             failed.append("metal_donor_distance")
             break
+    if metal is not None:
+        worst = 0.0
+        for d in donors:
+            for x in adj[d]:
+                v_ref, w_ref = ref[metal] - ref[d], ref[x] - ref[d]
+                v_new, w_new = new[metal] - new[d], new[x] - new[d]
+                n_ref = float(np.linalg.norm(v_ref) * np.linalg.norm(w_ref))
+                n_new = float(np.linalg.norm(v_new) * np.linalg.norm(w_new))
+                if n_ref < 1e-12 or n_new < 1e-12:
+                    continue
+                a_ref = float(
+                    np.degrees(np.arccos(np.clip(float(np.dot(v_ref, w_ref)) / n_ref, -1.0, 1.0)))
+                )
+                a_new = float(
+                    np.degrees(np.arccos(np.clip(float(np.dot(v_new, w_new)) / n_new, -1.0, 1.0)))
+                )
+                worst = max(worst, abs(a_new - a_ref))
+        if worst > D_TOL:
+            failed.append("donor_orientation")
     radii, clash = [_rad(s) for s in els], False
     for i in range(len(els)):
         if i == metal:
@@ -437,7 +457,11 @@ def main(argv: list[str] | None = None) -> int:
     cmds: dict[str, tuple[int, ...]] = {}
     jobs: list[tuple[str, int, np.ndarray, Path, bool]] = []
     centers: tuple[int, ...] = ()
-    skipped = [] if metal is not None else ["coordination_class", "metal_donor_distance"]
+    skipped = (
+        []
+        if metal is not None
+        else ["coordination_class", "metal_donor_distance", "donor_orientation"]
+    )
     frag_charges = tuple(frag)
     for t, cls in enumerate(classes):
         tid = f"t{t:02d}"
