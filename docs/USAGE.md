@@ -61,10 +61,10 @@ steps:
     bindings:
       structure: {source: {run: structures}}
     confgen:
-      schema_version: 3           # typed v3：声明要转的路径
+      schema_version: 4           # typed v4：DG 搜索是唯一的 confgen 引擎
       index_base: 1               # 原子序号从 1 开始
-      paths:
-        - {start: 1, end: 4, move: end, step: 120}
+      seed: 11                    # 显式整数种子（随机性的唯一权威）
+      search: {starts: 400}       # 无金属时为总出发数；声明 coordination 时为每配位类
 
   - id: s_refine
     executor: structure_transform
@@ -89,24 +89,15 @@ steps:
 
 ### ConfGen 的声明方式
 
-新工作流请用 typed v3（`schema_version: 3`）：`paths`（起止原子对 + 移动侧 + 步长或角度表）、`torsions`、`rings`、
-`coordination` 等，细节见 [`CONFGEN_PATHS.md`](CONFGEN_PATHS.md)。全枚举不需要种子；使用 `sampling` 上限时必须给种子。
-旧的 `native.chains` / `native.paths` 词汇已不再被执行（非 v3 的 confgen 文档在解析阶段失败关闭）。迁移旧文档时注意：**v3 比旧路径严格，拒绝末端原子端点**（旋转末端原子在几何上是 no-op），路径的起止原子必须是有可测二面角的非末端原子。
+ConfGen 只有一个生成引擎（DG 搜索），文档必须写 `schema_version: 4`，`seed` 必填。
+完整字段、默认值、审计项与输出见 [`CONFGEN_CAPABILITIES.md`](CONFGEN_CAPABILITIES.md)。
 
-#### 迁移旧文档里的 `confgen.native`
-
-含 `confgen.native` 的旧文档会被 ConfFlow 以 `unknown_member` 拒绝（失败关闭），JobDesk 也不再提供编辑或移除它的界面，文档里的 `native` 内容不会被丢弃，需要手动改为 typed v3。`native.chains` 的对照写法（与 `confflow.example.yaml` 已验证的写法相同）：
-
-| 旧写法 | typed v3 |
-| --- | --- |
-| `native: {chains: ["1-2-3-4"], angle_step: 120}` | `schema_version: 3`、`index_base: 1`、`paths: [{start: 1, end: 4, move: start, step: 120}]` |
-
-- 链 `1-2-3-4` 旋转 1-2、2-3、3-4 三根键；旧默认旋转侧是 left，对应 `move: start`；`angle_step` 对应 `step`。
-- `native.paths` 的写法（`start`/`end`/`move`，`angles` 或 `step`）可以原样搬到 typed 的 `paths`；裸声明须补上 `step` 或 `angles`（旧默认 120 不再隐式生效）。
-- 种子原样保留；全枚举不需要种子，`sampling.cap` 才必须给种子。
-- 注意：**末端原子端点会被 v3 拒绝**，起止原子必须是有可测二面角的非末端原子。
-- `no_rotate`、`chain_steps`、`chain_angles`、`max_conformers` 等旧词汇没有一对一的 typed 写法，需要按 `docs/CONFGEN_PATHS.md` 与 typed 的 `torsions`/`sampling` 重新声明。
-
+- `index_base`（0 或 1）、`seed`（整数）、`topology`（`bonds`/`add_bond`/`del_bond`/`atoms`）、
+  `tolerances.bond_scale`、`coordination`（可选）、`search`（可选，整节缺席即全部默认）。
+- `schema_version: 3` 文档被拒绝，并提示环、扭转、路径与配位实现引擎已删除，应改用 `schema_version: 4`。
+- 旧字段 `rings`、`torsions`、`paths`、`sampling`、`limits`、`exclusions`、`stereochemistry`、`overrides`、
+  `native` 等被严格模型按未知字段拒绝（失败关闭）；没有兼容转换。
+- 消费上游 ConfGen 步骤产出成员的步骤，把这些成员当作普通结构。
 
 ### 精修去重（refine）
 
@@ -121,7 +112,6 @@ steps:
   ConfGen spec 声明的 `topology`/`coordination`/`add_bond`/`del_bond` **不会**写入输出记录；反应边/配位边体系的 refine 需要手写 `topology_bonds`，否则按几何感知建图（`bond_scale` 1.15，与 ConfGen 默认一致）。
 - `max_structures`：按 id 顺序截断。
 
-ConfGen 报告里的"带标号状态数"与精修之后的"物理构象数"是两个口径：σ 相关（对称等价）的结构会被合并。
 
 ## 3. 校验与运行
 
@@ -162,7 +152,7 @@ confflow v4 run --workflow flow.yaml \
 - `confflow v4 contract --json`：配置契约（工作流 schema、editor manifest、recipe 目录、能力词汇）。
 - `confflow v4 boundary --json`：边界协议。
 - `confflow v4 authoring --json --stdin`：authoring 请求（`describe_step`、`binding_candidates`、`instantiate_card`、
-  `validate_document`、`check_compatibility`、`compile_intent`、`preview_paths`）。
+  `validate_document`、`check_compatibility`、`compile_intent`）。
 - 简化输入（intent）：用 `confflow.intent.v1` 写"卡片 + 预设"式的简化文档，由 producer 编译成严格的 V4 文档，
   见 [`PRODUCER_INTENT.md`](PRODUCER_INTENT.md)。
 - `confflow --capabilities --json`：能力握手。

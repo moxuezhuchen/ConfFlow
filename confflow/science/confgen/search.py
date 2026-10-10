@@ -31,9 +31,7 @@ _R_TOL, _MD_TOL, _C_SCALE, _D_TOL = 0.02, 0.03, 0.70, 30.0
 def _signed_volume(coords: np.ndarray, center: int, neighbors: Sequence[int]) -> float:
     """Return the signed volume of the tetrahedron around *center*.
 
-    Local copy of the stereo-volume helper (same arithmetic as the retired
-    coordination realization module): the search audit is the only surviving
-    reader, so the helper lives here.
+    The search audit is the only reader of this stereo-volume helper.
     """
     selected = np.asarray([coords[n] for n in neighbors[:4]], dtype=float)
     mat = np.column_stack(

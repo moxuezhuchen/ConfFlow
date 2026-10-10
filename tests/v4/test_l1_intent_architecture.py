@@ -51,7 +51,7 @@ def test_ap106_rule_shape_uses_existing_imports_mechanism() -> None:
 
 def test_ap106_top_level_import_fires(tmp_path: Path) -> None:
     _write(tmp_path, "confflow/producer/intent/__init__.py", "")
-    _write(tmp_path, "confflow/producer/intent/hurt.py", "import confflow.science.confgen.engine\n")
+    _write(tmp_path, "confflow/producer/intent/hurt.py", "import confflow.science.confgen.search\n")
     assert any(v["path"].endswith("hurt.py") for v in _fired(tmp_path))
 
 
@@ -71,7 +71,7 @@ def test_ap106_function_lazy_import_fires(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "confflow/producer/intent/hurt.py",
-        "def build():\n    import confflow.science.confgen.engine\n    return 1\n",
+        "def build():\n    import confflow.science.confgen.search\n    return 1\n",
     )
     assert _fired(tmp_path), "function-local lazy import must fire (ast.walk scope)"
 
@@ -115,7 +115,7 @@ def test_ap106_absolute_in_all_three_locations_fires(tmp_path: Path) -> None:
         "confflow/producer/intent/capabilities/hurt.py",
         "confflow/producer/intent/__init__.py",
     ]:
-        _write(tmp_path, rel, "import confflow.science.confgen.engine\n")
+        _write(tmp_path, rel, "import confflow.science.confgen.search\n")
     _write(tmp_path, "confflow/producer/intent/capabilities/__init__.py", "")
     fired = _fired(tmp_path)
     paths = {v["path"] for v in fired}
@@ -199,8 +199,8 @@ def test_ap106_prose_only_stays_clean(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "confflow/producer/intent/clean.py",
-        '"""Prose mentions confflow.science.confgen.engine here."""\n'
-        "# and confflow.science.confgen.engine in a comment\n"
+        '"""Prose mentions confflow.science.confgen.search here."""\n'
+        "# and confflow.science.confgen.search in a comment\n"
         "x = 1\n",
     )
     assert _fired(tmp_path) == [], "docstring/comment prose must not count as import"
@@ -208,7 +208,7 @@ def test_ap106_prose_only_stays_clean(tmp_path: Path) -> None:
 
 def test_ap106_scope_does_not_expand_to_whole_producer(tmp_path: Path) -> None:
     # Same science import OUTSIDE intent must not fire AP-106.
-    _write(tmp_path, "confflow/producer/other.py", "import confflow.science.confgen.engine\n")
+    _write(tmp_path, "confflow/producer/other.py", "import confflow.science.confgen.search\n")
     _write(tmp_path, "confflow/producer/intent/__init__.py", "")
     _write(tmp_path, "confflow/producer/intent/clean.py", "x = 1\n")
     fired = _fired(tmp_path)

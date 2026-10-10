@@ -1,5 +1,7 @@
 # ConfGen v3 worker interface freeze
 
+> superseded 2026-10-11: ConfGen now has a single DG search engine (schema_version 4); the ring, torsion, path and coordination-realization engines and their gates described here no longer exist.
+
 Shared interface owner: core worker. Other workers must not edit shared/core modules. Use Python dataclasses and stdlib/NumPy/SciPy; existing StructureRecord and fixed indices remain authority. Keep science independent of orchestration/legacy imports.
 
 ## Core API

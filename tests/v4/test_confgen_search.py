@@ -290,3 +290,11 @@ def test_cancel_and_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
     assert search.SearchRun().summary() == (
         {"targets": [], "structures": [], "fragment_charges": [], "totals": {}}
     )
+
+
+def test_radius_refuses_element_without_covalent_radius() -> None:
+    from confflow.science.confgen.search import _radius
+
+    assert _radius("C") > 0.0
+    with pytest.raises(ValueError, match="no usable covalent radius"):
+        _radius("Og")

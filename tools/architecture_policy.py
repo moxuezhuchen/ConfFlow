@@ -465,7 +465,6 @@ V46_STRICT_ROOT_CANDIDATES = [
 ]
 V46_NEW_SYMBOLS = ["iprog"]
 V46_LEGACY_TRUTH_TOKENS = ["result.xyz", "failed.xyz", "workflow_stats", "output_path", "min_xyz"]
-ENGINE_IMPORT_ALLOWLIST = []
 #: In-repo double(s) for AP-081. ``require_one`` counts ONLY these
 #: repo-relative files, never a machine-local absolute path.
 DOUBLE_FILES = [
@@ -1012,22 +1011,15 @@ R.append(
         ],
         "exempt_imports": {
             "confflow/workflow/v4/confgen_schema.py": [
-                "confflow.science.confgen.coordination.stage",
-                "confflow.science.confgen.tolerances",
                 "confflow.science.confgen.graph",
-                "confflow.science.confgen.ring.templates",
-                "confflow.science.confgen.torsion.measure",
             ],
             "confflow/execution/confgen_executor.py": [
-                "confflow.science.confgen.accounting",
-                "confflow.science.confgen.engine",
-                "confflow.science.confgen.model",
-                "confflow.science.confgen.torsion.measure",
+                "confflow.science.confgen.search_spec",
             ],
         },
         # Precise file+module exemption (no whole-file skip): only
-        # transform_executor.py may import exactly
-        # confflow.science.confgen.registry (A4a/AG2 channel), and only the
+        # transform_executor.py may import exactly the search-spec and
+        # topology modules (refine topology_bonds), and only the
         # confgen-search pair below may import exactly its listed science
         # modules (Card C: the search runner/worker own the v4 search-spec
         # authority plus the typed-graph/search science they execute).
@@ -1035,7 +1027,8 @@ R.append(
         # any other file, still trips AP-002.
         "exempt_precise_imports": {
             "confflow/execution/transform_executor.py": [
-                "confflow.science.confgen.registry",
+                "confflow.science.confgen.search_spec",
+                "confflow.science.confgen.topology",
             ],
             "confflow/execution/confgen_search_worker.py": [
                 "confflow.science.confgen.search",
@@ -1192,17 +1185,6 @@ R.append(
         "scope": "__v46_strict_roots__",
         "mode": "forbidden_exact",
         "exact": ["confflow.workflow.engine"],
-    }
-)
-R.append(
-    {
-        "id": "AP-077",
-        "kind": "imports",
-        "source": "#77",
-        "scope": ["confflow/cli.py", APPLICATION_ROOT],
-        "mode": "allowed_exact",
-        "allowed": ENGINE_IMPORT_ALLOWLIST,
-        "match_prefix": "confflow.science.confgen.engine",
     }
 )
 R.append(
@@ -1634,34 +1616,16 @@ RULES = R
 # ---------------------------------------------------------------------------
 
 CONFGEN_G13_KERNEL_SCOPE = [
-    "confflow/science/confgen/engine.py",
-    "confflow/science/confgen/planner.py",
-    "confflow/science/confgen/accounting.py",
-    "confflow/science/confgen/perception.py",
-    "confflow/science/confgen/model.py",
-    "confflow/science/confgen/kernel_records.py",
     "confflow/execution/confgen_executor.py",
     "confflow/execution/transform_executor.py",
 ]
 CONFGEN_G13_AXIS = ("coordination", "rings", "torsions")
-CONFGEN_G13_ALLOW_GETATTR_MODULES = frozenset(
-    {
-        "confflow/science/confgen/engine.py",
-        "confflow/science/confgen/__init__.py",
-    }
-)
-CONFGEN_G13_ALLOW_GETATTR_NAMES = frozenset(
-    {
-        "InheritedTorsionLock",
-        "inherited_torsion_locks",
-        "check_inherited_torsion_locks",
-    }
-)
-CONFGEN_G13_COMPONENT_FRAGS = (
-    "confflow.science.confgen.coordination",
-    "confflow.science.confgen.ring",
-    "confflow.science.confgen.torsion",
-)
+#: Literal exemptions per file. ``transform_executor`` spells ``coordination``
+#: as a refine ``topology_bonds`` member (a graph key, not an engine axis).
+CONFGEN_G13_LITERAL_EXEMPT = {
+    "confflow/execution/transform_executor.py": frozenset({"coordination"}),
+}
+CONFGEN_G13_COMPONENT_FRAGS = ("confflow.science.confgen.coordination",)
 
 # ---------------------------------------------------------------------------
 # L1-A3c intent science isolation (PLAN; tool guard only, zero production
@@ -1707,34 +1671,8 @@ def _confgen_docstring_ids(tree: ast.AST) -> set[int]:
     return found
 
 
-def _confgen_parents(tree: ast.AST) -> dict[int, ast.AST]:
-    parents: dict[int, ast.AST] = {}
-    for node in ast.walk(tree):
-        for child in ast.iter_child_nodes(node):
-            parents[id(child)] = node
-    return parents
-
-
-def _confgen_enclosing(
-    tree: ast.AST, parents: dict[int, ast.AST], node: ast.AST
-) -> tuple[str | None, str | None]:
-    klass: str | None = None
-    func: str | None = None
-    cur: ast.AST | None = node
-    seen: set[int] = set()
-    while cur is not None and id(cur) not in seen:
-        seen.add(id(cur))
-        if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)) and func is None:
-            func = cur.name
-        if isinstance(cur, ast.ClassDef) and klass is None:
-            klass = cur.name
-        cur = parents.get(id(cur))
-    return klass, func
-
-
 def _confgen_axis_literal_hits(tree: ast.AST, rel: str) -> list[tuple[int, str]]:
     doc = _confgen_docstring_ids(tree)
-    parents = _confgen_parents(tree)
     hits: list[tuple[int, str]] = []
     for node in ast.walk(tree):
         if (
@@ -1742,52 +1680,24 @@ def _confgen_axis_literal_hits(tree: ast.AST, rel: str) -> list[tuple[int, str]]
             and isinstance(node.value, str)
             and node.value in CONFGEN_G13_AXIS
             and id(node) not in doc
+            and node.value not in CONFGEN_G13_LITERAL_EXEMPT.get(rel, frozenset())
         ):
-            klass, _func = _confgen_enclosing(tree, parents, node)
-            if rel == "confflow/science/confgen/model.py" and klass == "ConfgenStateKey":
-                continue
             hits.append((node.lineno, node.value))
     return hits
 
 
-def _confgen_axis_attr_hits(tree: ast.AST, rel: str) -> list[tuple[int, str, str]]:
-    parents = _confgen_parents(tree)
+def _confgen_axis_attr_hits(tree: ast.AST) -> list[tuple[int, str, str]]:
     hits: list[tuple[int, str, str]] = []
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Attribute) and node.attr in CONFGEN_G13_AXIS):
             continue
         ctx = type(node.ctx).__name__
-        klass, func = _confgen_enclosing(tree, parents, node)
-        if rel == "confflow/science/confgen/model.py" and klass == "ConfgenStateKey":
-            continue
-        if rel == "confflow/science/confgen/engine.py":
-            enclosing_class: str | None = None
-            cur: ast.AST | None = node
-            seen: set[int] = set()
-            while cur is not None and id(cur) not in seen:
-                seen.add(id(cur))
-                if isinstance(cur, ast.ClassDef) and enclosing_class is None:
-                    enclosing_class = cur.name
-                cur = parents.get(id(cur))
-            if enclosing_class == "ConfgenEngine" and func == "run":
-                continue
         hits.append((node.lineno, node.attr, ctx))
     return hits
 
 
 def _confgen_component_import_hits(tree: ast.AST, rel: str) -> list[tuple[int, str]]:
-    exempt_lines: set[int] = set()
-    if rel in CONFGEN_G13_ALLOW_GETATTR_MODULES:
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and node.name == "__getattr__"
-                and node in tree.body  # type: ignore[attr-defined]
-            ):
-                for sub in ast.walk(node):
-                    lineno = getattr(sub, "lineno", None)
-                    if lineno is not None:
-                        exempt_lines.add(lineno)
+    del rel  # scope is chosen by the rule; no per-file exemptions remain
     hits: list[tuple[int, str]] = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -1798,12 +1708,9 @@ def _confgen_component_import_hits(tree: ast.AST, rel: str) -> list[tuple[int, s
                 mods = [node.module]
             for mod in mods:
                 if any(mod == f or mod.startswith(f + ".") for f in CONFGEN_G13_COMPONENT_FRAGS):
-                    if node.lineno in exempt_lines and "torsion.inherited" in mod:
-                        continue
                     hits.append((node.lineno, mod))
-                    continue
             if isinstance(node, ast.ImportFrom) and node.level and node.module:
-                if node.module.split(".")[0] in ("torsion", "ring", "coordination"):
+                if node.module.split(".")[0] == "coordination":
                     hits.append((node.lineno, "." * node.level + node.module))
         if isinstance(node, ast.Call):
             func = node.func
@@ -1814,200 +1721,10 @@ def _confgen_component_import_hits(tree: ast.AST, rel: str) -> list[tuple[int, s
                 first = node.args[0]
                 if isinstance(first, ast.Constant) and isinstance(first.value, str):
                     val = first.value
-                    if val == "confflow.science.confgen.torsion.inherited" and (
-                        node.lineno in exempt_lines
-                    ):
-                        continue
                     if val.startswith("confflow.science.confgen."):
                         tail = val[len("confflow.science.confgen.") :]
-                        if tail.split(".")[0] in ("coordination", "ring", "torsion"):
+                        if tail.split(".")[0] == "coordination":
                             hits.append((node.lineno, val))
-    return hits
-
-
-def _confgen_allowlist_def(tree: ast.AST, ref: str) -> set[str] | None:
-    """Resolve a module-level allowlist constant to its string set.
-
-    Returns None when the name is not defined by a static collection of
-    string constants in this module (then the guard is unverifiable).
-    """
-    for node in getattr(tree, "body", []):
-        targets: list[ast.AST] = []
-        value: ast.AST | None = None
-        if isinstance(node, ast.Assign):
-            targets = list(node.targets)
-            value = node.value
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            targets = [node.target]
-            value = node.value
-        else:
-            continue
-        if not any(isinstance(t, ast.Name) and t.id == ref for t in targets):
-            continue
-        if value is None:
-            return None
-        items: list[ast.AST] | None = None
-        if isinstance(value, (ast.Tuple, ast.List, ast.Set)):
-            items = list(value.elts)
-        elif (
-            isinstance(value, ast.Call)
-            and isinstance(value.func, ast.Name)
-            and value.func.id in ("frozenset", "set", "tuple", "list")
-            and value.args
-            and isinstance(value.args[0], (ast.Tuple, ast.List, ast.Set))
-        ):
-            items = list(value.args[0].elts)
-        else:
-            return None
-        collected: set[str] = set()
-        for item in items:
-            if not (isinstance(item, ast.Constant) and isinstance(item.value, str)):
-                return None
-            collected.add(item.value)
-        return collected
-    return None
-
-
-def _confgen_getattr_guard(tree: ast.AST, node: ast.AST, arg: str) -> tuple[str, set[str] | str]:
-    """Inspect the real ``name`` guard of one ``__getattr__``.
-
-    Returns ("literal", names) for an inline collection, ("ref", name) for a
-    module-level constant, ("wide", detail) for prefix-style matching, or
-    ("none", "") when no guard on the argument exists.
-    """
-    literals: set[str] = set()
-    refs: set[str] = set()
-    wide: str | None = None
-    for sub in ast.walk(node):
-        if isinstance(sub, ast.Call):
-            func = sub.func
-            if (
-                isinstance(func, ast.Attribute)
-                and isinstance(func.value, ast.Name)
-                and func.value.id == arg
-                and func.attr == "startswith"
-            ):
-                wide = "startswith"
-        if not isinstance(sub, ast.Compare):
-            continue
-        left = sub.left
-        if not (isinstance(left, ast.Name) and left.id == arg):
-            continue
-        for op, comp in zip(sub.ops, sub.comparators):
-            if isinstance(op, (ast.In, ast.NotIn)):
-                if isinstance(comp, (ast.Tuple, ast.List, ast.Set)):
-                    if all(
-                        isinstance(e, ast.Constant) and isinstance(e.value, str) for e in comp.elts
-                    ):
-                        literals.update(e.value for e in comp.elts)  # type: ignore[misc]
-                    else:
-                        return ("wide", "dynamic membership")
-                elif isinstance(comp, ast.Name):
-                    refs.add(comp.id)
-            elif isinstance(op, (ast.Eq, ast.NotEq)):
-                if isinstance(comp, ast.Constant) and isinstance(comp.value, str):
-                    literals.add(comp.value)
-    if wide is not None:
-        return ("wide", wide)
-    if refs:
-        return ("ref", refs.pop() if len(refs) == 1 else sorted(refs))  # type: ignore[return-value]
-    if literals:
-        return ("literal", literals)
-    return ("none", "")
-
-
-def _confgen_getattr_hits(tree: ast.AST, rel: str, source: str) -> list[tuple[int, str]]:
-    hits: list[tuple[int, str]] = []
-    body = getattr(tree, "body", [])
-    for node in ast.walk(tree):
-        if not (
-            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "__getattr__"
-        ):
-            continue
-        is_top = node in body
-        arg = node.args.args[0].arg if node.args.args else "name"
-        mods: set[str] = set()
-        for sub in ast.walk(node):
-            if isinstance(sub, ast.ImportFrom) and sub.module:
-                mods.add(sub.module)
-            elif isinstance(sub, ast.Import):
-                for alias in sub.names:
-                    mods.add(alias.name)
-            elif isinstance(sub, ast.Call):
-                func = sub.func
-                if isinstance(func, ast.Attribute) and func.attr == "import_module" and sub.args:
-                    first = sub.args[0]
-                    if isinstance(first, ast.Constant):
-                        mods.add(str(first.value))
-        if rel not in CONFGEN_G13_ALLOW_GETATTR_MODULES or not is_top:
-            if mods:
-                hits.append((node.lineno, "__getattr__ import outside allowlist"))
-            continue
-        for mod in mods:
-            if "torsion.inherited" not in mod and "torsion" in mod:
-                hits.append((node.lineno, f"__getattr__ imports {mod}"))
-            elif "torsion.inherited" not in mod and mod.startswith("confflow"):
-                hits.append((node.lineno, f"__getattr__ imports {mod}"))
-        # Precise guard verification: the actual ``name`` guard and any
-        # referenced constant must name exactly the 3 allowed APIs.
-        kind, payload = _confgen_getattr_guard(tree, node, arg)
-        allowed = set(CONFGEN_G13_ALLOW_GETATTR_NAMES)
-        if kind == "wide":
-            hits.append((node.lineno, f"__getattr__ wide guard ({payload})"))
-        elif kind == "literal":
-            guarded = set(payload)  # type: ignore[arg-type]
-            if guarded != allowed:
-                hits.append(
-                    (
-                        node.lineno,
-                        f"__getattr__ guard names != allowed: "
-                        f"extra={sorted(guarded - allowed)} missing={sorted(allowed - guarded)}",
-                    )
-                )
-        elif kind == "ref":
-            if isinstance(payload, list):
-                hits.append((node.lineno, "__getattr__ multiple guard refs"))
-            else:
-                resolved = _confgen_allowlist_def(tree, payload)  # type: ignore[arg-type]
-                if resolved is None:
-                    hits.append((node.lineno, f"__getattr__ guard ref {payload!r} unverifiable"))
-                elif resolved != allowed:
-                    hits.append(
-                        (
-                            node.lineno,
-                            f"__getattr__ guard ref {payload!r} != allowed: "
-                            f"extra={sorted(resolved - allowed)} missing={sorted(allowed - resolved)}",
-                        )
-                    )
-        elif kind == "none":
-            if mods:
-                hits.append((node.lineno, "__getattr__ imports without name guard"))
-    return hits
-
-
-def _confgen_target_owner_hits(tree: ast.AST, rel: str, source: str) -> list[tuple[int, str]]:
-    hits: list[tuple[int, str]] = []
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
-            node.name == "as_kernel_target"
-        ):
-            hits.append((node.lineno, "as_kernel_target defined outside kernel_records"))
-    if rel in (
-        "confflow/science/confgen/engine.py",
-        "confflow/science/confgen/__init__.py",
-    ):
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                for target in node.targets:
-                    if isinstance(target, ast.Name) and target.id == "__all__":
-                        try:
-                            values = ast.literal_eval(node.value)
-                        except Exception:
-                            continue
-                        if isinstance(values, (list, tuple)) and "as_kernel_target" in values:
-                            hits.append(
-                                (node.lineno, "as_kernel_target in __all__ outside kernel_records")
-                            )
     return hits
 
 
@@ -2076,39 +1793,6 @@ RULES.append(
         "kind": "custom_confgen_component_imports",
         "source": "#102",
         "scope": CONFGEN_G13_KERNEL_SCOPE,
-    }
-)
-RULES.append(
-    {
-        "id": "AP-103",
-        "kind": "custom_confgen_getattr_guard",
-        "source": "#103",
-        "scope": [
-            "confflow/science/confgen/engine.py",
-            "confflow/science/confgen/__init__.py",
-            "confflow/science/confgen/planner.py",
-            "confflow/science/confgen/model.py",
-            "confflow/science/confgen/accounting.py",
-            "confflow/science/confgen/perception.py",
-            "confflow/science/confgen/kernel_records.py",
-        ],
-    }
-)
-RULES.append(
-    {
-        "id": "AP-104",
-        "kind": "custom_confgen_target_owner",
-        "source": "#104",
-        "scope": [
-            "confflow/science/confgen/engine.py",
-            "confflow/science/confgen/model.py",
-            "confflow/science/confgen/wire_v3.py",
-            "confflow/science/confgen/accounting.py",
-            "confflow/science/confgen/registry.py",
-            "confflow/science/confgen/planner.py",
-            "confflow/science/confgen/perception.py",
-            "confflow/science/confgen/__init__.py",
-        ],
     }
 )
 RULES.append(
@@ -2751,7 +2435,7 @@ def scan(
                 if row is None:
                     continue
                 _source, tree = row
-                for lineno, attr, ctx in _confgen_axis_attr_hits(tree, relpath):
+                for lineno, attr, ctx in _confgen_axis_attr_hits(tree):
                     violations.append(
                         {
                             "rule": rid,
@@ -2769,28 +2453,6 @@ def scan(
                 _source, tree = row
                 for lineno, mod in _confgen_component_import_hits(tree, relpath):
                     violations.append({"rule": rid, "path": relpath, "line": lineno, "detail": mod})
-        elif kind == "custom_confgen_getattr_guard":
-            scope = _resolve_scope(rule["scope"], root)
-            for relpath, _path in _file_iter(scope, root, skip_pycache=legacy):
-                row = parsed(relpath)
-                if row is None:
-                    continue
-                source, tree = row
-                for lineno, detail in _confgen_getattr_hits(tree, relpath, source):
-                    violations.append(
-                        {"rule": rid, "path": relpath, "line": lineno, "detail": detail}
-                    )
-        elif kind == "custom_confgen_target_owner":
-            scope = _resolve_scope(rule["scope"], root)
-            for relpath, _path in _file_iter(scope, root, skip_pycache=legacy):
-                row = parsed(relpath)
-                if row is None:
-                    continue
-                source, tree = row
-                for lineno, detail in _confgen_target_owner_hits(tree, relpath, source):
-                    violations.append(
-                        {"rule": rid, "path": relpath, "line": lineno, "detail": detail}
-                    )
         elif kind == "custom_confgen_top_register":
             scope = _resolve_scope(rule["scope"], root)
             for relpath, _path in _file_iter(scope, root, skip_pycache=legacy):
@@ -3635,275 +3297,6 @@ def scan_runtime(root: Path, timeout: int = RUNTIME_TIMEOUT) -> list[dict]:
 # the A2 items: wire isolation, attribute scope, as_kernel_target
 # uniqueness, AXIS_ORDER re-export, and stage parent structure-only use.
 # ---------------------------------------------------------------------------
-
-_CONFGEN_A2_WIRE_MODULE_FRAGMENT = "wire_v3"
-_CONFGEN_A2_WIRE_SYMBOLS = {
-    "wire_v3",
-    "from_wire_key",
-    "to_wire_key",
-    "to_legacy_realization",
-    "to_legacy_target",
-    "is_legacy_stage",
-    "project_v3",
-    "LegacyStageAdapter",
-    "UnsupportedWireComponent",
-}
-
-_CONFGEN_A2_COMPONENT_ATTRS = {"coordination", "rings", "torsions"}
-
-_CONFGEN_A2_STAGE_PARENT_FORBIDDEN = {
-    "state_key",
-    "locked_axes",
-    "generation_axis",
-}
-
-
-def _confgen_a2_parse(path: Path) -> ast.AST | None:
-    try:
-        return ast.parse(path.read_text(encoding="utf-8"))
-    except (OSError, SyntaxError, ValueError):
-        return None
-
-
-def _confgen_a2_enclosing(tree: ast.AST, target: ast.AST) -> tuple[str | None, str | None]:
-    """Return (class, function) enclosing *target* in *tree*."""
-    klass: str | None = None
-    func: str | None = None
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef):
-            if any(sub is target for sub in ast.walk(node)):
-                klass = node.name
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if any(sub is target for sub in ast.walk(node)):
-                func = node.name
-    return klass, func
-
-
-def confgen_a2_wire_isolation_violations(root: Path) -> list[str]:
-    """Check kernel/wire isolation (AST scope).
-
-    - ``accounting.py`` and ``kernel_records.py`` must not import or
-      reference ``wire_v3``.
-    - ``engine.py`` may reference ``wire_v3`` only inside
-      ``ConfgenEngine.run`` method body.
-    """
-    root = Path(root)
-    problems: list[str] = []
-    for rel in (
-        "confflow/science/confgen/accounting.py",
-        "confflow/science/confgen/kernel_records.py",
-    ):
-        path = root / rel
-        tree = _confgen_a2_parse(path)
-        if tree is None:
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module:
-                if _CONFGEN_A2_WIRE_MODULE_FRAGMENT in node.module:
-                    problems.append(f"{rel}:{node.lineno}: imports wire_v3")
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    if _CONFGEN_A2_WIRE_MODULE_FRAGMENT in alias.name:
-                        problems.append(f"{rel}:{node.lineno}: imports wire_v3")
-            elif isinstance(node, ast.Name) and node.id in _CONFGEN_A2_WIRE_SYMBOLS:
-                problems.append(f"{rel}:{node.lineno}: references {node.id}")
-    engine_rel = "confflow/science/confgen/engine.py"
-    tree = _confgen_a2_parse(root / engine_rel)
-    if tree is not None:
-        # Map each node to its enclosing function/class via parent walk.
-        parents: dict[int, ast.AST] = {}
-        for node in ast.walk(tree):
-            for child in ast.iter_child_nodes(node):
-                parents[id(child)] = node
-
-        def _enclosing_run(node: ast.AST) -> bool:
-            cur: ast.AST | None = node
-            func: str | None = None
-            klass: str | None = None
-            seen: set[int] = set()
-            while cur is not None and id(cur) not in seen:
-                seen.add(id(cur))
-                if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)) and func is None:
-                    func = cur.name
-                if isinstance(cur, ast.ClassDef) and klass is None:
-                    klass = cur.name
-                cur = parents.get(id(cur))
-            return func == "run" and klass == "ConfgenEngine"
-
-        for node in ast.walk(tree):
-            is_wire_import = False
-            if isinstance(node, ast.ImportFrom) and node.module:
-                is_wire_import = _CONFGEN_A2_WIRE_MODULE_FRAGMENT in node.module
-            elif isinstance(node, ast.Import):
-                is_wire_import = any(_CONFGEN_A2_WIRE_MODULE_FRAGMENT in a.name for a in node.names)
-            elif isinstance(node, ast.Name) and node.id in _CONFGEN_A2_WIRE_SYMBOLS:
-                # ``wire_v3`` symbol use outside run is a violation; uses
-                # inside run are allowed.
-                if not _enclosing_run(node):
-                    problems.append(f"{engine_rel}:{node.lineno}: references {node.id}")
-                continue
-            if is_wire_import and not _enclosing_run(node):
-                problems.append(f"{engine_rel}:{node.lineno}: imports wire_v3 outside run")
-    return problems
-
-
-def confgen_a2_attr_scope_violations(root: Path) -> list[str]:
-    """Check ``.coordination/.rings/.torsions`` attribute scope (AST).
-
-    Allowed: ``model.ConfgenStateKey`` class body, ``ConfgenEngine.run``
-    method body, and all of ``wire_v3.py``.
-    """
-    root = Path(root)
-    problems: list[str] = []
-    candidates = [
-        "confflow/science/confgen/engine.py",
-        "confflow/science/confgen/model.py",
-        "confflow/science/confgen/kernel_records.py",
-        "confflow/science/confgen/accounting.py",
-        "confflow/science/confgen/registry.py",
-    ]
-    for rel in candidates:
-        path = root / rel
-        tree = _confgen_a2_parse(path)
-        if tree is None:
-            continue
-        parents: dict[int, ast.AST] = {}
-        for node in ast.walk(tree):
-            for child in ast.iter_child_nodes(node):
-                parents[id(child)] = node
-
-        for node in ast.walk(tree):
-            if not (isinstance(node, ast.Attribute) and node.attr in _CONFGEN_A2_COMPONENT_ATTRS):
-                continue
-            cur: ast.AST | None = node
-            func: str | None = None
-            klass: str | None = None
-            seen: set[int] = set()
-            while cur is not None and id(cur) not in seen:
-                seen.add(id(cur))
-                if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)) and func is None:
-                    func = cur.name
-                if isinstance(cur, ast.ClassDef) and klass is None:
-                    klass = cur.name
-                cur = parents.get(id(cur))
-            if rel == "confflow/science/confgen/model.py" and klass == "ConfgenStateKey":
-                continue
-            if rel == "confflow/science/confgen/engine.py" and func == "run":
-                # Further require ConfgenEngine.run; approximate by func name
-                # plus class check.
-                cur2: ast.AST | None = node
-                klass2: str | None = None
-                seen2: set[int] = set()
-                while cur2 is not None and id(cur2) not in seen2:
-                    seen2.add(id(cur2))
-                    if isinstance(cur2, ast.ClassDef) and klass2 is None:
-                        klass2 = cur2.name
-                    cur2 = parents.get(id(cur2))
-                if klass2 == "ConfgenEngine" and func == "run":
-                    continue
-            problems.append(f"{rel}:{node.lineno}: .{node.attr} outside A2 scope")
-    return problems
-
-
-def confgen_a2_as_kernel_target_violations(root: Path) -> list[str]:
-    """Check ``as_kernel_target`` is defined/exported only in kernel_records."""
-    root = Path(root)
-    problems: list[str] = []
-    for rel in (
-        "confflow/science/confgen/engine.py",
-        "confflow/science/confgen/model.py",
-        "confflow/science/confgen/wire_v3.py",
-        "confflow/science/confgen/accounting.py",
-        "confflow/science/confgen/registry.py",
-    ):
-        tree = _confgen_a2_parse(root / rel)
-        if tree is None:
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if node.name == "as_kernel_target":
-                    problems.append(
-                        f"{rel}:{node.lineno}: as_kernel_target defined outside kernel_records"
-                    )
-            elif isinstance(node, ast.Name) and node.id == "as_kernel_target":
-                # Import or reference outside kernel_records counts unless it
-                # is the engine's converting call site (allowed use, not def).
-                # To keep the rule tight, only flag definitions and
-                # import statements here; call sites are checked separately.
-                pass
-        # Flag import statements referencing as_kernel_target as definition
-        # spread (except the allowed engine internal use is still an import;
-        # A2 allows engine to *call* it, which requires an import, so imports
-        # themselves are not violations -- only definitions are).
-    return problems
-
-
-def confgen_a2_axis_order_violations(root: Path) -> list[str]:
-    """Check ``model.AXIS_ORDER`` is only a re-export from wire constants."""
-    root = Path(root)
-    problems: list[str] = []
-    path = root / "confflow/science/confgen/model.py"
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return [f"{path}: unreadable"]
-    tree = _confgen_a2_parse(path)
-    if tree is None:
-        return [f"{path}: unparseable"]
-    has_reexport = (
-        "from .wire_v3_constants import V3_AXIS_ORDER as AXIS_ORDER" in text
-        or "from confflow.science.confgen.wire_v3_constants import V3_AXIS_ORDER as AXIS_ORDER"
-        in text
-    )
-    if not has_reexport:
-        problems.append("confflow/science/confgen/model.py: AXIS_ORDER re-export missing")
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "AXIS_ORDER":
-                    problems.append(
-                        f"confflow/science/confgen/model.py:{node.lineno}: AXIS_ORDER assigned directly"
-                    )
-        elif isinstance(node, ast.AnnAssign):
-            target = node.target
-            if isinstance(target, ast.Name) and target.id == "AXIS_ORDER":
-                problems.append(
-                    f"confflow/science/confgen/model.py:{node.lineno}: AXIS_ORDER assigned directly"
-                )
-    return problems
-
-
-def confgen_a2_stage_parent_violations(root: Path) -> list[str]:
-    """Check stages do not read ``parent.state_key/locked_axes/...``."""
-    root = Path(root)
-    problems: list[str] = []
-    for rel in (
-        "confflow/science/confgen/coordination/stage.py",
-        "confflow/science/confgen/ring/stage.py",
-        "confflow/science/confgen/torsion/stage.py",
-    ):
-        tree = _confgen_a2_parse(root / rel)
-        if tree is None:
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and node.attr in _CONFGEN_A2_STAGE_PARENT_FORBIDDEN:
-                base = node.value
-                if isinstance(base, ast.Name) and base.id == "parent":
-                    problems.append(f"{rel}:{node.lineno}: parent.{node.attr} forbidden")
-    return problems
-
-
-def confgen_a2_violations(root: Path) -> list[str]:
-    """Aggregate all A2 scope violations (empty when clean)."""
-    root = Path(root)
-    out: list[str] = []
-    out.extend(confgen_a2_wire_isolation_violations(root))
-    out.extend(confgen_a2_attr_scope_violations(root))
-    out.extend(confgen_a2_as_kernel_target_violations(root))
-    out.extend(confgen_a2_axis_order_violations(root))
-    out.extend(confgen_a2_stage_parent_violations(root))
-    return out
-
 
 # ---------------------------------------------------------------------------
 # L1-G1 producer/policy Gaussian gates (AST only; docstrings/comments

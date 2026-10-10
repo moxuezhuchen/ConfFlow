@@ -789,7 +789,7 @@ XYZ / typed input
 - 内容全部由真实源生成（零复制）：V4 workflow schema bytes、
   editor manifest（pointer 逐个验证存在于 schema，否则 build 失败）、
   recipe catalog（8 个全部真实编译：optimize/single_point/frequency/
-  opt_freq/transition_state/confgen_torsion/monomer_conformers/
+  opt_freq/transition_state/confgen_search/monomer_conformers/
   ensemble_refine；实测以 `confflow/producer/recipes.py` 的
   `RECIPE_IDS_V4` 与 `confflow v4 contract --json` 的 recipe 目录为准。
   退役：`irc/qst2/qst3/neb/goat/tspes` 已于 R2.2（`383a1f6`）从契约删除
@@ -881,13 +881,10 @@ remote 见 V4-4 章首横幅，IRC/Analysis 见 R2.2 `383a1f6` / R2.3a `e961d3c`
   （`rmsd_threshold_angstrom = 0` 因此不合并任何结构）。映射由有预算的精确搜索得到
   （`mapping_budget`，默认 1000 个搜索节点/每对结构）；预算耗尽的一对为 *unresolved*，两个结构都保留，
   步骤 notes 注明。所以只是对称等价原子（甲基氢、叔丁基的臂、苯环取代位）标号不同的构象会被合并。
-- **两个口径：** ConfGen 报告的"带标号状态数"（枚举出的、按标号区分的状态）与 `refine` 之后的
-  "物理构象数"是两个不同口径——σ 相关（对称等价）的结构会被合并，所以后者通常小于前者，这是预期，
-  不是丢失。TS1 的 refine 结果仅作为信息性记录，不作为通过条件。
-- **声明拓扑 `topology_bonds`（可选 native 参数）：** 形状与 ConfGen v3 的 `topology` 相同——
+- **声明拓扑 `topology_bonds`（可选 native 参数）：** 形状与 ConfGen v4 的 `topology` 相同——
   `bonds`，或 `add_bond`/`del_bond`；带类型的边（`COVALENT`/`COORDINATION`/`FORMING`/`BREAKING`）；
   `atoms`；`index_base`（0 或 1，默认 1，与 ConfGen 文档一致）——外加 `coordination` 范围与 `bond_scale`
-  （缺省为 ConfGen 的默认值 1.15）。`refine` 用 ConfGen 的同一构图函数（`planner.build_typed_graph`）建图，
+  （缺省为 ConfGen 的默认值 1.15）。`refine` 用 ConfGen 的同一构图函数（`science/confgen/topology.py` 的 `build_typed_graph`）建图，
   因此同一份声明在两边得到完全相同的边集合；映射必须保持非共价边的类型（反应键连在不同原子对上的
   两个几何相同的结构不会被合并）。索引越界、与结构原子数不符、矛盾的类型一律报错。
   未提供时，拓扑仍由几何感知得到（`bond_scale`，默认 1.15，与 ConfGen 默认一致），行为不变；同时给出 `bond_scale` 与

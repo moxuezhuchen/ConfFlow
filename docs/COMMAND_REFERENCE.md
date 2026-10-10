@@ -49,7 +49,7 @@ confflow v4 authoring --json --stdin < request.json
 ```
 
 请求/响应遵循 `confflow.authoring.v4`；操作：`describe_step`、`binding_candidates`、`instantiate_card`、
-`validate_document`、`check_compatibility`、`compile_intent`、`preview_paths`。
+`validate_document`、`check_compatibility`、`compile_intent`。
 
 ### canonical — RFC 8785（JCS）规范化
 

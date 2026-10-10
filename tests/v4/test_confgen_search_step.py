@@ -525,3 +525,11 @@ def test_end_to_end_binding(tmp_path: Path) -> None:
         )
     )
     assert bare.status == "failed"
+
+
+def test_failed_check_histogram_skips_non_mapping_rows() -> None:
+    from confflow.execution.confgen_search_run import _histogram
+
+    rows = ["junk", {"failed_checks": ["stereo"]}, {"failed_checks": ["stereo", "contacts"]}]
+    assert _histogram(rows) == {"stereo": 2, "contacts": 1}
+    assert _histogram("not a list") == {}
