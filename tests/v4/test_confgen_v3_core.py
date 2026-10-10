@@ -1377,6 +1377,42 @@ def test_add_bond_breaking_overlays_guessed_covalent():
     assert any(e.type is EdgeType.BREAKING for e in context.graph.edges)
 
 
+def test_typed_forming_add_bond_rides_workflow_wire():
+    """Typed FORMING add_bond survives schema -> wire -> normalisation.
+
+    Water keeps both perceived O-H bonds, gains the H-H reaction pair,
+    and the pair stays out of the covalent adjacency.
+    """
+    from confflow.science.confgen.graph import EdgeType
+    from confflow.science.confgen.model import edge_kind_of
+    from confflow.workflow.v4.confgen_schema import ConfgenModelV3
+
+    record = StructureRecord(
+        id="water",
+        atoms=("O", "H", "H"),
+        coordinates=((0.0, 0.0, 0.0), (0.757, 0.587, 0.0), (-0.757, 0.587, 0.0)),
+    )
+    bare = build_context(record, {"schema_version": 3, "index_base": 1, "seed": 1})
+    assert [list(row) for row in bare.adjacency] == [[1, 2], [0], [0]]
+    scope = ConfgenModelV3.model_validate(
+        {
+            "schema_version": 3,
+            "index_base": 1,
+            "seed": 1,
+            "topology": {"add_bond": [{"atoms": [2, 3], "kind": "FORMING"}]},
+        }
+    )
+    wire = scope.scientific_native()
+    assert wire["topology"]["add_bond"] == [
+        {"atoms": [2, 3], "kind": "FORMING", "provenance": "explicit"}
+    ]
+    context = build_context(record, dict(wire))
+    assert [list(row) for row in context.adjacency] == [list(row) for row in bare.adjacency]
+    assert context.graph.reaction_pairs == ((1, 2),)
+    assert edge_kind_of(context.graph, 1, 2) is EdgeType.FORMING
+    assert 2 not in context.adjacency[1] and 1 not in context.adjacency[2]
+
+
 def test_contradictory_explicit_kinds_fail_closed():
     """One pair carrying two declared kinds is refused, never guessed."""
     record, _ = _tetra_mn4()

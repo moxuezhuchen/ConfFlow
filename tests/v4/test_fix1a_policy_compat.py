@@ -120,7 +120,17 @@ def test_fifteen_patterns_byte_identical() -> None:
     }
     precise = rule.get("exempt_precise_imports", {})
     assert precise == {
-        "confflow/execution/transform_executor.py": ["confflow.science.confgen.registry"]
+        "confflow/execution/transform_executor.py": ["confflow.science.confgen.registry"],
+        "confflow/execution/confgen_search_worker.py": [
+            "confflow.science.confgen.search",
+            "confflow.science.confgen.coordination.stage",
+            "confflow.science.confgen.graph",
+        ],
+        "confflow/execution/confgen_search_run.py": [
+            "confflow.science.confgen.coordination.stage",
+            "confflow.science.confgen.model",
+            "confflow.science.topology",
+        ],
     }
 
 

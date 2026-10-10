@@ -152,3 +152,89 @@ description = "TS refinement entry"
   单元素命令须自身为可执行文件；多元素命令取 `argv[1:]` 中首个存在文件为脚本，
   找不到即 fail-closed。
 - 超过整机容量的申请立即失败，不等待；等待中取消立即生效。
+
+## 8. DG 搜索（confgen 步骤的 `search` 模式）
+
+- 工作流 `confgen` 步骤带 `search` 一节即运行 DG 搜索，不再经过 N2 登记脚本：
+  有金属时，策略过滤后的每个配位类各做若干 DG 出发构象；
+  无金属时只有一个 target（`t00`，无配位类）。DG 出发来自
+  `confflow/science/confgen/dg_seed.py`（`spec=None` 即无金属路径：`placement` 为空、`shape`
+  被忽略，片段在全部原子上感知，只保留反应对 bounds），每个出发构象在谐振距离约束下做 GFN2-xTB
+  优化（金属–给体与反应对回到参考距离，无金属时只有反应对；无任何约束时 xTB 不带 `--input`），
+  再逐个审计；只写出全部通过的结构（按能量排序）。
+  类型拓扑（共价/配位/反应对）与配位声明（金属、给体位点、形状、策略约束）全部取自该步骤自己的
+  typed 作用域（`build_context` 与既有类型路径完全一致的解析；`coordination.backend` 在搜索模式
+  下被忽略；`coordination.shapes` 在搜索模式下必须恰好解析出一个形状），不在距离上重新感知。
+  执行器为 `confflow/execution/confgen_executor.py`（`search` 缺席时行为与原来逐字节一致），
+  真正跑进程与文件的是被监督的子进程
+  `confflow/execution/confgen_search_worker.py`
+  （`python -m confflow.execution.confgen_search_worker <job.json>`，
+  约束文件、argv、环境、单线程 xTB 进程池、能量/收敛解析、按出发目录、`done.json` 续跑、
+  xTB `--version` 行都与原脚本一致），编排侧为
+  `confflow/execution/confgen_search_run.py`（组 job、起进程、验收入库）。
+- `search` 不能与 `rings`/`torsions`/`paths` 非空声明或 `sampling` 一节同用（一律 fail-closed）；
+  `search` 要求显式顶层 `seed`（措辞与 `sampling` 规则一致，步骤 seed 是唯一随机权威，
+  并沿用既有的 step-seed/native-seed 冲突规则）；`coordination` 在搜索模式下可选。
+- 小环 torsion 开关 `small_ring_torsions: {both,on,off}`（默认 `both`）：`both` 时每个 target
+  前 `ceil(starts/2)` 个出发用开、后 `floor(starts/2)` 个用关（种子公式见 `search.py`
+  的 `generate_starts`），每个出发的开关记在每个 structure 的 `small_ring_torsions`；
+  开偏向低能环形并压住其它构象，关覆盖更广但低能出发更少（同 `dg_seed.py` 中
+  `small_ring_torsions` docstring 的一句话）。
+- 工作流示例（`starts` 为每配位类 DG 出发数，无金属时为总数；`fragment_charges` 的 `atom`
+  使用该步骤的 `index_base`）：
+  ```yaml
+  - id: dg_search
+    executor: confgen
+    bindings: {structure: {source: {run: structures}}}
+    resources: {cores_per_item: 2, memory_per_item: "4GB"}
+    execution: {executable: "/opt/orca611/otool_xtb"}
+    confgen:
+      schema_version: 3
+      index_base: 1
+      coordination:
+        metal_center: 1
+        binding_sites: [{id: a, atoms: [2]}, {id: b, atoms: [3]},
+                        {id: c, atoms: [4]}, {id: d, atoms: [5]}]
+        shapes: [square_planar]
+      seed: 11
+      search:
+        starts: 8
+        small_ring_torsions: both
+        embed_timeout_seconds: 120
+        max_cycles: 1000
+        bond_scale: 1.25
+        fragment_charges: []
+  ```
+  无金属时去掉 `coordination` 整节即可（`shape` 不需要，`coordination_class` 与
+  `metal_donor_distance` 记为 `skipped` 且不判失败，记在每个 structure 的 `skipped_checks`）。
+  过渡态只需声明反应对（一行 `add_bond`，无需列出全部共价键；原子号使用该步骤的 `index_base`）：
+  ```yaml
+      topology:
+        add_bond: [{atoms: [2, 4], kind: FORMING}]
+  ```
+  搜索模式下未声明 `topology.bonds` 时，图的感知使用步骤常规尺度（`tolerances.bond_scale`，默认 1.15），审计则用 `search.bond_scale`（默认 1.25）重新感知。
+  xTB 可执行文件按 `xtb` 程序名解析：步骤 `execution.executable` 优先，否则取运行请求的
+  `executables["xtb"]` 默认；解析不到即在开工前 fail-closed。
+  已写过同内容 `done.json` 的出发目录自动续跑。
+- 输出：`structures.xyz`（通过结构，按能量排序，注释行格式与原脚本一致：
+  `target=<id> start=<n> energy_eh=<e> rel_kcal=<r>`）、`summary.json`
+  （`SearchRun.summary()` 内容 + 设置与 xTB 身份）、worker 的 `stdout.log`/`stderr.log`
+ （均记为制品）；成员 `role` 为 `conformer`，`ordinal` 为能量名次（0-based），id 按
+  `conformer_output_id`，lineage/拓扑沿用既有路径，metadata 为既有 key +
+  `seed` + `energy_eh`、`rel_kcal`、`search_target`、`search_start`。
+  搜索成员不带环/转子状态 key，不产生标定态 results，下游步骤按普通导入结构消费。
+- 审计（相对输入参考逐项记录，一项不过即不通过）：`converged`（收敛标记且 `xtbopt.xyz` 存在）；
+  `topology`（同规则感知的共价键集与参考一致，反应对永不计入）；
+  `coordination_class`（`perceive_donors` 无歧义且归一到被命令类，无金属时记 `skipped`）；
+  `stereo`（只比参考上 RDKit 标出的真四面体手性中心，即 `DGSeedResult.stereo_centers`，
+  的符号体积；CH2/CH3 的等价 H 互换不再误判）；`reaction_distance`（反应对 ±0.02 Å）；
+  `metal_donor_distance`（金属–给体 ±0.03 Å，无金属时记 `skipped`）；`donor_orientation`（每个给体的金属–给体–取代基夹角与参考至多差 30.0°，无金属时记 `skipped`）；`contacts`（相隔 3 根键以上且去金属的原子对，
+  不短于 0.70 倍半径和；仓内无独立 vdW 半径表，沿用共价半径表，与
+  `coordination/realization.py` 的 clash guard 一致）。
+- 退出语义（执行器映射为 work item 状态）：至少一个通过为 COMPLETED，附 INFO
+  `confgen_completed`（generated/relaxed/passed、target 数、failed-check 直方图）；
+  零通过为 FAILED，附一个 ERROR 诊断并点名 failed-check 直方图；
+  worker 异常（包括 job 非法或 xTB 缺失）为 FAILED，附 stderr 尾部。
+- 限度：出发构象必须经 xTB 松弛（测试用假 xTB，不依赖真二进制）；电荷启发式带有
+  `fragment_charges` 覆盖；配位路径只支持单金属、`hapticity=1`，无金属路径无此限制；
+  结果是约束下的 GFN2 极小点，不是验证过的过渡态。

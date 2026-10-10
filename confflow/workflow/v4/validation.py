@@ -253,6 +253,8 @@ def _confgen_seed_requirement(native: Any) -> str | None:
         sampling = native.get("sampling") or {}
         if isinstance(sampling, Mapping) and sampling.get("cap") is not None:
             return "v3 sampling cap requires an explicit top-level seed"
+        if native.get("search") is not None:
+            return "v3 search requires an explicit top-level seed"
         return None
     return "legacy confgen requires an explicit seed"
 
