@@ -280,7 +280,6 @@ def authoring_protocol_schema() -> dict[str, Any]:
         "validate_document",
         "check_compatibility",
         "compile_intent",
-        "preview_paths",
         "structure_preview",
     ]
     return {

@@ -1,5 +1,7 @@
 # Input Simplification Implementation Plan (saved roadmap)
 
+> superseded 2026-10-11: ConfGen now has a single DG search engine (schema_version 4); the ring, torsion, path and coordination-realization engines and their gates described here no longer exist.
+
 Owner: parent integration with parallel Muse Spark 1.3 implementation sessions.
 Status: **Phases 0–8 accepted after independent review on 2026-10-01**.
 Parent coordinates shared interfaces and verifies actual code and test exits.

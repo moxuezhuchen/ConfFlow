@@ -1,5 +1,7 @@
 # 架构守卫清单（L0.4a 正式清单）
 
+> superseded 2026-10-11: ConfGen now has a single DG search engine; rows naming the deleted ring/torsion/coordination-realization/kernel modules (AP-077, AP-103, AP-104 and the A2 helpers) are retired, see `tools/architecture_policy.py`.
+
 - 基准：CF 分支 `refactor/l0-policy-inventory` @ `db022bab71fbbbcd00b4e23998dfe131ed6599c6`（L0.3 正式提交）。六个来源文件（`tests/v4/test_architecture_boundaries.py`、`test_v42_debt.py`、`test_v46_debt.py`、`test_v46_production_gates.py`、`scripts/v4_arch_scan.py`、`scripts/architecture_metrics.py`）在 `ce0dd996` 与 `db022bab` 两基点**逐字节相同**（sha256 实测一致，见 L0.4a 执行日志），行号沿用原登记并经重定位确认有效。
 - 性质：**L0.4a 正式清单，根对登记口径已确认，L0.4b/c 执行尚待派工**。本卡为文档登记，未实施任何 policy、未删除/修改任何测试。
 - 类别缩写：`AST-IMP` 静态 AST 导入扫描；`AST-SYM` 静态 AST 符号扫描；`TXT-CODE` 源码文本（AST 去 docstring+注释）；`TXT-RAW` 原始全文（含 docstring/注释）；`DISK` 文件/目录存在性；`IMP` importlib 可导入性；`SUB` subprocess 导入隔离；`INPROC` 进程内 import/属性/身份断言；`META` 扫描器自检元测试；`METRIC` 度量定义（无断言）。

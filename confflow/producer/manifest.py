@@ -598,13 +598,13 @@ def _v4_fields(registry: ExecutionRegistry) -> list[dict[str, Any]]:
             order=10,
         ),
         _step(
-            "confgen.v3.coordination",
+            "confgen.v4.coordination",
             "/confgen/coordination",
             label="Coordination scope",
             description=(
-                "Typed v3 coordination declaration (metal_center, "
-                "binding_sites, shapes from the registered vocabulary or "
-                "'auto', treatment, policy constraints, donor configuration). "
+                "Typed v4 coordination declaration (metal_center, "
+                "binding_sites, exactly one shape from the registered "
+                "vocabulary, FORBIDDEN_TRANS policy constraints). "
                 "Indices follow the step index_base convention."
             ),
             value_type="object",
@@ -614,74 +614,11 @@ def _v4_fields(registry: ExecutionRegistry) -> list[dict[str, Any]]:
             order=21,
         ),
         _step(
-            "confgen.v3.rings",
-            "/confgen/rings",
-            label="Ring scopes",
-            description=(
-                "Typed v3 ring declarations (ordered atoms, templates from "
-                "the registered per-size vocabulary, treatment). "
-                "Empty templates select the size defaults."
-            ),
-            value_type="array",
-            editor="json",
-            item_type="object",
-            group="conformer generation",
-            level="basic",
-            order=22,
-        ),
-        _step(
-            "confgen.v3.torsions",
-            "/confgen/torsions",
-            label="Torsion scopes",
-            description=(
-                "Typed v3 torsion declarations (relative_rotation_grid, "
-                "absolute_dihedral_grid, or chemical named states on a "
-                "four-atom frame; treatment enumerate or preserve_input)."
-            ),
-            value_type="array",
-            editor="json",
-            item_type="object",
-            group="conformer generation",
-            level="basic",
-            order=23,
-        ),
-        _step(
-            "confgen.v3.paths",
-            "/confgen/paths",
-            label="Path rotor scopes",
-            description=(
-                "Phase 0 path declarations ({start, end, move} with explicit "
-                "angles or step; endpoints always 1-based). Each bridge-only "
-                "bond between the endpoints becomes a relative-rotation "
-                "rotor; ring crossings refuse with PATH_CROSSES_RING."
-            ),
-            value_type="array",
-            editor="json",
-            item_type="object",
-            group="conformer generation",
-            level="basic",
-            order=24,
-        ),
-        _step(
-            "confgen.v3.strict_path_bond_check",
-            "/confgen/strict_path_bond_check",
-            label="Strict path bond check",
-            description=(
-                "Turn the suspicious-short-bond path warning into a "
-                "PATH_SHORT_BOND error. Default false (warn only)."
-            ),
-            value_type="boolean",
-            editor="checkbox",
-            group="conformer generation",
-            level="advanced",
-            order=25,
-        ),
-        _step(
-            "confgen.v3.topology",
+            "confgen.v4.topology",
             "/confgen/topology",
             label="Typed topology",
             description=(
-                "Typed v3 topology authority (COVALENT/COORDINATION/FORMING/ "
+                "Typed v4 topology authority (COVALENT/COORDINATION/FORMING/ "
                 "BREAKING edges, atom declarations, add/del_bond corrections)."
             ),
             value_type="object",
@@ -691,39 +628,10 @@ def _v4_fields(registry: ExecutionRegistry) -> list[dict[str, Any]]:
             order=26,
         ),
         _step(
-            "confgen.v3.sampling",
-            "/confgen/sampling",
-            label="Sampling cap",
-            description=(
-                "v3 pre-geometry sampling cap over raw targets; requires the "
-                "step seed (the sole stochastic authority). Absent means the "
-                "deterministic full grid."
-            ),
-            value_type="object",
-            editor="json",
-            group="conformer generation",
-            level="advanced",
-            order=27,
-        ),
-        _step(
-            "confgen.v3.limits",
-            "/confgen/limits",
-            label="Enumeration limits",
-            description=(
-                "Hard symbolic limits (max_declared_states, "
-                "max_output_structures) enforced before geometry."
-            ),
-            value_type="object",
-            editor="json",
-            group="conformer generation",
-            level="advanced",
-            order=28,
-        ),
-        _step(
-            "confgen.v3.tolerances",
+            "confgen.v4.tolerances",
             "/confgen/tolerances",
             label="Tolerances",
-            description="v3 numeric tolerances; unknown keys fail closed.",
+            description="v4 numeric tolerances (bond_scale only); unknown keys fail closed.",
             value_type="object",
             editor="json",
             group="conformer generation",
@@ -731,18 +639,18 @@ def _v4_fields(registry: ExecutionRegistry) -> list[dict[str, Any]]:
             order=29,
         ),
         _step(
-            "confgen.v3.exclusions",
-            "/confgen/exclusions",
-            label="Policy exclusions",
+            "confgen.v4.search",
+            "/confgen/search",
+            label="Search settings",
             description=(
-                "Declared policy exclusions (axis, match, reason). "
-                "Recorded policy only, never verified proof."
+                "DG-search settings (starts per coordination class, or in "
+                "total without a metal; null resolves at run time to 8 with "
+                "coordination, else 400). Absent means all defaults."
             ),
-            value_type="array",
+            value_type="object",
             editor="json",
-            item_type="object",
             group="conformer generation",
-            level="advanced",
+            level="basic",
             order=30,
         ),
         _step(

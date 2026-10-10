@@ -416,7 +416,26 @@ def test_confgen_rejects_non_mapping_overrides() -> None:
     from confflow.producer.intent.capabilities.confgen import _wire_confgen
 
     with pytest.raises(IntentCompilationError, match="overrides must be a mapping"):
-        _wire_confgen({"native": {"schema_version": 3}, "overrides": "x"}, "s1")
+        _wire_confgen(
+            {"native": {"schema_version": 4, "search": {"starts": 1}}, "overrides": "x"}, "s1"
+        )
+
+
+def test_confgen_rejects_v3_with_removal_message() -> None:
+    from confflow.producer.intent.capabilities.confgen import _wire_confgen
+
+    with pytest.raises(IntentCompilationError, match="ring, torsion, path"):
+        _wire_confgen({"native": {"schema_version": 3}}, "s1")
+
+
+def test_confgen_rejects_step_overrides() -> None:
+    from confflow.producer.intent.capabilities.confgen import _wire_confgen
+
+    with pytest.raises(IntentCompilationError, match="do not accept overrides"):
+        _wire_confgen(
+            {"native": {"schema_version": 4, "search": {"starts": 1}}, "overrides": {"charge": 0}},
+            "s1",
+        )
 
 
 def test_transform_rejects_kindless_card() -> None:

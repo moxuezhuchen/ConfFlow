@@ -1,240 +1,185 @@
 # ConfGen 能力边界
 
-面向用户：ConfFlow 能算什么、实测结果如何、哪些不支持、删了什么、怎么配服务器。
-事实基准为当前 `main`（已合并 FIX-1R、FIX-1D 与 DIET-2 R1/R2、N1–N4）。
+面向用户：ConfFlow 的 ConfGen 现在能算什么、怎么配、输出什么、不支持什么。
+事实基准为 2026-10-11 的 ConfGen 单引擎状态（`schema_version: 4`）。
 行号只作核对用，执行与复核一律按符号定位。
 
-安装与运行本文不重复，见 [`USAGE.md`](USAGE.md)（服务器源码安装与更新）；
-路径写法见 [`CONFGEN_PATHS.md`](CONFGEN_PATHS.md)；命令全表见 [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md)；
+安装与运行见 [`USAGE.md`](USAGE.md)；命令全表见 [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md)；
 工作流语义见 `architecture/WORKFLOW_V4.md`；简化输入见 [`PRODUCER_INTENT.md`](PRODUCER_INTENT.md)。
 
 ## 1. 能算什么
 
 计算卡片（`confflow/producer/cards.py` 的卡表为准，共 9 种）：
-`opt`、`sp`、`freq`、`opt_freq`、`ts`、`ts_freq`（`ts_freq` 默认期望 1 个虚频），
-以及 `confgen`、`refine`、`deduplicate`。
+`opt`、`sp`、`freq`、`opt_freq`、`ts`、`ts_freq`、`confgen`、`refine`、`deduplicate`。
 `filter` 不是卡片，是 `structure_transform` 的一种 `kind`
 （`confflow/workflow/v4/schema.py` 的 `TRANSFORM_KINDS=(refine, deduplicate, filter)`）。
 
-- ConfGen：typed v3 构象生成（`schema_version: 3`），科学实现在
+- ConfGen：构象生成，只有一个引擎，即 DG 搜索（见第 2 节）。科学代码在
   `confflow/science/confgen/`，执行器为 `confflow/execution/confgen_executor.py`。
 - `refine`：拓扑分组的 RMSD 精修（默认阈值 0.25 Å，见 [`USAGE.md`](USAGE.md) 精修节）。
 - `deduplicate`：内容一致去重。
-- `filter`（按能量/虚频，N3）：`results` 必须显式绑定某一个计算步骤的 `results` 端口，
-  只读该步骤的能量与频率，不追溯历史；参数为 `energy_key(electronic|gibbs)`、
-  `energy_window_kcal`、`lowest_n`、`max_imaginary_count`、`imaginary_threshold_cm1`
-  （默认 0，即任何负频率都算虚频）。实现见 `confflow/execution/energy_filter.py`，
-  绑定校验见 `confflow/workflow/v4/validation.py`。
-- `script` 步骤（N2，登记脚本）：工作流只能按 id 引用服务器上已登记的脚本，
-  不写任意命令。`args` 占位符只允许 `{input}`、`{cores}`、`{mem_gb}`、`{item_id}`；
-  输出只有三个固定通道 `artifacts`、`structures`、`summary`，
-  下游只能消费 `structures`。登记与校验见
-  `confflow/execution/script_registry.py`、`confflow/execution/script_executor.py`。
-- recipe：`monomer_conformers`（ORCA `XTB2` 预优化 → ConfGen 环+转子 → 去重，
-  示例环/转子轴使用前必须确认替换）与 `ensemble_refine`
-  （多帧 xyz → 去重 → 优化 → 精修 → 频率 → 按能量筛选，`results` 自动绑直接前驱的
-  `freq` 步骤；MD 轨迹先抽帧；可选的 N2 脚本预筛需手动插在去重与优化之间）。
-  另有 6 个单算 recipe（`optimize`、`single_point`、`frequency`、`opt_freq`、
-  `transition_state`、`confgen_torsion`），共 8 个，以 `contract --json` 的
-  `supported_recipes` 为准。
-  目录见 `confflow/producer/recipes.py` 的 `RECIPE_IDS_V4`。
+- `filter`（按能量/虚频）：`results` 必须显式绑定某一个计算步骤的 `results` 端口，
+  只读该步骤的能量与频率。实现见 `confflow/execution/energy_filter.py`。
+- `script` 步骤：工作流只能按 id 引用服务器上已登记的脚本，不写任意命令。
+  登记与校验见 `confflow/execution/script_registry.py`。
+- recipe（目录见 `confflow/producer/recipes.py` 的 `RECIPE_IDS_V4`，共 8 个）：
+  - `confgen_search`：单步 DG 搜索，种子与起始数需用户确认；
+  - `monomer_conformers`：ORCA `XTB2` 预优化 → ConfGen DG 搜索 → 去重；
+  - `ensemble_refine`：多帧 xyz → 去重 → 优化 → 精修 → 频率 → 按能量筛选；
+  - 另有 5 个单算 recipe：`optimize`、`single_point`、`frequency`、`opt_freq`、`transition_state`。
 
-## 2. ConfGen TS1 配位实测
+## 2. DG 搜索引擎
 
-生产 TS1 共 12 个 target，按后端分别计数（`published_leaf` 即 REALIZED 叶）：
+一个 ConfGen 步骤的全部工作是：
 
-- default：**4/12**（8 `failed_numerical`）。
-- rigid：**1/12**（11 失败）。
-- flexible：**3/12**（9 失败）。
+1. 对输入结构做类型拓扑（共价键、可选的配位与反应对）；
+2. 用 RDKit ETKDG 距离几何（`confflow/science/confgen/dg_seed.py`）生成出发构象；
+   有金属时，每个策略过滤后的配位类各取若干出发（每类 `starts` 个），无金属时整体取 `starts` 个；
+3. 每个出发在 GFN2-xTB 下做受限松弛（金属–给体与反应对回到参考距离；无金属时只约束反应对；
+   无任何约束时不向 xTB 传 `--input`）；
+4. 对每个松弛结构做 8 项审计（第 5 节），只写出全部通过的结构，按能量排序。
 
-仓库内验收记录见 `docs/confgen-fix/LOG.md`（D1–D3 节：D2 起 default 由 3→4，
-仅 `coordination:000001` 由失败转为发布，其余 target 状态与证据不变）
-与 `docs/confgen-fix/checkpoints/D2/`、`docs/confgen-fix/checkpoints/D3/` 的
-`MANIFEST.json`/`DIFF.md`（含 golden 变化方向与 `start_statistics`）。
-失败均保留 attempts 与审计证据，不是不可行性证明。
+搜索由 `confflow/science/confgen/search.py` 编排，worker 是被监督的子进程
+`confflow/execution/confgen_search_worker.py`，执行侧为 `confflow/execution/confgen_search_run.py`。
+对同一输入、同一 `seed` 与同一设置，结果确定。
 
-## 3. 环：默认与全集、葡萄糖结论
+约束：结果是约束下 xTB 的极小点，不是能量验证过的过渡态或最终构象能量；
+ConfFlow 不给出 DFT 能量。
 
-- 支持孤立共价 4/5/6 元环（`ring/realization.py` 的 `SUPPORTED_RING_SIZES=(4,5,6)`）。
-  正则形式全集为 CP 表权威（`ring/puckering.py` 的 `canonical_forms`）：
-  6 元环 38（2C+6B+6TB+12E+12H）、5 元环 20（10E+10T）、4 元环 3（P/B+/B-）。
-- 默认枚举（`ring/forms.py` 的 `default_forms`）：6 元环只枚举 **2C+6TB（8 个）**，
-  不含 6B；5 元环默认全部 20 个；4 元环默认全部 3 个。
-  需要 B/E/H 时显式声明 `forms`（族选择器如 `B` 展开为该族全部，精确选择器如 `B_2` 取单个）。
-- 螯合环（含金属）、稠环、桥环、螺环（共享原子/重叠体系）、大环一律 fail-closed，
-  见 `ring/realization.py` 的 `RingUnsupported` 分支与
-  `tests/v4/test_confgen_r4_scope_guards.py`、`tests/v4/test_confgen_v3_ring.py`。
-- 输入局部几何（键长/杂化）继承输入；`distorted_input` 只是诊断（WARNING），不是错误，
-  TS/中间体/约束优化结构的真实畸变会被如实保留。
-- 葡萄糖（β-D-吡喃糖）结论：显式 38 形式下 strict CP `<15°` 为 **127/155**，
-  basin 归属 **155/155**；默认 8 形式下 strict 为 113/155。
-  转子声明 + 无约束优化后，环×转子联合抽样优化并集达到 strict **152/155**、
-  重原子 153/155、全原子 147/155，剩余均为参考系最高能尾部。
-  口径不变：strict `<15°` 仍是严格诊断指标，不放宽；basin 只做并列诊断，不进 engine 报告。
-  长表与复现步骤只在 [`confgen-fix/R7-GLUCOSE-RECALL.md`](confgen-fix/R7-GLUCOSE-RECALL.md)，
-  本文不复制。
+## 3. 配置
 
-## 4. 限制与不支持
+每个 `confgen` 步骤必须写 `schema_version: 4`。未知字段一律拒绝（严格模型），
+`schema_version: 3` 文档被拒绝并给出明确信息：环、扭转、路径和配位实现引擎已删除，
+步骤现在运行 DG 搜索引擎，请改用 `schema_version: 4`。
 
-- 多金属：模型只有一个 `metal_center`（整数槽，见
-  `confflow/science/confgen/graph.py` 的 `CoordinationSpec`/`TypedGraph`），
-  配位数只支持 4–6（`CN_RANGE=(4,6)`）。第二个金属无法表示。
-  本仓未提供一条字面 `multiple metals not supported` 错误语句，
-  对外只表现为 schema 单槽与越界 fail-closed。
-- hapticity：`BindingSite.__post_init__` 只接受 `kind='atom'` 且
-  `hapticity=1`、单原子位点，多 hapto 会抛 `UnsupportedTopologyError`
- （见 `confflow/science/confgen/graph.py` 与
-  `tests/v4/test_confgen_v3_coordination.py` 的 fail-closed 测试）。
-- 不要泛称“全部螯合配合物不可用”：一个 bidentate 配体（如 N–C–C–N）
-  以两个单齿位点（各 `hapticity=1`）同时放置全部 donor 的方式是支持的，
-  几何不一致则诚实失败；证据见 `coordination/realization.py` 与上述测试中的
-  bidentate 合成体系。上面“不支持的螯合环”专指环组件把含金属的环判为
-  `chelate` 而拒绝，与配位 bidentate 不是同一含义。
-- torsion：`paths` 仅端点模式，每条 path 必须显式声明 `move: start|end`；
-  `waypoint`、自动转子识别不支持；对称转子只产生冗余（FIX-2 范围）。
-- 采样：精确条件枚举支持；条件树 + 全局 cap 联合采样有意 fail-closed（待加权树采样）。
-- 对称抑制：只支持已审计的单轴 verified-symmetry 抑制；
-  联合轴、采样 cap 下、顶层 exclusions 下的抑制一律禁用并如实记录。
-- checkpoint：支持 Gaussian 标准 `%OldChk` 与 Opt `ReadFC`
- （`REUSE_MODES=(checkpoint, readfc)`）；
-  ORCA checkpoint 复用、QST2/QST3 不支持。
-  注意与旧方案文字的差异：旧 G1 曾写 IRC（`RCFC`）支持，
-  现 IRC 已随 DIET-2 删除，`RCFC` 不再提供（见第 5 节）。
-- freeze：Calculation 的 `freeze`（1-based 整数表，`[]` 为显式清空）支持；
-  ConfGen 不支持 `freeze`。
-
-## 5. 已删除的功能
-
-按 `docs/diet-2/PLAN.md` D2（以该文件为准，旧 confgen-fix PLAN 的相关行已 supersede）：
-
-删除：远程执行；QST2/QST3（含 Gaussian 命名槽与原子映射）；NEB；GOAT（含 ensemble 解析）；
-IRC（含 Gaussian/ORCA 路径实现与 checkpoint 的 `RCFC` 规则）；`tspes` recipe；
-`analysis` 能力（`reaction_profile`、热化学、PES，整个 `confflow/analysis/` 包已不存在）；
-多输出机制（`ensemble`、`path_endpoints` 输出形式、`multi_output`）；
-`named_structures` 适配器；`remote_capability` 与步骤绑定的 `target` 字段；
-离线发布与安装流水线；产物垃圾回收；兼容转发层。
-
-热化学分工（D4）：准谐振等热化学校正交给 GoodVibes 或 Shermo，不重新实现；
-ConfFlow 只保证计算结果中带有从输出解析出的电子能、热校正和 Gibbs 自由能
-（Gaussian/ORCA 解析器已解析）。
-
-`tspes.py` 接入方式：它不在本仓，是独立仓库的独立工具（仅标准库，自带指纹续跑），
-经 N2 脚本步骤接入——服务器登记后，工作流用 `executor: script` + `script: <id>` 引用，
-输出摘要由该脚本自己的 `--summary-json` 在其仓库实现。
-
-## 6. 安装与运行
-
-以 [`USAGE.md`](USAGE.md) 为准，本文不重复步骤与命令：
-服务器源码安装与更新（D6）见该文件“服务器安装方式”节；
-校验、运行、续跑、结果位置见该文件第 3–5 节。
-Gaussian 16 / ORCA 需自行安装并取得许可，ConfFlow 不随包提供。
-
-## 7. `server.toml` 配置示例
-
-字段名与实现一字对应（`confflow/execution/quota.py`、
-`confflow/execution/script_registry.py`；测试写法见 `tests/test_script_steps.py`）。
-路径优先级：显式传入 > `$CONFFLOW_SERVER_CONFIG` > `~/.config/confflow/server.toml`；
-文件不存在时配额与登记表都不启用（与现状相同）。
-状态目录：`$CONFFLOW_SERVER_STATE_DIR` 或 `~/.local/state/confflow/server`。
-
-```toml
-total_cores = 96
-total_memory = "192GB"
-
-[scripts.tspes]
-command = ["python3", "/opt/scripts/tspes.py"]
-description = "TS refinement entry"
+```yaml
+- id: dg_search
+  executor: confgen
+  bindings: {structure: {source: {run: structures}}}
+  resources: {cores_per_item: 2, memory_per_item: "4GB"}
+  execution: {executable: "/opt/orca611/otool_xtb"}
+  confgen:
+    schema_version: 4
+    index_base: 1
+    seed: 11
+    coordination:
+      metal_center: 1
+      binding_sites: [{id: a, atoms: [2]}, {id: b, atoms: [3]},
+                      {id: c, atoms: [4]}, {id: d, atoms: [5]}]
+      shapes: [square_planar]
+    search:
+      starts: 8
 ```
 
-- `total_cores` 须为 ≥1 的整数（bool 拒收）；`total_memory` 须 >0（如 `"192GB"`）。
-- `[scripts.<id>]` 的 `command` 须为非空字符串数组，`description` 可选但须为字符串；
-  `sha256`/`interpreter`/`script_path` 由实现派生，不手写。
-  单元素命令须自身为可执行文件；多元素命令取 `argv[1:]` 中首个存在文件为脚本，
-  找不到即 fail-closed。
-- 超过整机容量的申请立即失败，不等待；等待中取消立即生效。
+字段：
 
-## 8. DG 搜索（confgen 步骤的 `search` 模式）
+| 字段 | 必需 | 默认 | 含义 |
+| --- | --- | --- | --- |
+| `schema_version` | 是 | — | 必须为 `4` |
+| `index_base` | 否 | `1` | 本步骤所有原子索引的基准（`0` 或 `1`），全文档唯一约定 |
+| `seed` | 是 | — | 整数；随机性的唯一权威。步骤 seed 与此处不一致时失败 |
+| `topology.bonds` | 否 | 感知 | 显式全部键（给出即覆盖感知，不可与 `add_bond`/`del_bond` 同用） |
+| `topology.add_bond` | 否 | — | 增补键；可写 `kind`（`COVALENT`/`FORMING`/`COORDINATION`/`BREAKING`）、`bond_order`、`provenance` |
+| `topology.del_bond` | 否 | — | 删除感知到的共价键（只能是共价对） |
+| `topology.atoms` | 否 | — | 原子声明：`index`、`label`、`role`、`stereo` |
+| `tolerances.bond_scale` | 否 | `1.15` | 图的键感知尺度（仅此一项可配） |
+| `coordination` | 否 | — | 配位声明，见下 |
+| `search` | 否 | 全默认 | 搜索设置，见下；整节缺席即全部默认 |
 
-- 工作流 `confgen` 步骤带 `search` 一节即运行 DG 搜索，不再经过 N2 登记脚本：
-  有金属时，策略过滤后的每个配位类各做若干 DG 出发构象；
-  无金属时只有一个 target（`t00`，无配位类）。DG 出发来自
-  `confflow/science/confgen/dg_seed.py`（`spec=None` 即无金属路径：`placement` 为空、`shape`
-  被忽略，片段在全部原子上感知，只保留反应对 bounds），每个出发构象在谐振距离约束下做 GFN2-xTB
-  优化（金属–给体与反应对回到参考距离，无金属时只有反应对；无任何约束时 xTB 不带 `--input`），
-  再逐个审计；只写出全部通过的结构（按能量排序）。
-  类型拓扑（共价/配位/反应对）与配位声明（金属、给体位点、形状、策略约束）全部取自该步骤自己的
-  typed 作用域（`build_context` 与既有类型路径完全一致的解析；`coordination.backend` 在搜索模式
-  下被忽略；`coordination.shapes` 在搜索模式下必须恰好解析出一个形状），不在距离上重新感知。
-  执行器为 `confflow/execution/confgen_executor.py`（`search` 缺席时行为与原来逐字节一致），
-  真正跑进程与文件的是被监督的子进程
-  `confflow/execution/confgen_search_worker.py`
-  （`python -m confflow.execution.confgen_search_worker <job.json>`，
-  约束文件、argv、环境、单线程 xTB 进程池、能量/收敛解析、按出发目录、`done.json` 续跑、
-  xTB `--version` 行都与原脚本一致），编排侧为
-  `confflow/execution/confgen_search_run.py`（组 job、起进程、验收入库）。
-- `search` 不能与 `rings`/`torsions`/`paths` 非空声明或 `sampling` 一节同用（一律 fail-closed）；
-  `search` 要求显式顶层 `seed`（措辞与 `sampling` 规则一致，步骤 seed 是唯一随机权威，
-  并沿用既有的 step-seed/native-seed 冲突规则）；`coordination` 在搜索模式下可选。
-- 小环 torsion 开关 `small_ring_torsions: {both,on,off}`（默认 `both`）：`both` 时每个 target
-  前 `ceil(starts/2)` 个出发用开、后 `floor(starts/2)` 个用关（种子公式见 `search.py`
-  的 `generate_starts`），每个出发的开关记在每个 structure 的 `small_ring_torsions`；
-  开偏向低能环形并压住其它构象，关覆盖更广但低能出发更少（同 `dg_seed.py` 中
-  `small_ring_torsions` docstring 的一句话）。
-- 工作流示例（`starts` 为每配位类 DG 出发数，无金属时为总数；`fragment_charges` 的 `atom`
-  使用该步骤的 `index_base`）：
-  ```yaml
-  - id: dg_search
-    executor: confgen
-    bindings: {structure: {source: {run: structures}}}
-    resources: {cores_per_item: 2, memory_per_item: "4GB"}
-    execution: {executable: "/opt/orca611/otool_xtb"}
-    confgen:
-      schema_version: 3
-      index_base: 1
-      coordination:
-        metal_center: 1
-        binding_sites: [{id: a, atoms: [2]}, {id: b, atoms: [3]},
-                        {id: c, atoms: [4]}, {id: d, atoms: [5]}]
-        shapes: [square_planar]
-      seed: 11
-      search:
-        starts: 8
-        small_ring_torsions: both
-        embed_timeout_seconds: 120
-        max_cycles: 1000
-        bond_scale: 1.25
-        fragment_charges: []
-  ```
-  无金属时去掉 `coordination` 整节即可（`shape` 不需要，`coordination_class` 与
-  `metal_donor_distance` 记为 `skipped` 且不判失败，记在每个 structure 的 `skipped_checks`）。
-  过渡态只需声明反应对（一行 `add_bond`，无需列出全部共价键；原子号使用该步骤的 `index_base`）：
-  ```yaml
-      topology:
-        add_bond: [{atoms: [2, 4], kind: FORMING}]
-  ```
-  搜索模式下未声明 `topology.bonds` 时，图的感知使用步骤常规尺度（`tolerances.bond_scale`，默认 1.15），审计则用 `search.bond_scale`（默认 1.25）重新感知。
-  xTB 可执行文件按 `xtb` 程序名解析：步骤 `execution.executable` 优先，否则取运行请求的
-  `executables["xtb"]` 默认；解析不到即在开工前 fail-closed。
-  已写过同内容 `done.json` 的出发目录自动续跑。
-- 输出：`structures.xyz`（通过结构，按能量排序，注释行格式与原脚本一致：
-  `target=<id> start=<n> energy_eh=<e> rel_kcal=<r>`）、`summary.json`
-  （`SearchRun.summary()` 内容 + 设置与 xTB 身份）、worker 的 `stdout.log`/`stderr.log`
- （均记为制品）；成员 `role` 为 `conformer`，`ordinal` 为能量名次（0-based），id 按
-  `conformer_output_id`，lineage/拓扑沿用既有路径，metadata 为既有 key +
-  `seed` + `energy_eh`、`rel_kcal`、`search_target`、`search_start`。
-  搜索成员不带环/转子状态 key，不产生标定态 results，下游步骤按普通导入结构消费。
-- 审计（相对输入参考逐项记录，一项不过即不通过）：`converged`（收敛标记且 `xtbopt.xyz` 存在）；
-  `topology`（同规则感知的共价键集与参考一致，反应对永不计入）；
-  `coordination_class`（`perceive_donors` 无歧义且归一到被命令类，无金属时记 `skipped`）；
-  `stereo`（只比参考上 RDKit 标出的真四面体手性中心，即 `DGSeedResult.stereo_centers`，
-  的符号体积；CH2/CH3 的等价 H 互换不再误判）；`reaction_distance`（反应对 ±0.02 Å）；
-  `metal_donor_distance`（金属–给体 ±0.03 Å，无金属时记 `skipped`）；`donor_orientation`（每个给体的金属–给体–取代基夹角与参考至多差 30.0°，无金属时记 `skipped`）；`contacts`（相隔 3 根键以上且去金属的原子对，
-  不短于 0.70 倍半径和；仓内无独立 vdW 半径表，沿用共价半径表，与
-  `coordination/realization.py` 的 clash guard 一致）。
-- 退出语义（执行器映射为 work item 状态）：至少一个通过为 COMPLETED，附 INFO
-  `confgen_completed`（generated/relaxed/passed、target 数、failed-check 直方图）；
-  零通过为 FAILED，附一个 ERROR 诊断并点名 failed-check 直方图；
-  worker 异常（包括 job 非法或 xTB 缺失）为 FAILED，附 stderr 尾部。
-- 限度：出发构象必须经 xTB 松弛（测试用假 xTB，不依赖真二进制）；电荷启发式带有
-  `fragment_charges` 覆盖；配位路径只支持单金属、`hapticity=1`，无金属路径无此限制；
-  结果是约束下的 GFN2 极小点，不是验证过的过渡态。
+`coordination`（可选）：
+
+- `metal_center`：金属原子索引；
+- `binding_sites`：4 至 6 个位点，每个 `{id, kind: atom, atoms: [i], hapticity: 1}`，位点 id 唯一；
+- `shapes`：恰好一个已注册形状（`confflow/science/confgen/graph.py` 的 `SUPPORTED_SHAPES`），
+  配位数必须与形状相容（4–6，`CN_SHAPES`）；
+- `constraints`：可选的 `FORBIDDEN_TRANS` 策略声明（`classification` 固定为 `REJECTED_BY_POLICY`），
+  是策略而非证明。
+
+`search`（可选）与默认值：
+
+| 字段 | 默认 | 含义 |
+| --- | --- | --- |
+| `starts` | 声明了 `coordination` 时每个配位类 `8`；否则总计 `400` | DG 出发数 |
+| `small_ring_torsions` | `both` | 小环扭转开关：`both` 时前 `ceil(starts/2)` 个出发开、其余关；`on`/`off` 全局开或关 |
+| `embed_timeout_seconds` | `120` | 每个出发的 DG 嵌入超时（秒） |
+| `max_cycles` | `1000` | xTB 松弛最大循环数 |
+| `bond_scale` | `1.25` | 审计阶段重新感知键时的尺度（与 `tolerances.bond_scale` 独立） |
+| `fragment_charges` | `[]` | DG 片段电荷覆盖：`{atom, charge}`，`atom` 使用本步骤的 `index_base` |
+
+`starts` 为 `null`（或缺省）时在运行时解析为上表默认值，解析结果写入 job 文件与 `summary.json`。
+测量（β-D-吡喃葡萄糖，与 155 个 CREST 参考构象比较，2026-10-11）：400 starts 全原子召回 149/155，
+800 starts 为 155/155。
+
+过渡态只需声明反应对，不必列出全部共价键，例如 `topology: {add_bond: [{atoms: [2, 4], kind: FORMING}]}`。
+搜索模式下未声明 `topology.bonds` 时，图的键感知使用 `tolerances.bond_scale`（默认 1.15），
+审计用 `search.bond_scale`（默认 1.25）重新感知。
+
+无金属时省略 `coordination` 整节即可；`coordination_class`、`metal_donor_distance`、`donor_orientation`
+三项审计记为 `skipped`，不判失败。
+
+## 4. xTB 配置
+
+搜索需要 xTB 可执行文件，按 `xtb` 程序名解析：步骤的 `execution.executable` 优先，
+否则取运行请求中 `executables["xtb"]` 的默认值。解析不到即在开工前 fail-closed。
+worker 记录 xTB 的 `--version` 行到 `summary.json`。
+
+## 5. 审计
+
+每个松弛结构都与输入参考逐项比较，任一项不过即该结构不通过：
+
+1. `converged`：xTB 收敛标记存在且 `xtbopt.xyz` 存在；
+2. `topology`：同规则感知的共价键集与参考一致（反应对不计入）；
+3. `coordination_class`：配位类无歧义地归一到被命令的类（无金属时 `skipped`）；
+4. `stereo`：只比参考上 RDKit 标出的真四面体手性中心（`DGSeedResult.stereo_centers`）的符号体积；
+   CH2/CH3 的等价 H 互换不判失败；
+5. `reaction_distance`：反应对距离在参考的 ±0.02 Å 内；
+6. `metal_donor_distance`：金属–给体距离在参考的 ±0.03 Å 内（无金属时 `skipped`）；
+7. `donor_orientation`：每个给体的金属–给体–取代基夹角与参考至多差 30.0°（无金属时 `skipped`）；
+8. `contacts`：相隔 3 根键以上、且不含金属的原子对，距离不短于共价半径和的 0.70 倍。
+   仓内没有独立 vdW 半径表，沿用 `confflow/science/bonding.py` 的共价半径表。
+
+## 6. 输出与退出语义
+
+- `structures.xyz`：通过的结构，按能量排序；注释行为
+  `target=<id> start=<n> energy_eh=<e> rel_kcal=<r>`。
+- `summary.json`：设置（含解析后的 `starts`、xTB 身份）、每个目标与出发的审计结果、
+  `fragment_charges`、汇总计数。
+- worker 的 `stdout.log`、`stderr.log`（均为制品）。
+- 成员的 `role` 为 `conformer`，`ordinal` 为能量名次（0-based），id 按 `conformer_output_id`；
+  metadata 含 `seed`、`starts`、`energy_eh`、`rel_kcal`、`search_target`、`search_start`。
+  搜索成员是普通结构，下游按导入结构消费，不带额外状态。
+
+退出：至少一个结构通过为 `COMPLETED`，附 INFO `confgen_completed`（生成、松弛、通过的数量，
+失败审计项直方图）；零通过为 `FAILED`，附一条 ERROR 并点名失败审计项直方图；
+worker 异常（包括 job 非法或 xTB 缺失）为 `FAILED`，附 stderr 尾部。
+
+续跑：出发目录内已有相同内容的 `done.json` 时自动跳过该出发。
+
+## 7. 已删除的功能
+
+ConfGen 的以下引擎与字段已删除，`schema_version: 4` 文档中出现即被拒绝：
+
+- 环引擎（`rings`，含环形式枚举、CP 坐标、刚性单元）；
+- 扭转引擎（`torsions`，含网格与相对/绝对扭转）；
+- 扭转路径（`paths`，含 `strict_path_bond_check`）；
+- 配位实现（`coordination` 中的 `backend`、`budgets`、`treatment`、`donor_configuration`、`site_group`，
+  以及刚性/柔性实现与 H_geom 对称判定）；
+- 分阶段的 `ConfgenEngine`、采样上限（`sampling`）、`limits`、`exclusions`、`stereochemistry`、`overrides`；
+- 带标签的 ConfGen 状态键，以及链式 ConfGen 步骤间的状态继承。
+  消费上游 ConfGen 步骤成员的步骤，把它们当作普通结构；
+- `tolerances` 中除 `bond_scale` 外的全部键。
+
+其他功能（远程执行、QST2/QST3、NEB、GOAT、IRC、`tspes`、分析包、多输出机制等）的删除记录见
+`docs/diet-2/PLAN.md`。
+
+## 8. 限制与不支持
+
+- 金属：每个步骤至多一个 `metal_center`，配位数 4–6，每个位点恰好一个原子、`hapticity: 1`，
+  每个步骤恰好一个形状。第二个金属或多 hapto 配位无法表示，超出即 fail-closed。
+- 构象空间：没有环或扭转的专门采样；覆盖依赖 DG 出发数与 `small_ring_torsions`。
+  `starts` 不足时可能漏掉低能构象（见第 3 节的召回测量）。
+- 能量：只有 xTB（GFN2）松弛后的能量，无 DFT 能量，无加权玻尔兹曼统计。
+- Freeze：ConfGen 不支持 `freeze`，非空即拒绝。
+- `fragment_charges` 是启发式覆盖，需要用户确认。
+- 过渡态：反应对只做距离约束，不验证过渡态。
+- 对称：没有对称抑制；等价构象可能重复出现，去重由后续 `deduplicate` 步骤负责。

@@ -42,15 +42,7 @@ GLOBALS = {"charge": 0, "multiplicity": 1}
 OPT_NATIVE = {"keyword": "B3LYP D3BJ Opt"}
 FREQ_NATIVE = {"keyword": "B3LYP D3BJ Freq"}
 SP_NATIVE = {"keyword": "B3LYP D3BJ SP"}
-TORSIONS = [
-    {
-        "id": "t1",
-        "bond": [1, 2],
-        "model": "relative_rotation_grid",
-        "angles": [0, 120, 240],
-        "treatment": "enumerate",
-    }
-]
+SEARCH_NATIVE = {"schema_version": 4, "search": {"starts": 8}}
 
 
 def _intent(steps: list[dict[str, Any]], **top: Any) -> dict[str, Any]:
@@ -72,11 +64,7 @@ def _opt_chain(n: int = 1) -> dict[str, Any]:
 def _capped_confgen(**step_extra: Any) -> dict[str, Any]:
     step: dict[str, Any] = {
         "card": "confgen@v1",
-        "native": {
-            "schema_version": 3,
-            "torsions": copy.deepcopy(TORSIONS),
-            "sampling": {"cap": 50},
-        },
+        "native": copy.deepcopy(SEARCH_NATIVE),
     }
     step.update(step_extra)
     return _intent([step])
@@ -278,7 +266,7 @@ def test_intent_catalog_shape_and_purity() -> None:
         "frequency",
         "opt_freq",
         "transition_state",
-        "confgen_torsion",
+        "confgen_search",
         "monomer_conformers",
         "ensemble_refine",
     ]
@@ -541,11 +529,7 @@ def test_compile_intent_confgen_seed_inside_native_refused() -> None:
                 [
                     {
                         "card": "confgen@v1",
-                        "native": {
-                            "schema_version": 3,
-                            "torsions": copy.deepcopy(TORSIONS),
-                            "seed": 5,
-                        },
+                        "native": dict(SEARCH_NATIVE, seed=5),
                     }
                 ]
             )
@@ -609,17 +593,17 @@ def test_compile_intent_bad_scheduler_refused(scheduler: Any) -> None:
         {
             "card": "confgen@v1",
             "program": "orca",
-            "native": {"schema_version": 3, "torsions": copy.deepcopy(TORSIONS)},
+            "native": copy.deepcopy(SEARCH_NATIVE),
         },
         {
             "card": "confgen@v1",
             "preset": "refine_default@v1",
-            "native": {"schema_version": 3, "torsions": copy.deepcopy(TORSIONS)},
+            "native": copy.deepcopy(SEARCH_NATIVE),
         },
         {
             "card": "confgen@v1",
             "checks": ["normal_termination"],
-            "native": {"schema_version": 3, "torsions": copy.deepcopy(TORSIONS)},
+            "native": copy.deepcopy(SEARCH_NATIVE),
         },
     ],
 )
@@ -1179,10 +1163,10 @@ def test_needs_seed_matrix() -> None:
         is False
     )
     assert needs_seed({"executor": "calculation"}) is False
-    capped = {"executor": "confgen", "confgen": {"schema_version": 3, "sampling": {"cap": 5}}}
+    capped = {"executor": "confgen", "confgen": {"schema_version": 4, "search": {"starts": 5}}}
     assert needs_seed(capped) is True
-    full = {"executor": "confgen", "confgen": {"schema_version": 3}}
-    assert needs_seed(full) is False
+    full = {"executor": "confgen", "confgen": {"schema_version": 4}}
+    assert needs_seed(full) is True
     legacy = {"executor": "confgen", "confgen": {"native": {"keyword": "X"}}}
     assert needs_seed(legacy) is True
     assert needs_seed({"executor": "confgen"}) is False
@@ -1239,9 +1223,8 @@ def test_seed_scientific_changes_move_seed() -> None:
                 {
                     "card": "confgen@v1",
                     "native": {
-                        "schema_version": 3,
-                        "torsions": copy.deepcopy(TORSIONS),
-                        "sampling": {"cap": 51},
+                        "schema_version": 4,
+                        "search": {"starts": 9},
                     },
                 }
             ]
@@ -1320,7 +1303,7 @@ def test_assign_seeds_provenance_and_explicit_audit() -> None:
                 {
                     "id": "a",
                     "executor": "confgen",
-                    "confgen": {"schema_version": 3, "sampling": {"cap": 3}},
+                    "confgen": {"schema_version": 4, "search": {"starts": 3}},
                 },
                 {"id": "b", "executor": "calculation", "calculation": {"native": {"keyword": "X"}}},
                 "not-a-step",
@@ -1332,7 +1315,7 @@ def test_assign_seeds_provenance_and_explicit_audit() -> None:
     assert provenance["b"]["seed"] is None
     assert isinstance(document["steps"][0]["confgen"]["seed"], int)
     explicit_doc, explicit_prov = assign_seeds(
-        {"steps": [{"id": "a", "executor": "confgen", "confgen": {"schema_version": 3, "seed": 9}}]}
+        {"steps": [{"id": "a", "executor": "confgen", "confgen": {"schema_version": 4, "seed": 9}}]}
     )
     assert explicit_prov["a"] == {"seed": 9, "source": "explicit", "seed_version": "v1"}
     assert explicit_doc["steps"][0]["confgen"]["seed"] == 9
@@ -1348,9 +1331,8 @@ def test_seed_step_order_permutation_invariant() -> None:
                     "id": "aaa",
                     "card": "confgen@v1",
                     "native": {
-                        "schema_version": 3,
-                        "torsions": copy.deepcopy(TORSIONS),
-                        "sampling": {"cap": 50},
+                        "schema_version": 4,
+                        "search": {"starts": 8},
                     },
                     "bindings": {"structure": {"source": {"run": "structures"}}},
                 },
@@ -1816,11 +1798,7 @@ def test_full_workflow_seed_invariance_end_to_end() -> None:
     def _build(**step_extra: Any) -> dict[str, Any]:
         step: dict[str, Any] = {
             "card": "confgen@v1",
-            "native": {
-                "schema_version": 3,
-                "torsions": copy.deepcopy(TORSIONS),
-                "sampling": {"cap": 50},
-            },
+            "native": copy.deepcopy(SEARCH_NATIVE),
         }
         step.update(step_extra)
         return _intent(
@@ -2196,28 +2174,20 @@ def test_r2_calc_default_role_applied() -> None:
     assert compile_workflow(document).ok
 
 
-def test_r2_confgen_v3_seed_overrides_preserved() -> None:
-    document = compile_intent(
-        _intent(
-            [
-                {
-                    "card": "confgen@v1",
-                    "native": {
-                        "schema_version": 3,
-                        "torsions": copy.deepcopy(TORSIONS),
-                        "sampling": {"cap": 50},
-                    },
-                    "seed": 7,
-                    "overrides": {"charge": 1},
-                }
-            ]
+def test_r2_confgen_step_overrides_rejected() -> None:
+    with pytest.raises(IntentCompilationError, match="do not accept overrides"):
+        compile_intent(
+            _intent(
+                [
+                    {
+                        "card": "confgen@v1",
+                        "native": copy.deepcopy(SEARCH_NATIVE),
+                        "seed": 7,
+                        "overrides": {"charge": 1},
+                    }
+                ]
+            )
         )
-    )
-    block = document["steps"][0]["confgen"]
-    assert block["seed"] == 7
-    assert block["overrides"] == {"charge": 1}
-    assert block["schema_version"] == 3
-    assert compile_workflow(document).ok
 
 
 @pytest.mark.parametrize(
@@ -2421,9 +2391,8 @@ def test_r2_confgen_seed_scope_native_sampling() -> None:
                 {
                     "card": "confgen@v1",
                     "native": {
-                        "schema_version": 3,
-                        "torsions": copy.deepcopy(TORSIONS),
-                        "sampling": {"cap": 50},
+                        "schema_version": 4,
+                        "search": {"starts": 8},
                     },
                 }
             ]

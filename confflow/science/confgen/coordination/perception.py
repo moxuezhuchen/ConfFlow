@@ -12,8 +12,7 @@ or a large best RMSD — prohibits suppression or publication of a claimed
 unambiguous state; the frame is reported with alternatives instead.
 
 Existing SCINE frames audit perception but never substitute for generated
-targets: every realized structure in the audit trail must come from the
-geometric realization backend.
+targets: every structure the search publishes comes from its own DG starts.
 """
 
 from __future__ import annotations

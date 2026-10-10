@@ -29,7 +29,7 @@ pytest --collect-only -q | tail -1   # 当前收集到的测试数（文档不�
 
 | 位置 | 内容 |
 | --- | --- |
-| `tests/v4/` | V4 的主体：domain、编译器、digest、执行器、持久化、resume、producer 契约/边界/authoring/intent、ConfGen v3（torsion / ring / coordination / 报告）、refine 与拓扑、架构护栏、跨仓测试（`analysis`、`remote` 目录与多输出机制已退役，见 `architecture/WORKFLOW_V4.md` §§17–21、30） |
+| `tests/v4/` | V4 的主体：domain、编译器、digest、执行器、持久化、resume、producer 契约/边界/authoring/intent、ConfGen（DG 搜索、拓扑构图、coordination 几何）、refine 与拓扑、架构护栏、跨仓测试（`analysis`、`remote` 目录与多输出机制已退役，见 `architecture/WORKFLOW_V4.md` §§17–21、30） |
 | `tests/science/` | `confflow.science` 的图同构映射与帧比较（含按节点数/剪枝数固定的工作量测试）和带氢分子数据 `data/molecules_h.json` |
 | `tests/` 根目录 | 入口与基础设施：CLI、控制协议适配器与外部 worker、执行服务与 SQLite 仓库、安装/发布溯源与 wheel 安装器、路径策略、日志、I/O、数据表、键感知、示例工作流、退役 wire 的失败关闭 |
 | `tests/fixtures/` | 静态夹具：ConfGen（含 TS1 基准）、控制协议、Gaussian 日志样例 |
@@ -64,13 +64,11 @@ pytest --collect-only -q | tail -1   # 当前收集到的测试数（文档不�
 
 如果只有它们失败，单独重跑；单独也失败才是真问题。
 
-## 6. 引擎与契约基线（重构证据）
+## 6. 契约基线（重构证据）
 
-外部基线（`$BASE`，`MANIFEST.json` 钉住文件清单——“104 个文件”之数在本仓无对应证据，
-`grep 104 tests/ tools/` 无命中，`/tmp` 基线重启即清空，需从干净 main 用 `tools/refactor/` 里的脚本重新生成（`golden_check.py`、
-`capture_engine_reports.py`、`contract_digests.py`、`json_paths_diff.py`，用法见 `tools/refactor/README.md`），
-再逐字节比较。任何会改变科学输出的改动都必须先用它们给出差异，再决定是否更新基线。
-`tests/fixtures/paths_equivalence/` 记录 legacy paths 与 typed v3 声明在含氢分子上的等价性结论。
+契约摘要检查仍可用：`tools/refactor/contract_digests.py` 计算 contract/boundary 的 sha256，
+`tools/refactor/json_paths_diff.py` 给出两份 JSON 的路径级差异，用法见 `tools/refactor/README.md`。
+ConfGen 引擎报告的逐字节基线（TS1 与 engine 报告）已随旧引擎删除（2026-10-11），不再有对应检查。
 
 ## 7. CI
 

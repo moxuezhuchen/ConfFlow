@@ -90,15 +90,7 @@ def _intent(steps):
     }
 
 
-_TORSIONS = [
-    {
-        "id": "t1",
-        "bond": [1, 2],
-        "model": "relative_rotation_grid",
-        "angles": [0, 120, 240],
-        "treatment": "enumerate",
-    }
-]
+_SEARCH_NATIVE = {"schema_version": 4, "search": {"starts": 8}}
 
 
 def test_a2a_reject_fallback_delegates_no_branches() -> None:
@@ -227,9 +219,8 @@ def test_a2a_typed_confgen_seed_scope_and_explicit() -> None:
                 "id": "c1",
                 "card": "confgen@v1",
                 "native": {
-                    "schema_version": 3,
-                    "torsions": copy.deepcopy(_TORSIONS),
-                    "sampling": {"cap": 10},
+                    "schema_version": 4,
+                    "search": {"starts": 8},
                 },
             }
         ]
@@ -245,9 +236,8 @@ def test_a2a_typed_confgen_seed_scope_and_explicit() -> None:
                 "card": "confgen@v1",
                 "seed": 4242,
                 "native": {
-                    "schema_version": 3,
-                    "torsions": copy.deepcopy(_TORSIONS),
-                    "sampling": {"cap": 10},
+                    "schema_version": 4,
+                    "search": {"starts": 8},
                 },
             }
         ]
@@ -301,9 +291,8 @@ def test_a2a_checkpoint_provisional_preserves_explicit() -> None:
                 "from": "run:structures",
                 "seed": 12345,
                 "native": {
-                    "schema_version": 3,
-                    "torsions": copy.deepcopy(_TORSIONS),
-                    "sampling": {"cap": 10},
+                    "schema_version": 4,
+                    "search": {"starts": 8},
                 },
             },
         ],
@@ -338,9 +327,8 @@ def test_a2a_checkpoint_derived_seed_survives_edges() -> None:
                 "card": "confgen@v1",
                 "from": "run:structures",
                 "native": {
-                    "schema_version": 3,
-                    "torsions": copy.deepcopy(_TORSIONS),
-                    "sampling": {"cap": 10},
+                    "schema_version": 4,
+                    "search": {"starts": 8},
                 },
             },
         ],

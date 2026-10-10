@@ -21,7 +21,8 @@ import pytest
 from confflow.domain.errors import DomainError
 from confflow.domain.structure import StructureRecord
 from confflow.execution.transform_executor import TransformExecutor
-from confflow.science.confgen.planner import build_typed_graph, normalize_spec
+from confflow.science.confgen.search_spec import normalize_search_spec
+from confflow.science.confgen.topology import build_typed_graph
 
 DATA = Path(__file__).resolve().parent.parent / "science" / "data" / "molecules_h.json"
 THRESHOLD = 0.25
@@ -56,7 +57,7 @@ def _butane_bonds_1based(atoms: list[str], coords: np.ndarray) -> list[list[int]
 
 def _edges_via_confgen(record: StructureRecord, spec: dict[str, Any]) -> set[tuple[int, int, str]]:
     """Return the edges of the ConfGen route: normalise the spec, build the typed graph."""
-    resolved = normalize_spec(spec)
+    resolved = normalize_search_spec(spec)
     _adjacency, graph = build_typed_graph(record, resolved.get("topology", {}), resolved)
     return {(edge.a, edge.b, edge.type.value) for edge in graph.edges}
 
@@ -73,7 +74,7 @@ def _edges_via_refine(
 
 def _spec_of(topology_bonds: dict[str, Any]) -> dict[str, Any]:
     spec: dict[str, Any] = {
-        "schema_version": 3,
+        "schema_version": 4,
         "index_base": topology_bonds.get("index_base", 1),
         "topology": {
             key: topology_bonds[key]

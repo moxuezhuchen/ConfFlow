@@ -29,7 +29,7 @@ EXPECTED_IDS = (
     "frequency",
     "opt_freq",
     "transition_state",
-    "confgen_torsion",
+    "confgen_search",
     "monomer_conformers",
     "ensemble_refine",
 )

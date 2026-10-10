@@ -124,7 +124,6 @@ def test_default_handlers_are_real_capability_objects() -> None:
     assert compiler._wire_calculation is calc._wire_calculation
     assert compiler._resolve_program is calc._resolve_program
     assert compiler._wire_confgen is cg._wire_confgen
-    assert compiler._legacy_paths_to_v3 is cg._legacy_paths_to_v3
     assert compiler._wire_transform is tr._wire_transform
     assert calc._wire_calculation.__module__ == "confflow.producer.intent.compiler"
     # Fragment adapters are new and distinct from the payload builders.
@@ -134,21 +133,12 @@ def test_default_handlers_are_real_capability_objects() -> None:
 
 
 def test_default_dispatch_equals_implicit_for_all_executors() -> None:
-    tors = [
-        {
-            "id": "t1",
-            "bond": [1, 2],
-            "model": "relative_rotation_grid",
-            "angles": [0, 120, 240],
-            "treatment": "enumerate",
-        }
-    ]
     doc = _intent(
         [
             {"card": "opt@v1", "program": "orca", "native": {"keyword": "B3LYP D3BJ Opt"}},
             {
                 "card": "confgen@v1",
-                "native": {"schema_version": 3, "torsions": copy.deepcopy(tors)},
+                "native": {"schema_version": 4, "search": {"starts": 2}},
             },
             {"card": "refine@v1"},
         ]

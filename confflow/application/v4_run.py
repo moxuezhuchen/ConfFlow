@@ -159,8 +159,9 @@ def _map_step_status(status: StepStatus) -> RunStepStatus:
 def _search_xtb_binding(planned: Any, request: V4RunRequest) -> Any:
     """Return the xTB binding for a confgen search step, else None.
 
-    Only a confgen step whose native scope carries a ``search`` section
-    gets a binding (program ``xtb``: planned step execution wins, else the
+    Every v4 confgen step runs the DG search (the ``search`` section is
+    optional; absent means all defaults), so every v4 confgen step gets a
+    binding (program ``xtb``: planned step execution wins, else the
     request default). Every other pure step keeps today's empty binding.
     Unresolvable xTB also yields None: the executor then fails the work
     item before anything is launched.
@@ -168,8 +169,7 @@ def _search_xtb_binding(planned: Any, request: V4RunRequest) -> Any:
     if planned.executor is not ExecutorCapability.CONFGEN:
         return None
     native = planned.scientific.native
-    search = native.get("search") if isinstance(native, Mapping) else None
-    if search is None:
+    if not isinstance(native, Mapping) or native.get("schema_version") != 4:
         return None
     try:
         return resolve_execution_binding(

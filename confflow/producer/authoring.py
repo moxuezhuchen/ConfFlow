@@ -1175,20 +1175,6 @@ def dispatch_request(data: bytes | bytearray | str) -> dict[str, Any]:
                 [_schema_problem(str(exc), field_path="parameters.intent")],
             )
         return _envelope(operation, True, _document_digest(intent), {"document": resolved}, [])
-    if operation == "preview_paths":
-        from .path_preview import preview_paths_request
-
-        try:
-            preview = preview_paths_request(params)
-        except (ValueError, DomainError) as exc:
-            return _envelope(
-                operation,
-                False,
-                None,
-                None,
-                [_schema_problem(str(exc), field_path="parameters.native")],
-            )
-        return _envelope(operation, True, None, preview, [])
     if operation == "structure_preview":
         from .structure_preview import StructurePreviewError, structure_preview_request
 

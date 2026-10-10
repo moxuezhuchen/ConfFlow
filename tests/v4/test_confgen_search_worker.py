@@ -23,7 +23,6 @@ from confflow.domain.structure import StructureRecord
 from confflow.execution import confgen_search_run as search_run
 from confflow.execution import confgen_search_worker as worker
 from confflow.science.confgen import search
-from confflow.science.confgen.coordination.stage import axis_spec_from_lane_spec
 from tests.v4._dg_search_helpers import _SHAPE, _embed, _toy, _write_fake, build_topology
 
 _VALID_SETTINGS = {
@@ -37,8 +36,32 @@ _VALID_SETTINGS = {
 
 
 def _section(spec) -> dict[str, Any] | None:
-    """Return the resolved coordination section round trip for *spec*."""
-    return None if spec is None else dict(axis_spec_from_lane_spec(spec))
+    """Return the trimmed v4 coordination section for *spec*."""
+    if spec is None:
+        return None
+    return {
+        "metal_center": int(spec.metal_center),
+        "binding_sites": [
+            {
+                "id": site.id,
+                "kind": site.kind,
+                "atoms": [int(a) for a in site.atoms],
+                "hapticity": int(site.hapticity),
+            }
+            for site in spec.binding_sites
+        ],
+        "shapes": [str(name) for name in spec.shapes],
+        "constraints": [
+            {
+                "id": item.id,
+                "kind": "FORBIDDEN_TRANS",
+                "sites": [str(item.sites[0]), str(item.sites[1])],
+                "classification": str(item.classification),
+                "provenance": str(item.provenance),
+            }
+            for item in spec.constraints
+        ],
+    }
 
 
 def _job(

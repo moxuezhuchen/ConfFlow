@@ -385,11 +385,11 @@ def test_b2_catalog_contract_bytes_unchanged() -> None:
     # N4 声明新增：目录 7→8（ensemble_refine appended last）。
     assert (
         recipe_catalog_sha256_v4()
-        == "072e3a51345d03fc7099529b41049922d5ac7b6cec6d6bf1972dd70091de68b9"
+        == "4e9b7222633f3d5ecca29f3828fca95ff52e1379e4221f26464dc957a59ed16e"
     )
     cat = intent_catalog()
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(cat)).hexdigest() == (
-        "sha256:08064928fb4873edb94dfd0fed9222634e7193558d265394fd3e8e1dd9e2b11a"
+        "sha256:d24cc74bafcaaa765ebb92dadb78972d410b36f6a150d6a273a82224091c77e6"
     )
     assert len(cat["cards"]) == 9
     env = build_configuration_contract_v4(
@@ -403,10 +403,10 @@ def test_b2_catalog_contract_bytes_unchanged() -> None:
     # schema（旧条目保留，摘要更新；boundary 不变）。
     # N4 声明新增：recipe 目录 +1（ensemble_refine；boundary 不变）。
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(env)).hexdigest() == (
-        "sha256:08f1ca2cdc8292d37eae191efba972490646876a44c20e9b8e252b623015ccf8"
+        "sha256:d9bf0195f0a6f174be0c7f0e0a3b1942106effc8572979327f7d5a1b709ba25b"
     )
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(bdoc)).hexdigest() == (
-        "sha256:d9b5282bb8d6d3b3694a76bea6931b3099902f36fc74e6fe0f46727a9905e0b2"
+        "sha256:ff7491007ffd37e4e688e9dd1c73aba5301ccd699f9610d060bd2029cf370f27"
     )
 
 
