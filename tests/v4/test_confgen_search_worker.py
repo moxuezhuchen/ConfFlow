@@ -19,6 +19,8 @@ from typing import Any
 import numpy as np
 import pytest
 
+from confflow.domain.structure import StructureRecord
+from confflow.execution import confgen_search_run as search_run
 from confflow.execution import confgen_search_worker as worker
 from confflow.science.confgen import search
 from confflow.science.confgen.coordination.stage import axis_spec_from_lane_spec
@@ -365,3 +367,49 @@ def test_sigterm_subprocess(tmp_path: Path) -> None:
     interrupted = work / "t01_s00" / "done.json"
     if interrupted.is_file():
         assert json.loads(interrupted.read_text(encoding="utf-8"))["converged"] is False
+
+
+def test_equal_energy_keeps_frame_metadata(tmp_path: Path) -> None:
+    """Equal-energy passing structures keep their own target/start.
+
+    The xyz file order is the publication order: each frame pairs with the
+    passing record named by its own comment line, never by re-sorting.
+    """
+    driving = StructureRecord(
+        id="d", atoms=("H", "H"), coordinates=((0.0, 0.0, 0.0), (0.0, 0.0, 0.74))
+    )
+    rows = [
+        {"target": "t01", "start": 0, "energy_eh": -1.0, "passed": True, "failed_checks": []},
+        {"target": "t00", "start": 1, "energy_eh": -1.0, "passed": True, "failed_checks": []},
+    ]
+    totals = {"targets": 2, "generated": 2, "passed": 2, "relaxed": 2}
+    xyz = (
+        "2\ntarget=t01 start=0 energy_eh=-1.000000 rel_kcal=0.000\nH 0 0 0\nH 0 0 0.74\n"
+        "2\ntarget=t00 start=1 energy_eh=-1.000000 rel_kcal=0.000\nH 1 0 0\nH 1 0 0.74\n"
+    )
+    rundir = tmp_path / "tie"
+    rundir.mkdir(exist_ok=True)
+    summary = {"targets": [], "structures": rows, "fragment_charges": [], "totals": totals}
+    (rundir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+    (rundir / "structures.xyz").write_text(xyz, encoding="utf-8")
+    _, _, ordered, frames = search_run._read_validated(driving, rundir)
+    assert [(r["target"], r["start"]) for r in ordered] == [("t01", 0), ("t00", 1)]
+    assert frames[0].coordinates[0][0] == 0.0 and frames[1].coordinates[0][0] == 1.0
+    (rundir / "structures.xyz").write_text(
+        xyz.replace("target=t00", "target=t99"), encoding="utf-8"
+    )
+    with pytest.raises(search_run._ImportError):
+        search_run._read_validated(driving, rundir)
+    (rundir / "summary.json").write_text("{invalid", encoding="utf-8")
+    with pytest.raises(search_run._ImportError):
+        search_run._read_validated(driving, rundir)
+    (rundir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+    (rundir / "structures.xyz").write_text(xyz.replace("-1.000000", "abc"), encoding="utf-8")
+    with pytest.raises(search_run._ImportError):
+        search_run._read_validated(driving, rundir)
+    bad_row = dict(rows[0], energy_eh="abc")
+    bad_summary = dict(summary, structures=[bad_row, rows[1]])
+    (rundir / "summary.json").write_text(json.dumps(bad_summary), encoding="utf-8")
+    (rundir / "structures.xyz").write_text(xyz, encoding="utf-8")
+    with pytest.raises(search_run._ImportError):
+        search_run._read_validated(driving, rundir)

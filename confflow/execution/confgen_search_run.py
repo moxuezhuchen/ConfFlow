@@ -16,7 +16,7 @@ import re
 import sys
 import time
 from collections.abc import Callable, Mapping
-from typing import cast
+from typing import Any
 
 from confflow.science.confgen.coordination.stage import resolve_axis_spec
 from confflow.science.confgen.model import build_context
@@ -47,7 +47,7 @@ class _ImportError(DomainError):
     pass
 
 
-def _histogram(rows):
+def _histogram(rows: Any) -> dict[str, int]:
     counts: dict[str, int] = {}
     for row in rows if isinstance(rows, list) else []:
         if not isinstance(row, Mapping):
@@ -57,7 +57,9 @@ def _histogram(rows):
     return dict(sorted(counts.items()))
 
 
-def _read_validated(driving, rundir):
+def _read_validated(
+    driving: StructureRecord, rundir: str | os.PathLike[str]
+) -> tuple[dict[str, Any], list[Any], list[Any], StructureSet]:
     try:
         payload = json.loads(open(os.path.join(rundir, "summary.json"), encoding="utf-8").read())
     except (OSError, ValueError) as exc:
@@ -86,15 +88,29 @@ def _read_validated(driving, rundir):
     if len(tags) != len(frames):
         raise _ImportError("confgen search xyz comments are malformed")
     try:
-        energies = sorted(float(energy) for _, _, energy in tags)
-    except ValueError as exc:
+        framed = [(str(target), int(start), float(energy)) for target, start, energy in tags]
+    except (TypeError, ValueError) as exc:
         raise _ImportError("confgen search xyz comments are malformed") from exc
-    want = sorted(float(r.get("energy_eh") or 0.0) for r in passing)
-    if [round(v, 6) for v in energies] != [round(v, 6) for v in want]:
-        raise _ImportError("confgen search frame energies disagree with passing records")
-    ordered = sorted(
-        passing, key=lambda r: (float(r.get("energy_eh") or 0.0), str(r.get("target")))
-    )
+    keyed: dict[tuple[str, int], Any] = {}
+    for row in passing:
+        target, start = row.get("target"), row.get("start")
+        if not isinstance(target, str) or isinstance(start, bool) or not isinstance(start, int):
+            raise _ImportError("confgen search summary records are malformed")
+        if (target, start) in keyed:
+            raise _ImportError("confgen search summary holds duplicate passing records")
+        keyed[(target, start)] = row
+    if sorted(keyed) != sorted((target, start) for target, start, _ in framed):
+        raise _ImportError("confgen search xyz comments disagree with passing records")
+    ordered: list[Any] = []
+    for target, start, energy in framed:
+        record = keyed[(target, start)]
+        try:
+            want = float(record.get("energy_eh") or 0.0)
+        except (TypeError, ValueError) as exc:
+            raise _ImportError("confgen search summary energies are malformed") from exc
+        if round(energy, 6) != round(want, 6):
+            raise _ImportError("confgen search frame energies disagree with passing records")
+        ordered.append(record)
     return totals, rows, ordered, frames
 
 
@@ -108,8 +124,7 @@ def run_search_item(
 ) -> WorkItemResult:
     """Run one confgen work item in DG-search mode (never raises)."""
     try:
-        outcome = _run(executor, work_item, context, wall_start, monotonic_start, should_cancel)
-        return cast(WorkItemResult, outcome)
+        return _run(executor, work_item, context, wall_start, monotonic_start, should_cancel)
     except QuotaCancelled:
         return executor._cancelled(work_item, context, wall_start, monotonic_start)
     except (DomainError, ValueError) as exc:
@@ -119,7 +134,14 @@ def run_search_item(
         return executor._fail(work_item, context, wall_start, monotonic_start, msg)
 
 
-def _run(executor, work_item, context, wall_start, monotonic_start, should_cancel):
+def _run(
+    executor: ConfgenExecutor,
+    work_item: WorkItem,
+    context: ItemExecutionContext,
+    wall_start: float,
+    monotonic_start: float,
+    should_cancel: Callable[[], bool] | None,
+) -> WorkItemResult:
     scientific = context.scientific
     native = dict(scientific.native)
     section = native.get("search")
@@ -213,7 +235,7 @@ def _run(executor, work_item, context, wall_start, monotonic_start, should_cance
     }
     with open(job_path, "w", encoding="utf-8") as handle:
         handle.write(json.dumps(job_doc, sort_keys=True, indent=2) + "\n")
-    walltime = binding.walltime_seconds if binding is not None else None
+    walltime: float | None = binding.walltime_seconds if binding is not None else None
     walltime = float(walltime) if walltime else None
     request = NativeExecutionRequest(
         sys.executable,
@@ -237,7 +259,12 @@ def _run(executor, work_item, context, wall_start, monotonic_start, should_cance
     except QuotaError as exc:
         raise DomainError(f"confgen search quota refused: {exc}") from exc
 
-    def _result(status, structures, diagnostics, artifacts):
+    def _result(
+        status: WorkItemStatus,
+        structures: StructureSet,
+        diagnostics: tuple[Diagnostic, ...],
+        artifacts: ArtifactSet,
+    ) -> WorkItemResult:
         return WorkItemResult(
             work_item.id,
             status,
@@ -255,7 +282,9 @@ def _run(executor, work_item, context, wall_start, monotonic_start, should_cance
             work_item.semantic_digest,
         )
 
-    def _failed(msg, code, artifacts, details=None):
+    def _failed(
+        msg: str, code: str, artifacts: ArtifactSet, details: dict[str, Any] | None = None
+    ) -> WorkItemResult:
         diagnostic = Diagnostic(
             code,
             msg,
@@ -268,9 +297,9 @@ def _run(executor, work_item, context, wall_start, monotonic_start, should_cance
         )
         return _result(WorkItemStatus.FAILED, StructureSet(), (diagnostic,), artifacts)
 
-    def _artifacts():
+    def _artifacts() -> ArtifactSet:
         run_root = os.path.realpath(context.run_root)
-        refs = []
+        refs: list[ArtifactRef] = []
         roles = (
             ("summary.json", "search_summary"),
             ("structures.xyz", "search_structures"),
@@ -301,7 +330,7 @@ def _run(executor, work_item, context, wall_start, monotonic_start, should_cance
             )
         return ArtifactSet(tuple(refs))
 
-    def _completed(artifacts, charge, multiplicity):
+    def _completed(artifacts: ArtifactSet, charge: int, multiplicity: int) -> WorkItemResult:
         try:
             totals, rows, ordered, frames = _read_validated(driving, rundir)
         except _ImportError as exc:
@@ -315,7 +344,7 @@ def _run(executor, work_item, context, wall_start, monotonic_start, should_cance
             else None
         )
         low = min(float(r.get("energy_eh") or 0.0) for r in ordered)
-        members = []
+        members: list[StructureRecord] = []
         for rank, rec in enumerate(ordered):
             energy = rec.get("energy_eh")
             coords = tuple((float(x), float(y), float(z)) for x, y, z in frames[rank].coordinates)

@@ -460,7 +460,7 @@ class TopologyAtomModel(ConfgenSpecModel):
 class ConfgenTopologyModel(ConfgenSpecModel):
     bonds: list[TypedEdgeModel | tuple[Index, Index]] | None = None
     atoms: list[TopologyAtomModel] = Field(default_factory=list)
-    add_bond: list[tuple[Index, Index]] | None = None
+    add_bond: list[TypedEdgeModel | tuple[Index, Index]] | None = None
     del_bond: list[tuple[Index, Index]] | None = None
 
 

@@ -207,6 +207,12 @@ description = "TS refinement entry"
   ```
   无金属时去掉 `coordination` 整节即可（`shape` 不需要，`coordination_class` 与
   `metal_donor_distance` 记为 `skipped` 且不判失败，记在每个 structure 的 `skipped_checks`）。
+  过渡态只需声明反应对（一行 `add_bond`，无需列出全部共价键；原子号使用该步骤的 `index_base`）：
+  ```yaml
+      topology:
+        add_bond: [{atoms: [2, 4], kind: FORMING}]
+  ```
+  搜索模式下未声明 `topology.bonds` 时，图的感知使用步骤常规尺度（`tolerances.bond_scale`，默认 1.15），审计则用 `search.bond_scale`（默认 1.25）重新感知。
   xTB 可执行文件按 `xtb` 程序名解析：步骤 `execution.executable` 优先，否则取运行请求的
   `executables["xtb"]` 默认；解析不到即在开工前 fail-closed。
   已写过同内容 `done.json` 的出发目录自动续跑。

@@ -370,16 +370,14 @@ def test_end_to_end_binding(tmp_path: Path) -> None:
         f"{e} {x} {y} {z}\n" for e, (x, y, z) in zip(els, ref)
     )
     fake = _write_fake(tmp_path)
-    pairs = [([2, h], "COVALENT") for h in (6, 7, 8)] + [([3, h], "COVALENT") for h in (9, 10, 11)]
-    pairs += [([1, d], "COORDINATION") for d in (2, 3, 4, 5)] + [([2, 4], "FORMING")]
-    bonds = [{"atoms": pair, "kind": kind} for pair, kind in pairs]
+    topology = {"add_bond": [{"atoms": [2, 4], "kind": "FORMING"}]}
     step = {
         "id": "cg",
         "executor": "confgen",
         "bindings": {"structure": {"source": {"run": "structures"}}},
         "confgen": {
             **_scope(),
-            "topology": {"bonds": bonds},
+            "topology": topology,
             "search": {**_SEARCH, "starts": 1},
             "seed": 11,
         },
