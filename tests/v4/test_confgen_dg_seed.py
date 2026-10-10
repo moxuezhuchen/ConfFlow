@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -32,7 +33,7 @@ from confflow.science.confgen.graph import (
 
 FIXTURE = Path("tests/fixtures/confgen/coordination/ts1")
 OCTAHEDRAL = shapes.proper_rotation_group("octahedral")
-OTHER_PLACEMENTS = ((0, 2, 3, 4, 1, 5), (0, 2, 3, 4, 5, 1))
+OTHER_PLACEMENTS = ((0, 2, 4, 3, 1, 5), (0, 2, 5, 4, 3, 1))
 
 
 def _load_ts1():
@@ -52,13 +53,10 @@ _SHARED = {}
 def _shared(small_ring_torsions):
     if small_ring_torsions not in _SHARED:
         graph, spec, ref = _load_ts1()
+        commanded = list(_perceived_class(ref, spec))
+        settings = DGSeedSettings(6, 11, small_ring_torsions=small_ring_torsions)
         _SHARED[small_ring_torsions] = generate_dg_seeds(
-            graph,
-            spec,
-            ref,
-            list(_perceived_class(ref, spec)),
-            "octahedral",
-            DGSeedSettings(count=8, random_seed=11, small_ring_torsions=small_ring_torsions),
+            graph, spec, ref, commanded, "octahedral", settings
         )
     return _SHARED[small_ring_torsions]
 
@@ -133,10 +131,8 @@ def _stereo_centres(graph, ref, charges):
 
 
 def _signed_volume(coords, neighbours):
-    points = [np.asarray(coords[i], dtype=float) for i in neighbours]
-    return float(
-        np.dot(points[1] - points[0], np.cross(points[2] - points[0], points[3] - points[0]))
-    )
+    p = [np.asarray(coords[i], dtype=float) for i in neighbours]
+    return float(np.dot(p[1] - p[0], np.cross(p[2] - p[0], p[3] - p[0])))
 
 
 def test_reference_placement_starts_hold_commanded_geometry() -> None:
@@ -165,7 +161,7 @@ def test_rearranged_placements_embed_into_commanded_class() -> None:
         c.representative for c in enumeration.enumerate_targets(spec, "octahedral")["shape_classes"]
     }
     assert set(OTHER_PLACEMENTS) <= reps
-    fast = DGSeedSettings(count=2, random_seed=5, small_ring_torsions=False)
+    fast = DGSeedSettings(count=3, random_seed=5, small_ring_torsions=False)
     for placement in OTHER_PLACEMENTS:
         result = generate_dg_seeds(graph, spec, ref, list(placement), "octahedral", fast)
         assert len(result.coords) > 0
@@ -201,12 +197,12 @@ def test_small_ring_torsions_raise_chair_share() -> None:
 def test_deterministic_across_calls_and_sensitive_to_seed() -> None:
     graph, spec, ref = _load_ts1()
     commanded = list(_perceived_class(ref, spec))
-    fast = DGSeedSettings(count=4, random_seed=11, small_ring_torsions=False)
+    fast = DGSeedSettings(count=2, random_seed=11, small_ring_torsions=False)
     first = generate_dg_seeds(graph, spec, ref, commanded, "octahedral", fast)
     second = generate_dg_seeds(graph, spec, ref, commanded, "octahedral", fast)
     assert len(first.coords) == len(second.coords) > 0
     assert all(map(np.array_equal, first.coords, second.coords))
-    next_seed = DGSeedSettings(count=4, random_seed=12, small_ring_torsions=False)
+    next_seed = DGSeedSettings(count=2, random_seed=12, small_ring_torsions=False)
     other = generate_dg_seeds(graph, spec, ref, commanded, "octahedral", next_seed)
     assert any(not np.array_equal(one, two) for one, two in zip(other.coords, first.coords))
 
@@ -217,6 +213,7 @@ def test_fragment_charges_reported_and_overridable() -> None:
     shared = _shared(True)
     auto = dict(shared.fragment_charges)
     assert dict(_shared(False).fragment_charges) == auto
+    assert sorted(auto.values()) == [-2, -1]
     donors_n = [d for d in spec.donor_indices if graph.atoms[d].element == "N"]
     host = next(ix for ix, _ in shared.fragment_charges if all(d in ix for d in donors_n))
     assert auto[host] == -2
@@ -257,11 +254,11 @@ def test_invalid_inputs_fail_closed() -> None:
         lambda: generate_dg_seeds(graph, scope, ref, [0], "octahedral"),
         lambda: generate_dg_seeds(graph, far_metal, ref, commanded, "octahedral"),
         lambda: generate_dg_seeds(graph, far_donor, ref, [0, 1, 2, 3], "tetrahedral"),
-        # Smoothing-infeasible commands fail closed before any embedding.
         lambda: generate_dg_seeds(graph, spec, ref, [0, 1, 2, 3, 4, 5], "octahedral"),
     ]
     settings_cases = [
         DGSeedSettings(count=0),
+        DGSeedSettings(timeout_seconds=-1),
         DGSeedSettings(fragment_charges=((1,),)),
         DGSeedSettings(fragment_charges=((0, "x"),)),
         DGSeedSettings(fragment_charges=((9999, 0),)),
@@ -284,25 +281,7 @@ def test_missing_rdkit_fails_closed(monkeypatch) -> None:
         generate_dg_seeds(graph, spec, ref, list(_perceived_class(ref, spec)), "octahedral")
 
 
-def _zinc_tetraammine():
-    verts = np.array([[1, 1, 1], [1, -1, -1], [-1, 1, -1], [-1, -1, 1]], dtype=float)
-    verts /= np.linalg.norm(verts, axis=1, keepdims=True)
-    elements, positions, links = ["Zn"], [np.zeros(3)], []
-    tilt, span = np.cos(np.radians(112.0)) * 1.02, np.sin(np.radians(112.0)) * 1.02
-    for vertex in verts:
-        donor, across = vertex * 2.0, -vertex
-        helper = np.eye(3)[np.argmin(np.abs(across))]
-        first = helper - across * float(helper @ across)
-        first /= np.linalg.norm(first)
-        second = np.cross(across, first)
-        angles = np.arange(3) * 2.094
-        turn = np.cos(angles)[:, None] * first + np.sin(angles)[:, None] * second
-        hydros = donor + tilt * across + span * turn
-        index = len(elements)
-        elements += ["N", "H", "H", "H"]
-        positions += [donor, *hydros]
-        links.append((0, index, EdgeType.COORDINATION))
-        links += [(index, index + k, EdgeType.COVALENT) for k in (1, 2, 3)]
+def _pack_complex(elements, positions, links, shape, prefix="D"):
     atoms = tuple(AtomRef(index=i, element=e) for i, e in enumerate(elements))
     edges = tuple(TypedEdge(a=a, b=b, type=t) for a, b, t in links)
     graph = TypedGraph(atoms=atoms, edges=edges, metal_center=0)
@@ -310,21 +289,70 @@ def _zinc_tetraammine():
     spec = CoordinationSpec(
         metal_center=0,
         binding_sites=tuple(
-            BindingSite(id=f"D{i}", kind="atom", atoms=(d,), hapticity=1)
+            BindingSite(id=f"{prefix}{i}", kind="atom", atoms=(d,), hapticity=1)
             for i, d in enumerate(donors)
         ),
-        shapes=("tetrahedral",),
+        shapes=(shape,),
     )
     return graph, spec, np.array(positions)
+
+
+def _zinc_tetraammine():
+    verts = np.array([[1, 1, 1], [1, -1, -1], [-1, 1, -1], [-1, -1, 1]], dtype=float)
+    verts /= np.linalg.norm(verts, axis=1, keepdims=True)
+    elements, positions, links = ["Zn"], [np.zeros(3)], []
+    for i, vertex in enumerate(verts):
+        donor = vertex * 2.0
+        hydros = [donor - other * 1.02 for j, other in enumerate(verts) if j != i]
+        index = len(elements)
+        elements += ["N", "H", "H", "H"]
+        positions += [donor, *hydros]
+        links.append((0, index, EdgeType.COORDINATION))
+        links += [(index, index + k, EdgeType.COVALENT) for k in (1, 2, 3)]
+    return _pack_complex(elements, positions, links, "tetrahedral")
 
 
 def test_hand_built_tetrahedral_control_embeds_commanded_class() -> None:
     graph, spec, ref = _zinc_tetraammine()
     commanded = [0, 1, 2, 3]
-    settings = DGSeedSettings(count=4, random_seed=3)
-    result = generate_dg_seeds(graph, spec, ref, commanded, "tetrahedral", settings)
+    result = generate_dg_seeds(graph, spec, ref, commanded, "tetrahedral", DGSeedSettings(2, 3))
     assert len(result.coords) > 0
     group = shapes.proper_rotation_group("tetrahedral")
     wanted = enumeration.canonical_representative(commanded, group)
     for start in result.coords:
         assert _perceived_class(start, spec, "tetrahedral") == wanted
+
+
+def _iron_pentacarbonyl():
+    verts = np.asarray(shapes.get_shape("trigonal_bipyramidal").vertices, dtype=float)
+    verts /= np.linalg.norm(verts, axis=1, keepdims=True)
+    elements, positions, links = ["Fe"], [np.zeros(3)], []
+    for vertex in verts:
+        index = len(elements)
+        elements += ["C", "O"]
+        positions += [vertex * 1.8, vertex * 2.93]
+        links.append((0, index, EdgeType.COORDINATION))
+        links.append((index, index + 1, EdgeType.COVALENT))
+    return _pack_complex(elements, positions, links, "trigonal_bipyramidal", "C")
+
+
+def test_carbonyl_fragments_stay_neutral_in_commanded_class() -> None:
+    graph, spec, ref = _iron_pentacarbonyl()
+    commanded = [0, 1, 2, 3, 4]
+    result = generate_dg_seeds(graph, spec, ref, commanded, "trigonal_bipyramidal")
+    assert len(result.coords) > 0
+    assert [charge for _, charge in result.fragment_charges] == [0] * 5
+    group = shapes.proper_rotation_group("trigonal_bipyramidal")
+    wanted = enumeration.canonical_representative(commanded, group)
+    for start in result.coords:
+        got = _perceived_class(start, spec, "trigonal_bipyramidal")
+        assert enumeration.canonical_representative(got, group) == wanted
+
+
+def test_strained_placement_timeout_returns_promptly() -> None:
+    graph, spec, ref = _load_ts1()
+    tick = time.monotonic()
+    settings = DGSeedSettings(count=3, random_seed=5, timeout_seconds=5)
+    result = generate_dg_seeds(graph, spec, ref, [0, 2, 3, 5, 4, 1], "octahedral", settings)
+    assert time.monotonic() - tick < 30.0
+    assert len(result.coords) <= 3

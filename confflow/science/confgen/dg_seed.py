@@ -6,6 +6,10 @@ Embedding returns whatever RDKit realizes (possibly fewer than requested).
 
 The returned starts are starts only: they are not audited, not labeled
 REALIZED, and carry no validity claim.
+
+Known limitation: redox-ambiguous ligands can be misperceived (catecholate
+is perceived as charge 0 o-quinone, nitrate as charge -3); use the
+``fragment_charges`` override for such fragments.
 """
 
 from __future__ import annotations
@@ -58,6 +62,11 @@ class DGSeedSettings:
         Bounds tolerance for metal to donor-substituent distances.
     fragment_charges : tuple[tuple[int, int], ...]
         ``(atom index of the fragment, charge)`` overrides.
+    timeout_seconds : int
+        Maximum time in seconds to generate one conformer of one molecule
+        fragment (RDKit ETKDG ``params.timeout`` scope: per conformer per
+        fragment; 0 means no limit). A timeout never raises: embedding
+        returns the starts obtained so far (possibly none).
     """
 
     count: int = 20
@@ -69,6 +78,7 @@ class DGSeedSettings:
     forming_neighbor_tolerance: float = 0.15
     donor_neighbor_tolerance: float = 0.25
     fragment_charges: tuple[tuple[int, int], ...] = ()
+    timeout_seconds: int = 0
 
 
 #: Shared default settings (frozen, safe to share across calls).
@@ -157,6 +167,9 @@ def _validate_inputs(
     count = settings.count
     if isinstance(count, bool) or not isinstance(count, int) or count < 1:
         raise DGSeedError(f"count must be a positive int, got {settings.count!r}")
+    timeout = settings.timeout_seconds
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout < 0:
+        raise DGSeedError(f"timeout_seconds must be a non-negative int, got {timeout!r}")
     ref = np.asarray(reference, dtype=float)
     if ref.shape != (graph.natoms, 3):
         raise DGSeedError(f"reference shape {ref.shape} needs {(graph.natoms, 3)}")
@@ -224,15 +237,17 @@ def _perceive_fragment(
 
     Every trial is evaluated (no early exit). A trial is valid when
     ``DetermineBondOrders`` succeeds and no atom keeps radical electrons.
-    The winner minimizes ``(charged carbons, charged atoms - |q|, rank)``,
-    which rejects zwitterionic structures in favour of charges on
+    The winner minimizes ``(charged carbon mass, charged mass - |q|,
+    |q|, rank)`` where each mass is the sum of ``abs(formal charge)``
+    over carbons (first element) or all atoms (second element), which
+    rejects zwitterionic structures in favour of charges on
     heteroatoms. An explicit override bypasses the search with one trial.
     """
     from rdkit import Chem
     from rdkit.Chem import rdDetermineBonds
     from rdkit.Geometry import Point3D
 
-    ranked: list[tuple[tuple[int, int, int], Any, int]] = []
+    ranked: list[tuple[tuple[int, int, int, int], Any, int]] = []
     for rank, trial in enumerate(trials):
         probe = Chem.RWMol()
         for atom_index in frag:
@@ -259,11 +274,13 @@ def _perceive_fragment(
                 raise DGSeedError(f"fragment {frag} leaves radicals with charge {trial}")
             continue
         if explicit:
-            ranked.append(((0, 0, 0), trial_mol, int(trial)))
+            ranked.append(((0, 0, 0, 0), trial_mol, int(trial)))
             break
         charged = [a for a in trial_mol.GetAtoms() if a.GetFormalCharge() != 0]
-        carbons = sum(1 for atom in charged if atom.GetSymbol() == "C")
-        ranked.append(((carbons, len(charged) - abs(int(trial)), rank), trial_mol, int(trial)))
+        carbon_mass = sum(abs(a.GetFormalCharge()) for a in charged if a.GetSymbol() == "C")
+        total_mass = sum(abs(a.GetFormalCharge()) for a in charged)
+        key = (carbon_mass, total_mass - abs(int(trial)), abs(int(trial)), rank)
+        ranked.append((key, trial_mol, int(trial)))
     if not ranked:
         raise DGSeedError(f"fragment {frag} admits no workable charge")
     ranked.sort(key=lambda item: item[0])
@@ -423,6 +440,7 @@ def generate_dg_seeds(
     params.randomSeed = settings.random_seed
     params.maxIterations = settings.max_iterations
     params.useSmallRingTorsions = settings.small_ring_torsions
+    params.timeout = settings.timeout_seconds
     params.SetBoundsMat(bounds)
     params.SetCoordMap({i: Point3D(*targets[i]) for i in core})
     try:
@@ -430,6 +448,8 @@ def generate_dg_seeds(
     except Exception as exc:
         raise DGSeedError(f"RDKit embedding failed: {exc}") from exc
     starts = tuple(
-        np.array(mol.GetConformer(int(conf_id)).GetPositions(), dtype=float) for conf_id in conf_ids
+        np.array(mol.GetConformer(int(conf_id)).GetPositions(), dtype=float)
+        for conf_id in conf_ids
+        if int(conf_id) >= 0
     )
     return DGSeedResult(coords=starts, requested=requested, fragment_charges=tuple(used))
