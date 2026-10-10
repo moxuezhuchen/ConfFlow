@@ -119,6 +119,12 @@ class ConfgenExecutor:
         scientific = context.scientific
         native = dict(scientific.native)
         if native.get("schema_version") == 3:
+            if native.get("search") is not None:
+                from .confgen_search_run import run_search_item
+
+                return run_search_item(
+                    self, work_item, context, wall_start, monotonic_start, should_cancel
+                )
             return self._run_v3(work_item, context, wall_start, monotonic_start, should_cancel)
         return self._fail(
             work_item,

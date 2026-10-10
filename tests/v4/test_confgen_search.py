@@ -10,12 +10,12 @@ import pytest
 
 from confflow.science.confgen import search
 from confflow.science.confgen.coordination import enumeration, perception, shapes
-from tests.v4.test_confgen_dg_search_script import _SHAPE, DG, _embed, _toy
+from tests.v4._dg_search_helpers import _SHAPE, _embed, _toy, build_topology
 
 
 def _topo(els, ref, forbid=(), shape=_SHAPE):
     sel = (0, [1, 2, 3, 4], [(1, 3)], list(forbid), 1.25)
-    graph, spec, _ = DG.build_topology(els, ref, sel, shape)
+    graph, spec, _ = build_topology(els, ref, sel, shape)
     return graph, spec
 
 
@@ -220,7 +220,7 @@ def test_run_search_metal(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_run_search_free(monkeypatch: pytest.MonkeyPatch) -> None:
     mol, els, ref = _embed("C[C@H]1CC[C@@H](O)C1")
-    topo, spec, _ = DG.build_topology(els, ref, (None, [], [(0, 1)], [], 1.25), None)
+    topo, spec, _ = build_topology(els, ref, (None, [], [(0, 1)], [], 1.25), None)
     assert spec is None
 
     def _echo(*args, **kwargs):

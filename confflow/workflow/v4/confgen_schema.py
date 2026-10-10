@@ -14,7 +14,16 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    model_validator,
+)
 
 Index = Annotated[StrictInt, Field(ge=0)]
 Positive = Annotated[float, Field(gt=0, strict=True)]
@@ -466,6 +475,28 @@ class SamplingSpec(ConfgenSpecModel):
     cap: StrictInt = Field(ge=1)
 
 
+class FragmentChargeModel(ConfgenSpecModel):
+    """One DG-fragment charge override; ``atom`` uses the model's index_base."""
+
+    atom: StrictInt
+    charge: StrictInt
+
+
+class ConfgenSearchModel(ConfgenSpecModel):
+    """DG-search mode: DG starts, restrained xTB relaxation, and audit.
+
+    ``starts`` counts DG starts per coordination class (or in total without
+    a metal). ``fragment_charges`` atoms use the model's ``index_base``.
+    """
+
+    starts: StrictInt = Field(default=8, ge=1)
+    small_ring_torsions: Literal["both", "on", "off"] = "both"
+    embed_timeout_seconds: StrictInt = Field(default=120, ge=0)
+    max_cycles: StrictInt = Field(default=1000, ge=1)
+    bond_scale: StrictFloat = Field(default=1.25, gt=0)
+    fragment_charges: list[FragmentChargeModel] = Field(default_factory=list)
+
+
 class ConfgenToleranceModel(ConfgenSpecModel):
     """Global tolerances; defaults track the core science authority."""
 
@@ -519,6 +550,7 @@ class ConfgenModelV3(ConfgenSpecModel):
     tolerances: ConfgenToleranceModel = Field(default_factory=ConfgenToleranceModel)
     limits: ConfgenLimits = Field(default_factory=ConfgenLimits)
     sampling: SamplingSpec | None = None
+    search: ConfgenSearchModel | None = None
     seed: StrictInt | None = None
     overrides: dict[str, Any] = Field(default_factory=dict)
 
@@ -538,6 +570,28 @@ class ConfgenModelV3(ConfgenSpecModel):
                 "sampling.cap requires an explicit top-level seed "
                 "(the seed is the sole stochastic authority)"
             )
+        if self.search is not None:
+            combined = [
+                name
+                for name, occupied in (
+                    ("rings", bool(self.rings)),
+                    ("torsions", bool(self.torsions)),
+                    ("paths", bool(self.paths)),
+                    ("sampling", self.sampling is not None),
+                )
+                if occupied
+            ]
+            if combined:
+                raise ValueError(
+                    "search must not be combined with "
+                    + ", ".join(combined)
+                    + "; declare exactly one confgen generation mode"
+                )
+            if self.seed is None:
+                raise ValueError(
+                    "search requires an explicit top-level seed "
+                    "(the seed is the sole stochastic authority)"
+                )
         seen: set[str] = set()
         for entry in (*self.rings, *self.torsions):
             if entry.id in seen:
