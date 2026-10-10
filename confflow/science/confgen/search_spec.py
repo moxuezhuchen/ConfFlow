@@ -49,7 +49,7 @@ REMOVED_ENGINES_MESSAGE = (
     "runs the DG search engine only, declared with schema_version: 4"
 )
 
-#: Default perception scale shared with the legacy typed-graph authority.
+#: Default perception scale (bond_scale) for covalent bond perception.
 DEFAULT_BOND_SCALE: float = 1.15
 
 #: ``starts`` default per coordination class when ``coordination`` is declared.
@@ -123,15 +123,15 @@ def normalize_search_spec(raw: Mapping[str, Any]) -> dict[str, Any]:
     unknown keys, bad versions, missing index conventions, and malformed
     topology/tolerance/coordination sections. Graph construction rules
     (explicit bonds win, perception plus add/del corrections, persisted
-    working topology, topology patch) live in ``planner.build_typed_graph``
+    working topology, topology patch) live in ``topology.build_typed_graph``
     and are unchanged.
     """
-    from confflow.science.confgen.planner import (
-        _convert_index,
-        _convert_index_list,
-        _convert_topo_entry,
-        _validate_atom_declaration,
-        _validate_topo_entry,
+    from confflow.science.confgen.topology import (
+        convert_index,
+        convert_index_list,
+        convert_topo_entry,
+        validate_atom_declaration,
+        validate_topo_entry,
     )
 
     if not isinstance(raw, Mapping):
@@ -176,9 +176,9 @@ def normalize_search_spec(raw: Mapping[str, Any]) -> dict[str, Any]:
                 raise ValueError(f"spec topology.{key} must be a list of index entries")
             validated: list[Any] = []
             for index, item in enumerate(pairs):
-                shape = _validate_topo_entry(item, path=f"spec topology.{key}[{index}]")
+                shape = validate_topo_entry(item, path=f"spec topology.{key}[{index}]")
                 validated.append(
-                    _convert_topo_entry(shape, base=base, path=f"spec topology.{key}[{index}]")
+                    convert_topo_entry(shape, base=base, path=f"spec topology.{key}[{index}]")
                 )
             topo[key] = validated
     if topology.get("atoms") is not None:
@@ -187,10 +187,10 @@ def normalize_search_spec(raw: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError("spec topology.atoms must be a list of atom declarations")
         converted_decls: list[dict[str, Any]] = []
         for index, item in enumerate(declarations):
-            shape = _validate_atom_declaration(item, path=f"spec topology.atoms[{index}]")
+            shape = validate_atom_declaration(item, path=f"spec topology.atoms[{index}]")
             converted_decls.append(
                 {
-                    "index": _convert_index(
+                    "index": convert_index(
                         shape["index"], base=base, path=f"spec topology.atoms[{index}].index"
                     ),
                     "label": shape.get("label"),
@@ -232,7 +232,7 @@ def normalize_search_spec(raw: Mapping[str, Any]) -> dict[str, Any]:
             )
         converted = dict(coordination)
         if coordination.get("metal_center") is not None:
-            converted["metal_center"] = _convert_index(
+            converted["metal_center"] = convert_index(
                 coordination["metal_center"], base=base, path="$.coordination.metal_center"
             )
         sites = coordination.get("binding_sites")
@@ -245,7 +245,7 @@ def normalize_search_spec(raw: Mapping[str, Any]) -> dict[str, Any]:
                     raise ValueError(f"$.coordination.binding_sites[{position}] must be a mapping")
                 entry = dict(site)
                 if site.get("atoms") is not None:
-                    entry["atoms"] = _convert_index_list(
+                    entry["atoms"] = convert_index_list(
                         site["atoms"],
                         base=base,
                         path=f"$.coordination.binding_sites[{position}].atoms",
@@ -385,7 +385,7 @@ def build_search_context(structure: Any, native: Mapping[str, Any]) -> SearchCon
     members of an earlier confgen step treats them as plain structures: no
     chained state is read here.
     """
-    from confflow.science.confgen.planner import build_typed_graph
+    from confflow.science.confgen.topology import build_typed_graph
 
     if not isinstance(native, Mapping):
         raise ValueError("spec must be a mapping")

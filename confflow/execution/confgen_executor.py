@@ -22,6 +22,7 @@ from collections.abc import Callable
 from ..domain.errors import DomainError
 from ..domain.structure import StructureRecord
 from ..domain.work_item import WorkItem, WorkItemResult
+from ..science.confgen.search_spec import REMOVED_ENGINES_MESSAGE
 from .work_item_executor import (
     ItemExecutionContext,
     pure_cancelled_result,
@@ -31,16 +32,6 @@ from .work_item_executor import (
 __all__ = [
     "ConfgenExecutor",
 ]
-
-#: Engine-removal message for ``schema_version: 3`` documents. Pinned copy of
-#: ``confflow.workflow.v4.confgen_schema.REMOVED_ENGINES_MESSAGE`` (identical
-#: text, pinned by test): the executor must not import the workflow package,
-#: so the canonical constant cannot be shared by import here.
-_REMOVED_ENGINES_MESSAGE = (
-    "confgen schema_version 3 is no longer supported: the ring, torsion, path "
-    "and coordination-realization engines were removed; the confgen step now "
-    "runs the DG search engine only, declared with schema_version: 4"
-)
 
 
 class ConfgenExecutor:
@@ -83,7 +74,7 @@ class ConfgenExecutor:
         native = dict(scientific.native)
         if native.get("schema_version") == 3:
             return self._fail(
-                work_item, context, wall_start, monotonic_start, _REMOVED_ENGINES_MESSAGE
+                work_item, context, wall_start, monotonic_start, REMOVED_ENGINES_MESSAGE
             )
         if native.get("schema_version") == 4:
             from .confgen_search_run import run_search_item

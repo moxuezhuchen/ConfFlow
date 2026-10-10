@@ -221,14 +221,14 @@ class TestWorkingGraphAuthority:
 
 
 def _resolved_spec() -> dict[str, Any]:
-    from confflow.science.confgen.planner import normalize_spec
+    from confflow.science.confgen.search_spec import normalize_search_spec
 
-    return normalize_spec({"schema_version": 3, "index_base": 1})
+    return normalize_search_spec({"schema_version": 4, "index_base": 1})
 
 
 class TestConfgenTopology:
     def test_typed_graph_applies_patch(self) -> None:
-        from confflow.science.confgen.planner import build_typed_graph
+        from confflow.science.confgen.topology import build_typed_graph
 
         record = _record(topology_patch=TopologyPatch(delete_edges=[(1, 2)]))
         resolved = _resolved_spec()
@@ -237,7 +237,7 @@ class TestConfgenTopology:
         assert graph.edge_kind(0, 1) is None
 
     def test_typed_graph_does_not_reapply_patch_to_persisted_graph(self) -> None:
-        from confflow.science.confgen.planner import build_typed_graph
+        from confflow.science.confgen.topology import build_typed_graph
 
         record = _record(
             topology_patch=TopologyPatch(add_edges=[(1, 2)]),
@@ -248,7 +248,7 @@ class TestConfgenTopology:
         assert graph.edge_kind(0, 1) is None
 
     def test_typed_graph_conflict_fails_closed(self) -> None:
-        from confflow.science.confgen.planner import build_typed_graph
+        from confflow.science.confgen.topology import build_typed_graph
 
         record = _record(topology_patch=TopologyPatch(add_edges=[(2, 3)]))
         resolved = _resolved_spec()
@@ -259,10 +259,10 @@ class TestConfgenTopology:
             build_typed_graph(graph_only, {"bonds": []}, resolved)
 
     def test_build_context_carries_patched_adjacency(self) -> None:
-        from confflow.science.confgen.model import build_context
+        from confflow.science.confgen.search_spec import build_search_context
 
         record = _record(topology_patch=TopologyPatch(delete_edges=[(1, 2)]))
-        context = build_context(record, {"schema_version": 3, "index_base": 1})
+        context = build_search_context(record, {"schema_version": 4, "index_base": 1, "seed": 1})
         assert [list(row) for row in context.adjacency] == [[2], [], [0]]
 
 

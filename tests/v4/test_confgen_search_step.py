@@ -205,7 +205,7 @@ def test_schema_v3_rejected_with_removal_message() -> None:
 
 
 def test_removal_message_spelling_is_pinned() -> None:
-    from confflow.execution.confgen_executor import _REMOVED_ENGINES_MESSAGE as _exec_msg
+    from confflow.execution.confgen_executor import REMOVED_ENGINES_MESSAGE as _exec_msg
     from confflow.producer.intent.capabilities.confgen import (
         REMOVED_ENGINES_MESSAGE as _cap_msg,
     )

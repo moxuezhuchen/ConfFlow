@@ -9,7 +9,7 @@ from typing import Any, Literal
 import numpy as np
 
 from confflow.science.bonding import covalent_radius
-from confflow.science.confgen import coordination
+from confflow.science.confgen.coordination import enumeration, perception, shapes
 from confflow.science.confgen.dg_seed import DGSeedError, DGSeedSettings, generate_dg_seeds
 from confflow.science.confgen.graph import CoordinationSpec, TypedGraph
 from confflow.science.data import get_atomic_number
@@ -187,19 +187,19 @@ def plan_targets(
     if not shape:
         raise SearchError("a coordination shape is required with a coordination spec")
     try:
-        pipe = coordination.enumeration.enumerate_targets(spec, shape)
+        pipe = enumeration.enumerate_targets(spec, shape)
     except ValueError as exc:
         raise SearchError(str(exc)) from exc
     site_ids = [site.id for site in spec.binding_sites]
-    trans = coordination.shapes.get_shape(shape).trans_pairs
-    group = coordination.shapes.proper_rotation_group(shape)
+    trans = shapes.get_shape(shape).trans_pairs
+    group = shapes.proper_rotation_group(shape)
     targets = []
     for pos, cls in enumerate(pipe["shape_classes"]):
         placement = tuple(int(v) for v in cls.representative)
         at = {v: s for s, v in enumerate(placement)}
         labels = [(site_ids[at[f]], site_ids[at[s]]) for f, s in map(sorted, trans)]
         pairs = sorted((a, b) if a <= b else (b, a) for a, b in labels)
-        cmd = coordination.enumeration.canonical_representative(placement, group)
+        cmd = enumeration.canonical_representative(placement, group)
         targets.append(SearchTarget(f"t{pos:02d}", placement, tuple(pairs), command=cmd))
     return tuple(targets)
 
@@ -345,10 +345,10 @@ def audit_structure(
             raise SearchError("metal-bearing audit needs a coordination spec and shape")
         donors = list(spec.donor_indices)
         sites = [site.id for site in spec.binding_sites]
-        group = coordination.shapes.proper_rotation_group(shape)
+        group = shapes.proper_rotation_group(shape)
         try:
-            seen = coordination.perception.perceive_donors(new, metal, donors, sites, shape)
-            got = coordination.enumeration.canonical_representative(tuple(seen.best_class), group)
+            seen = perception.perceive_donors(new, metal, donors, sites, shape)
+            got = enumeration.canonical_representative(tuple(seen.best_class), group)
             ok = bool(seen.unambiguous) and got == tuple(commanded)
         except ValueError:
             ok = False

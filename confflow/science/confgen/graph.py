@@ -666,7 +666,7 @@ class TypedGraph:
         """Return neighbour lists over COVALENT edges only, sorted per atom.
 
         Shared-graph contract: FORMING/COORDINATION/BREAKING edges never
-        enter this adjacency; legacy torsion mechanics consume it directly.
+        enter this adjacency; no surviving mechanics consume it directly.
         """
         rows: list[set[int]] = [set() for _ in range(len(self.atoms))]
         for edge in self.edges:
