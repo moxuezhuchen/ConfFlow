@@ -152,3 +152,44 @@ description = "TS refinement entry"
   单元素命令须自身为可执行文件；多元素命令取 `argv[1:]` 中首个存在文件为脚本，
   找不到即 fail-closed。
 - 超过整机容量的申请立即失败，不等待；等待中取消立即生效。
+
+## 8. DG 搜索脚本（配位 DG 出发 → 约束 xTB → 审计）
+
+- 脚本 `scripts/confgen_dg_search.py`（独立 CLI，`main(argv=None) -> int`，仅标准库 + NumPy +
+  `confflow` 导入）对一个给定的单金属配合物做：策略过滤后的每个配位类各做若干 DG 出发构象
+  （`confflow/science/confgen/dg_seed.py`，行为不动），每个出发构象在谐振距离约束下做 GFN2-xTB
+  优化（金属–给体与反应对回到参考距离），再逐个审计；只写出全部通过的结构（按能量排序）。
+  ConfGen 工作流只能冻原子、不能做距离约束，因此该协议以 N2 登记脚本形式提供，
+  不动 engine/schema/executor/registry（见 `confflow/execution/script_registry.py`、
+  `confflow/execution/script_executor.py`，测试见 `tests/test_script_steps.py`）。
+- 服务器登记（`command` 中首个存在文件即脚本，找不到即 fail-closed）：
+  ```toml
+  [scripts.confgen_dg_search]
+  command = ["python3", "<repo>/scripts/confgen_dg_search.py"]
+  ```
+- 工作流 `script` 步骤示例（`args` 占位符只允许 `{input}`、`{cores}`、`{mem_gb}`、`{item_id}`，
+  其余一律 plain flag；输出只有三个固定通道 `artifacts`、`structures`、`summary`）：
+  ```yaml
+  - id: dg_search
+    executor: script
+    script: confgen_dg_search
+    args: ["{input}", "--metal", "1", "--donors", "2,3,4,5", "--shape", "square_planar",
+           "--xtb", "/opt/orca611/otool_xtb", "--count", "8",
+           "--out", "structures.xyz", "--summary", "summary.json"]
+    resources: {cores_per_item: 2, memory_per_item: "4GB"}
+    outputs: {structures: "structures.xyz", summary: "summary.json"}
+    bindings: {structure: {source: {run: structures}}}
+  ```
+  `{input}` 按位置传给脚本（另有等效 `--input`）；`--xtb` 缺省读 `$CONFFLOW_XTB`，
+  找不到可执行文件即在开工前 fail-closed；已写过同内容 `done.json` 的出发目录自动续跑。
+- 审计（相对输入参考逐项记录，一项不过即不通过）：`converged`（收敛标记且 `xtbopt.xyz` 存在）；
+  `topology`（同规则感知的共价键集与参考一致，反应对永不计入）；
+  `coordination_class`（`perceive_donors` 无歧义且归一到被命令类）；
+  `stereo`（四配位碳的符号体积不变号）；`reaction_distance`（反应对 ±0.02 Å）；
+  `metal_donor_distance`（金属–给体 ±0.03 Å）；`contacts`（相隔 3 根键以上且去金属的原子对，
+  不短于 0.70 倍半径和；仓内无独立 vdW 半径表，沿用共价半径表，与
+  `coordination/realization.py` 的 clash guard 一致）。
+- 退出码：至少一个通过为 0；零通过仍写 `summary.json`、不写空 xyz，退出码为 2 并在 stderr 说明。
+- 限度：出发构象必须经 xTB 松弛（测试用假 xTB，不依赖真二进制）；电荷启发式带有
+  `--fragment-charge ATOM:Q` 覆盖；只支持单金属、`hapticity=1`；结果是约束下的 GFN2 极小点，
+  不是验证过的过渡态。
