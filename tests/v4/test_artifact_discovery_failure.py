@@ -15,9 +15,7 @@ from tests.v4._helpers.v42_executors import (
 )
 
 
-def test_successful_native_run_does_not_hide_artifact_discovery_failure(
-    tmp_path, monkeypatch
-):
+def test_successful_native_run_does_not_hide_artifact_discovery_failure(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_MODE", "success_opt")
     plan = compile_plan(calculation_doc("orca", ORCA_NATIVE, str(FAKE_ORCA)))
     item = assemble_items(plan, structure_set("s0"))[0]

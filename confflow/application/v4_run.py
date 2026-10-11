@@ -960,8 +960,7 @@ class V4RunApplication:
         from .structure_exports import publish_transform_structures
 
         transform_ids = {
-            item.step_id for item in plan.steps
-            if item.executor.value == "structure_transform"
+            item.step_id for item in plan.steps if item.executor.value == "structure_transform"
         }
         for result in step_results:
             if result.step_id in transform_ids:

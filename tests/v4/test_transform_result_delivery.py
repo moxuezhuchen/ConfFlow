@@ -1,4 +1,5 @@
 """Verify that typed transform outputs become downloadable scientific artifacts."""
+
 from hashlib import sha256
 from types import SimpleNamespace
 

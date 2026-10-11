@@ -247,9 +247,7 @@ class TestProducedVsPassthrough:
 
     def test_unchanged_geometry_without_optimization_evidence_is_passthrough(self) -> None:
         source = structure("s0")
-        output = apply_profile(
-            native_result(geometry=(source.atoms, source.coordinates))
-        )
+        output = apply_profile(native_result(geometry=(source.atoms, source.coordinates)))
         assert output.geometry_semantics is GeometrySemantics.PASSTHROUGH
         assert output.structures[0].id == source.id
 

@@ -212,9 +212,7 @@ def _output_structure(context: ProfileContext) -> tuple[StructureRecord, Geometr
         native_result.final_geometry is not None
     ):
         geometry = native_result.final_geometry
-        optimization_converged = (
-            native_result.native_metadata.get("optimization_converged") is True
-        )
+        optimization_converged = native_result.native_metadata.get("optimization_converged") is True
         if (
             tuple(geometry.atoms) == tuple(source.atoms)
             and _geometry_digest_of(geometry) == source.geometry_digest

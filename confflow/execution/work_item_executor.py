@@ -920,7 +920,9 @@ class WorkItemExecutor:
         names and includes a file only when it exists in the work directory.
         """
         program = materialized.program
-        job = str(materialized.metadata.get("job") or materialized.main_input_name.rsplit(".", 1)[0])
+        job = str(
+            materialized.metadata.get("job") or materialized.main_input_name.rsplit(".", 1)[0]
+        )
         outputs: dict[str, str] = {}
         for entry in materialized.files:
             outputs[entry.name] = "native_input"
@@ -961,7 +963,9 @@ class WorkItemExecutor:
             try:
                 if not os.path.isfile(path):
                     continue
-                discovered.append(ProducedFile(name=name, role=role, size_bytes=os.path.getsize(path)))
+                discovered.append(
+                    ProducedFile(name=name, role=role, size_bytes=os.path.getsize(path))
+                )
             except OSError:
                 continue
 

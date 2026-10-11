@@ -141,9 +141,7 @@ class TestWiredEdge:
         }
 
     def test_provenance_records_existing_native_write_chk(self) -> None:
-        wired = wire_checkpoint_reuse(
-            _doc(source_native={"write_chk": True}), "s_opt", "s_freq"
-        )
+        wired = wire_checkpoint_reuse(_doc(source_native={"write_chk": True}), "s_opt", "s_freq")
         generated = wired["steps"][1]["annotations"]["confflow.checkpoint_reuse"][
             "generated_fields"
         ]

@@ -217,9 +217,7 @@ def build_result_reference_index(
     for step_result in step_results:
         records = tuple(step_result.results)
         for record in records:
-            entry = result_ref_entry(
-                record, origin="produced", frequency_siblings=records
-            )
+            entry = result_ref_entry(record, origin="produced", frequency_siblings=records)
             result_id = entry["result_id"]
             if result_id in index:
                 raise ValueError(
@@ -229,9 +227,7 @@ def build_result_reference_index(
             index[result_id] = entry
     run_input_records = _iter_run_input_results(run_input_results)
     for record in run_input_records:
-        entry = result_ref_entry(
-            record, origin="run_input", frequency_siblings=run_input_records
-        )
+        entry = result_ref_entry(record, origin="run_input", frequency_siblings=run_input_records)
         result_id = entry["result_id"]
         if result_id in index:
             raise ValueError(

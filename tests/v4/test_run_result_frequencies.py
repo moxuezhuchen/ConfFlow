@@ -33,7 +33,7 @@ def test_frequency_ref_projects_values_unit_and_sibling_imaginary_count() -> Non
     )
     step = SimpleNamespace(step_id="freq-step", results=(frequency, imaginary_count))
 
-    (frequency_ref, count_ref) = result_ref_entries((step,))
+    frequency_ref, count_ref = result_ref_entries((step,))
 
     assert frequency_ref["frequencies_cm_1"] == [-42.5, 118.0, 240.25]
     assert frequency_ref["frequencies_unit"] == "cm^-1"
@@ -71,7 +71,7 @@ def test_frequency_projection_requires_canonical_unit_and_matching_count() -> No
     )
     step = SimpleNamespace(step_id="freq-step", results=(frequency, other_structure_count))
 
-    (frequency_ref, _) = result_ref_entries((step,))
+    frequency_ref, _ = result_ref_entries((step,))
 
     assert frequency_ref["frequencies_cm_1"] == [100.0]
     assert frequency_ref["frequencies_unit"] == "cm^-1"
