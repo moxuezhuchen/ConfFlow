@@ -939,25 +939,32 @@ class WorkItemExecutor:
                 }
             )
         else:
+            stdout_name = (
+                request.stdout_file
+                if request is not None and request.stdout_file
+                else f"{job}.{getattr(context.adapter, 'log_extension', 'out')}"
+            )
             outputs.update(
                 {
-                    log_file_name or f"{job}.{context.adapter.log_extension}": "native_output",
+                    log_file_name or stdout_name: "native_output",
                     materialized.main_input_name: "native_input",
                     f"{job}.chk": "checkpoint",
                     f"{job}.err": "stderr",
                 }
             )
         if request is not None:
-            if request.stdout_file:
-                outputs[os.path.basename(request.stdout_file)] = "native_output"
-            if request.stderr_file:
-                outputs[os.path.basename(request.stderr_file)] = "stderr"
+            for filename, role in (
+                (request.stdout_file, "native_output"),
+                (request.stderr_file, "stderr"),
+            ):
+                if filename:
+                    outputs[filename] = role
 
         discovered: list[ProducedFile] = []
         for name, role in outputs.items():
             # Materialized input names and adapter outputs are flat by
             # contract.  Refuse accidental path traversal in this fallback.
-            if not name or name in (".", "..") or os.path.basename(name) != name:
+            if not name or name in (".", "..") or "/" in name or "\\" in name:
                 continue
             path = os.path.join(item_dir, name)
             try:

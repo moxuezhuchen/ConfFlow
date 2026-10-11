@@ -195,10 +195,10 @@ def test_b1_contract_boundary_bytes_unchanged() -> None:
     # R2.2 声明重钉(叠加 R2.0-logic energies 白名单)：contract 随暴露面收缩与 energies 更新，boundary 不变。
     # N3 声明新增：structure_transform 新增 results 输入端口 + filter 参数
     # schema（旧条目保留，摘要更新；boundary 不变）。
-    # N4 声明新增(叠加 N2 声明：script 能力+script_steps 静态段)：recipe 目录 +1（ensemble_refine；json_paths_diff 证明相对
-    # main 只新增条目，boundary 不变）。
+    # PR146 adds optional frequency values/count and artifact step/work-item metadata;
+    # boundary bytes remain unchanged.
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(env)).hexdigest() == (
-        "sha256:d9bf0195f0a6f174be0c7f0e0a3b1942106effc8572979327f7d5a1b709ba25b"
+        "sha256:43a4025acea31970bee9edc5aed002227eb09c9433ba7e10a8fb74ceab4d0d39"
     )
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(bdoc)).hexdigest() == (
         "sha256:ff7491007ffd37e4e688e9dd1c73aba5301ccd699f9610d060bd2029cf370f27"
