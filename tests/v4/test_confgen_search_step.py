@@ -280,7 +280,10 @@ def test_metal_search_completed(tmp_path: Path) -> None:
     assert all(r.charge == 0 and r.multiplicity == 1 for r in out.structures)
     first_meta = dict(out.structures[0].metadata)
     assert first_meta[CONFORMER_MEMBER_METADATA_KEY] == 0 and first_meta["seed"] == 7
-    assert first_meta["rel_kcal"] == 0.0 and first_meta["search_target"].startswith("t")
+    assert first_meta["rel_kcal"] == 0.0
+    assert first_meta["search_target"] in {"ref", "t00", "t01", "t02"}
+    actual = {dict(r.metadata)["search_actual_target"] for r in out.structures}
+    assert actual <= {"t00", "t01", "t02"} and None not in actual
     energies = [dict(r.metadata)["energy_eh"] for r in out.structures]
     assert energies == sorted(energies)
     assert len(out.results) == 0
@@ -297,6 +300,7 @@ def test_metal_free_search_completed(tmp_path: Path) -> None:
     assert out.status.value == "completed", [str(d.message) for d in out.diagnostics]
     assert len(out.structures) >= 1 and len(out.results) == 0
     assert all(tuple(r.atoms) == tuple(driving.atoms) for r in out.structures)
+    assert all(dict(r.metadata)["search_actual_target"] is None for r in out.structures)
 
 
 def test_zero_passing_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -306,6 +310,29 @@ def test_zero_passing_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     errors = [d for d in out.diagnostics if d.is_error]
     assert len(errors) == 1 and "converged=6" in errors[0].message
     assert _summary(out, tmp_path)["totals"]["passed"] == 0
+
+
+def test_reference_only_search_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A passing reference alone is not a search success: the item fails with the starts count."""
+    native, driving = _native(), _driving_metal()
+    item = _item("cg-item", [driving])
+    ctx = _ctx(_sci(native), str(tmp_path), _write_fake(tmp_path))
+    rundir = Path(ctx.attempt_dir(item)) / "search_run"
+
+    def _launch(*args: Any, **kwargs: Any) -> Any:
+        rundir.mkdir(parents=True, exist_ok=True)
+        rows = [{"target": "ref", "start": 0, "passed": True, "failed_checks": []}]
+        totals = {"targets": 3, "generated": 6, "relaxed": 6, "passed": 1, "reference_passed": 1}
+        summary = {"targets": [], "structures": rows, "fragment_charges": [], "totals": totals}
+        (rundir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+        ended = NativeExecutionResult(exit_code=2, wall_time_seconds=0.1, timed_out=False)
+        return (ended, None)
+
+    monkeypatch.setattr(WorkItemExecutor, "launch_and_wait", _launch)
+    out = ConfgenExecutor().execute(item, ctx)
+    assert out.status.value == "failed"
+    assert "relaxed 6 starts but none passed" in out.diagnostics[0].message
+    assert not (rundir / "structures.xyz").exists()
 
 
 def test_missing_binding_failed_before_launch(tmp_path: Path) -> None:

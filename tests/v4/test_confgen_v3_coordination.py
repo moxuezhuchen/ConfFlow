@@ -182,6 +182,21 @@ def test_shape_groups_have_expected_orders_and_axioms() -> None:
         assert axioms["has_identity"] and axioms["closed"] and axioms["has_inverses"], name
 
 
+def test_trigonal_prism_is_regular_with_three_vertex_angles() -> None:
+    """Regular prism: eclipsed, in-triangle, and remaining angles are all distinct."""
+    verts = shapes.get_shape("trigonal_prismatic").vertices
+
+    def _angle(i: int, j: int) -> float:
+        cos = float(
+            np.dot(verts[i], verts[j]) / np.linalg.norm(verts[i]) / np.linalg.norm(verts[j])
+        )
+        return float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))
+
+    assert _angle(0, 3) == pytest.approx(81.79, abs=0.05)  # eclipsed A0-B0
+    assert _angle(0, 1) == pytest.approx(81.79, abs=0.05)  # in-triangle A0-A1
+    assert _angle(0, 4) == pytest.approx(135.58, abs=0.05)  # remaining A0-B1
+
+
 def test_shape_class_counts_match_gates() -> None:
     for name, count in EXPECTED_CLASS_COUNTS.items():
         assert shapes.shape_class_count(name) == count, name

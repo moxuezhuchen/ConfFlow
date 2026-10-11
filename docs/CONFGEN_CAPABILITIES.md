@@ -37,7 +37,10 @@
    有金属时，每个策略过滤后的配位类各取若干出发（每类 `starts` 个），无金属时整体取 `starts` 个；
 3. 每个出发在 GFN2-xTB 下做受限松弛（金属–给体与反应对回到参考距离；无金属时只约束反应对；
    无任何约束时不向 xTB 传 `--input`）；
-4. 对每个松弛结构做 8 项审计（第 5 节），只写出全部通过的结构，按能量排序。
+4. 对每个松弛结构做 8 项审计（第 5 节），只写出全部通过的结构，按能量排序。通过的结构按其**实际**
+   被感知的配位类发布：即使它落入了另一个计划类，也照样发布；出发所属的目标保留为来源（第 6 节）。
+5. 输入结构本身作为额外的一个出发（来源标记 `ref`），在同样的约束下松弛、同样审计，作为普通候选参与排序。
+   它不是搜索出发，单独通过不算搜索成功（第 6 节）。
 
 搜索由 `confflow/science/confgen/search.py` 编排，worker 是被监督的子进程
 `confflow/execution/confgen_search_worker.py`，执行侧为 `confflow/execution/confgen_search_run.py`。
@@ -101,7 +104,7 @@ ConfFlow 不给出 DFT 能量。
 | --- | --- | --- |
 | `starts` | 声明了 `coordination` 时每个配位类 `8`；否则总计 `400` | DG 出发数 |
 | `small_ring_torsions` | `both` | 小环扭转开关：`both` 时前 `ceil(starts/2)` 个出发开、其余关；`on`/`off` 全局开或关 |
-| `embed_timeout_seconds` | `120` | 每个出发的 DG 嵌入超时（秒） |
+| `embed_timeout_seconds` | `120` | 逐起点的 DG 嵌入超时（秒）：每个出发单独一次 RDKit 调用；超时的出发被跳过，其余出发保留 |
 | `max_cycles` | `1000` | xTB 松弛最大循环数 |
 | `bond_scale` | `1.25` | 审计阶段重新感知键时的尺度（与 `tolerances.bond_scale` 独立） |
 | `fragment_charges` | `[]` | DG 片段电荷覆盖：`{atom, charge}`，`atom` 使用本步骤的 `index_base` |
@@ -129,7 +132,8 @@ worker 记录 xTB 的 `--version` 行到 `summary.json`。
 
 1. `converged`：xTB 收敛标记存在且 `xtbopt.xyz` 存在；
 2. `topology`：同规则感知的共价键集与参考一致（反应对不计入）；
-3. `coordination_class`：配位类无歧义地归一到被命令的类（无金属时 `skipped`）；
+3. `coordination_class`：配位类无歧义地归一到本次计划的某个目标类（即策略过滤后的目标集合，
+   因此禁止的反式配对所对应的类不在其中）；感知有歧义、或落在计划集合之外，判失败（无金属时 `skipped`）；
 4. `stereo`：只比参考上 RDKit 标出的真四面体手性中心（`DGSeedResult.stereo_centers`）的符号体积；
    CH2/CH3 的等价 H 互换不判失败；
 5. `reaction_distance`：反应对距离在参考的 ±0.02 Å 内；
@@ -140,17 +144,25 @@ worker 记录 xTB 的 `--version` 行到 `summary.json`。
 
 ## 6. 输出与退出语义
 
-- `structures.xyz`：通过的结构，按能量排序；注释行为
-  `target=<id> start=<n> energy_eh=<e> rel_kcal=<r>`。
+- `structures.xyz`：通过的结构（参考结构通过时也在内），按能量排序；注释行为
+  `target=<来源> start=<n> energy_eh=<e> rel_kcal=<r>`；实际类可判定时（有金属的搜索）末尾追加
+  ` actual=<实际目标>`，无金属时不追加。
 - `summary.json`：设置（含解析后的 `starts`、xTB 身份）、每个目标与出发的审计结果、
-  `fragment_charges`、汇总计数。
+  `fragment_charges`、汇总计数。每条结构记录带 `actual_target`（实际配位类对应的目标 id；
+  无金属时为 `null`）。每个目标的 `passed` 按来源计，只含搜索出发；`realized` 按实际类计，
+  即以该目标为实际类的通过结构数（含参考结构）。汇总 `totals` 中 `targets`、`generated`、`relaxed`
+  只计搜索出发，`passed` 包含参考结构，`reference_passed` 为参考结构通过时的 1，否则为 0。
 - worker 的 `stdout.log`、`stderr.log`（均为制品）。
 - 成员的 `role` 为 `conformer`，`ordinal` 为能量名次（0-based），id 按 `conformer_output_id`；
-  metadata 含 `seed`、`starts`、`energy_eh`、`rel_kcal`、`search_target`、`search_start`。
+  metadata 含 `seed`、`starts`、`energy_eh`、`rel_kcal`、`search_target`、`search_start`、
+  `search_actual_target`。`search_target` 是来源（参考结构为 `ref`），`search_actual_target` 是实际类
+  对应的目标（无金属时为 `null`）。
   搜索成员是普通结构，下游按导入结构消费，不带额外状态。
 
-退出：至少一个结构通过为 `COMPLETED`，附 INFO `confgen_completed`（生成、松弛、通过的数量，
-失败审计项直方图）；零通过为 `FAILED`，附一条 ERROR 并点名失败审计项直方图；
+退出：至少一个**搜索出发**通过为 `COMPLETED`，附 INFO `confgen_completed`（生成、松弛、通过的数量，
+失败审计项直方图）；零个搜索出发通过为 `FAILED`，附一条 ERROR 并点名失败审计项直方图（只统计搜索出发）。
+参考结构单独通过不算搜索成功：此时 worker 以退出码 2 结束、不写 `structures.xyz`，与零通过路径相同，
+错误信息仍报告搜索出发数（`relaxed N starts but none passed`）。
 worker 异常（包括 job 非法或 xTB 缺失）为 `FAILED`，附 stderr 尾部。
 
 续跑：出发目录内已有相同内容的 `done.json` 时自动跳过该出发。
@@ -178,6 +190,8 @@ ConfGen 的以下引擎与字段已删除，`schema_version: 4` 文档中出现�
   每个步骤恰好一个形状。第二个金属或多 hapto 配位无法表示，超出即 fail-closed。
 - 构象空间：没有环或扭转的专门采样；覆盖依赖 DG 出发数与 `small_ring_torsions`。
   `starts` 不足时可能漏掉低能构象（见第 3 节的召回测量）。
+- 参考结构：输入结构只是一个额外出发。若它在同样约束下松弛后通过审计，即参与排序，
+  因此输出不会劣于输入自身盆地的该极小点；它不增加构象覆盖，也不能单独构成搜索成功。
 - 能量：只有 xTB（GFN2）松弛后的能量，无 DFT 能量，无加权玻尔兹曼统计。
 - Freeze：ConfGen 不支持 `freeze`，非空即拒绝。
 - `fragment_charges` 是启发式覆盖，需要用户确认。

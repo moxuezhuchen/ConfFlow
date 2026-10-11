@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
@@ -15,8 +15,8 @@ from confflow.science.confgen.graph import CoordinationSpec, TypedGraph
 from confflow.science.data import get_atomic_number
 
 __all__ = (
-    "CHECKS AuditRecord RelaxOutcome SearchCancelled SearchError SearchRecord SearchRun "
-    "SearchSettings SearchStart SearchStarts SearchTarget audit_structure "
+    "CHECKS REFERENCE_TARGET AuditRecord RelaxOutcome SearchCancelled SearchError SearchRecord "
+    "SearchRun SearchSettings SearchStart SearchStarts SearchTarget audit_structure "
     "distance_restraints generate_starts plan_targets run_search"
 ).split()
 
@@ -26,6 +26,8 @@ CHECKS = tuple(
 )
 _SKIPPED_FREE = ("coordination_class", "metal_donor_distance", "donor_orientation")
 _R_TOL, _MD_TOL, _C_SCALE, _D_TOL = 0.02, 0.03, 0.70, 30.0
+#: Start label of the input structure relaxed under the same restraints; not a planned target.
+REFERENCE_TARGET = "ref"
 
 
 def _signed_volume(coords: np.ndarray, center: int, neighbors: Sequence[int]) -> float:
@@ -68,6 +70,7 @@ class SearchTarget:
     passed: int = 0
     error: str | None = None
     command: tuple[int, ...] = ()
+    realized: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -77,6 +80,7 @@ class SearchTarget:
             "trans_pairs": [[a, b] for a, b in self.trans_pairs],
             "relaxed": int(self.relaxed),
             "passed": int(self.passed),
+            "realized": int(self.realized),
             "error": self.error,
         }
 
@@ -101,6 +105,7 @@ class SearchStarts:
 class AuditRecord:
     failed_checks: tuple[str, ...] = ()
     skipped_checks: tuple[str, ...] = ()
+    actual_class: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +128,7 @@ class SearchRecord:
     skipped_checks: tuple[str, ...] = ()
     wall_s: float = 0.0
     coords: np.ndarray | None = None
+    actual_target: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -134,6 +140,7 @@ class SearchRecord:
             "wall_s": float(self.wall_s),
             "small_ring_torsions": bool(self.small_ring_torsions),
             "skipped_checks": [str(n) for n in self.skipped_checks],
+            "actual_target": self.actual_target,
         }
 
 
@@ -322,6 +329,8 @@ def audit_structure(
     stereo_centers: Sequence[int] = (),
     converged: bool = True,
     bond_scale: float = 1.25,
+    *,
+    allowed: Collection[tuple[int, ...]] | None = None,
 ) -> AuditRecord:
     ref = np.asarray(reference, dtype=float)
     new = np.asarray(coords, dtype=float)
@@ -338,19 +347,21 @@ def audit_structure(
     if "topology" not in failed and new_bonds != ref_bonds:
         failed.append("topology")
     donors: list[int] = []
+    actual: tuple[int, ...] | None = None
     if metal is not None:
         if spec is None or shape is None:
             raise SearchError("metal-bearing audit needs a coordination spec and shape")
         donors = list(spec.donor_indices)
         sites = [site.id for site in spec.binding_sites]
         group = shapes.proper_rotation_group(shape)
+        wanted = {tuple(commanded)} if allowed is None else {tuple(c) for c in allowed}
         try:
             seen = perception.perceive_donors(new, metal, donors, sites, shape)
             got = enumeration.canonical_representative(tuple(seen.best_class), group)
-            ok = bool(seen.unambiguous) and got == tuple(commanded)
+            actual = got if seen.unambiguous else None
         except ValueError:
-            ok = False
-        if not ok:
+            actual = None
+        if actual is None or actual not in wanted:
             failed.append("coordination_class")
     adj = _adjacency(len(elements), ref_bonds, metal)
     stereo = True
@@ -403,7 +414,7 @@ def audit_structure(
     if clash:
         failed.append("contacts")
     skipped = () if metal is not None else _SKIPPED_FREE
-    return AuditRecord(tuple(n for n in CHECKS if n in failed), tuple(skipped))
+    return AuditRecord(tuple(n for n in CHECKS if n in failed), tuple(skipped), actual)
 
 
 RelaxFn = Callable[
@@ -428,42 +439,91 @@ def run_search(
     _poll(should_cancel)
     found = generate_starts(graph, spec, reference, shape, targets, settings)
     _poll(should_cancel)
+    ref_start = SearchStart(REFERENCE_TARGET, 0, np.asarray(reference, dtype=float), False)
+    starts = (*found.starts, ref_start)
     restraints = distance_restraints(graph, spec, reference)
-    outcomes = relax(found.starts, restraints)
-    if len(outcomes) != len(found.starts):
-        raise SearchError(f"relax returned {len(outcomes)} outcomes for {len(found.starts)} starts")
+    outcomes = relax(starts, restraints)
+    if len(outcomes) != len(starts):
+        raise SearchError(f"relax returned {len(outcomes)} outcomes for {len(starts)} starts")
     _poll(should_cancel)
     commanded = {t.id: t.command for t in targets}
+    planned = {t.command for t in targets}
+    class_target = {t.command: t.id for t in targets}
     centers, scale = found.stereo_centers, settings.bond_scale
     skipped = () if graph.metal_center is not None else _SKIPPED_FREE
     failures = dict(found.failures)
     tallies = {t.id: [0, 0, 0] for t in targets}
+    realized = {t.id: 0 for t in targets}
     records: list[SearchRecord] = []
-    for start, outcome in zip(found.starts, outcomes):
+    for start, outcome in zip(starts, outcomes):
         new = outcome.coords
-        tallies[start.target][0] += 1
+        is_ref = start.target == REFERENCE_TARGET
+        if not is_ref:
+            tallies[start.target][0] += 1
+        actual: tuple[int, ...] | None = None
         if new is None:
             bad: tuple[str, ...] = ("converged",)
         else:
-            tallies[start.target][1] += 1
-            cmd = commanded.get(start.target, ())
-            bad = audit_structure(
-                new, graph, spec, reference, shape, cmd, centers, outcome.converged, scale
-            ).failed_checks
+            if not is_ref:
+                tallies[start.target][1] += 1
+            cmd = () if is_ref else commanded.get(start.target, ())
+            audit = audit_structure(
+                new,
+                graph,
+                spec,
+                reference,
+                shape,
+                cmd,
+                centers,
+                outcome.converged,
+                scale,
+                allowed=planned,
+            )
+            bad, actual = audit.failed_checks, audit.actual_class
         ok = not bad
-        if ok:
+        if ok and not is_ref:
             tallies[start.target][2] += 1
+        actual_target = class_target.get(actual) if actual is not None else None
+        if ok and actual_target is not None:
+            realized[actual_target] += 1
         target, index, flag = start.target, start.index, start.small_ring_torsions
         energy, wall = outcome.energy_eh, float(outcome.wall_s)
         records.append(
-            SearchRecord(target, index, flag, energy, ok, bad, skipped, wall, new if ok else None)
+            SearchRecord(
+                target,
+                index,
+                flag,
+                energy,
+                ok,
+                bad,
+                skipped,
+                wall,
+                new if ok else None,
+                actual_target,
+            )
         )
     _poll(should_cancel)
     done = []
     for t in targets:
         g, r, p = tallies[t.id]
-        done.append(replace(t, generated=g, relaxed=r, passed=p, error=failures.get(t.id)))
+        done.append(
+            replace(
+                t,
+                generated=g,
+                relaxed=r,
+                passed=p,
+                error=failures.get(t.id),
+                realized=realized[t.id],
+            )
+        )
     passing = tuple(sorted((r for r in records if r.passed), key=_energy_key))
     relaxed = sum(t.relaxed for t in done)
-    totals = dict(targets=len(done), generated=len(records), passed=len(passing), relaxed=relaxed)
+    reference_passed = sum(1 for r in records if r.target == REFERENCE_TARGET and r.passed)
+    totals = dict(
+        targets=len(done),
+        generated=len(found.starts),
+        passed=len(passing),
+        relaxed=relaxed,
+        reference_passed=reference_passed,
+    )
     return SearchRun(tuple(done), tuple(records), passing, tuple(settings.fragment_charges), totals)

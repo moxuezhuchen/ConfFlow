@@ -143,15 +143,17 @@ def _square_pyramidal_vertices() -> np.ndarray:
 
 
 def _trigonal_prismatic_vertices() -> np.ndarray:
-    # Eclipsed triangles at z = +/-h; no trans pairs.
+    # Eclipsed triangles at z = +/-h; no trans pairs.  Regular prism: the
+    # square side 2h equals the triangle edge sqrt(3) for unit circumradius.
+    h = math.sqrt(3.0) / 2.0
     angles = [
         math.pi / 2.0,
         math.pi / 2.0 + 2.0 * math.pi / 3.0,
         math.pi / 2.0 + 4.0 * math.pi / 3.0,
     ]
     verts = np.array(
-        [[math.cos(a), math.sin(a), 0.35] for a in angles]
-        + [[math.cos(a), math.sin(a), -0.35] for a in angles]
+        [[math.cos(a), math.sin(a), h] for a in angles]
+        + [[math.cos(a), math.sin(a), -h] for a in angles]
     )
     return _normalize_rows(verts)
 
