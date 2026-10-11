@@ -305,6 +305,32 @@ def _perceive_fragment(
     return orders, charges, picked_charge
 
 
+def _embed_singly(
+    mol: Any, requested: int, params: Any, cause: Exception
+) -> tuple[np.ndarray, ...]:
+    """Embed the starts one at a time after the batch call raised.
+
+    RDKit aborts a whole ``EmbedMultipleConfs`` batch when one conformer hits
+    an internal invariant, so the remaining starts are recovered singly and
+    the failing ones are skipped.
+    """
+    from rdkit.Chem import rdDistGeom
+
+    base = int(params.randomSeed)
+    found: list[np.ndarray] = []
+    for offset in range(requested):
+        params.randomSeed = (base * (offset + 1) + offset) % (2**31 - 1)
+        try:
+            conf_id = int(rdDistGeom.EmbedMolecule(mol, params))
+        except Exception:
+            continue
+        if conf_id >= 0:
+            found.append(np.array(mol.GetConformer(conf_id).GetPositions(), dtype=float))
+    if not found:
+        raise DGSeedError(f"RDKit embedding failed: {cause}") from cause
+    return tuple(found)
+
+
 def generate_dg_seeds(
     graph: TypedGraph,
     spec: CoordinationSpec | None,
@@ -478,12 +504,13 @@ def generate_dg_seeds(
     try:
         conf_ids = rdDistGeom.EmbedMultipleConfs(mol, requested, params)
     except Exception as exc:
-        raise DGSeedError(f"RDKit embedding failed: {exc}") from exc
-    starts = tuple(
-        np.array(mol.GetConformer(int(conf_id)).GetPositions(), dtype=float)
-        for conf_id in conf_ids
-        if int(conf_id) >= 0
-    )
+        starts = _embed_singly(mol, requested, params, exc)
+    else:
+        starts = tuple(
+            np.array(mol.GetConformer(int(conf_id)).GetPositions(), dtype=float)
+            for conf_id in conf_ids
+            if int(conf_id) >= 0
+        )
     return DGSeedResult(
         coords=starts,
         requested=requested,

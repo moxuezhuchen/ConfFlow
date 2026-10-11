@@ -1,5 +1,7 @@
 # ConfGen v3 upgrade execution plan
 
+> superseded 2026-10-11: ConfGen now has a single DG search engine (schema_version 4); the ring, torsion, path and coordination-realization engines and their gates described here no longer exist.
+
 Status: implementation, independent-review fixes and final scoped validation completed locally (2026-10-01). See `confgen-v3-validation.md` for current evidence and explicit limits.
 
 ## Authority and delivery scope

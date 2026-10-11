@@ -53,19 +53,15 @@ _CALC_EXPOSED = [
 _CALC_REQUIRED = ["calc.program", "calc.native"]
 
 
-_CONFGEN_V3_EXPOSED = [
+_CONFGEN_V4_EXPOSED = [
     "confgen.seed",
-    "confgen.v3.coordination",
-    "confgen.v3.rings",
-    "confgen.v3.torsions",
-    "confgen.v3.topology",
-    "confgen.v3.sampling",
-    "confgen.v3.limits",
-    "confgen.v3.tolerances",
-    "confgen.v3.exclusions",
+    "confgen.v4.coordination",
+    "confgen.v4.topology",
+    "confgen.v4.tolerances",
+    "confgen.v4.search",
 ]
 
-_CONFGEN_V3_REQUIRED = ["confgen.v3.torsions"]
+_CONFGEN_V4_REQUIRED = ["confgen.seed", "confgen.v4.search"]
 
 
 _FILTER_EXPOSED = [
@@ -79,22 +75,21 @@ _FILTER_EXPOSED = [
 _FILTER_REQUIRED = ["filter.energy_window_kcal", "filter.lowest_n"]
 
 
-def _confgen_v3_recipe() -> dict[str, Any]:
-    """Build the typed ConfGen v3 torsion-scan recipe.
+def _confgen_search_recipe() -> dict[str, Any]:
+    """Build the typed ConfGen v4 DG-search recipe.
 
-    A deterministic starting point (no sampling cap, hence no seed): one
-    relative-rotation grid over the first declared bond. The user must
-    confirm the bond selection fits their seed structures; the executor
-    fails closed on unbonded or ring bonds. Adding a ``sampling`` cap
-    requires setting the step ``seed`` (the sole stochastic authority).
+    A small starting point (explicit seed, the sole stochastic authority,
+    plus an explicit small start count). The user must confirm the seed and
+    the start count fit their system; the step runs the DG search through
+    restrained xTB relaxation and audit.
     """
     return {
-        "id": "confgen_torsion",
-        "label": "ConfGen Torsion Scan",
+        "id": "confgen_search",
+        "label": "ConfGen DG Search",
         "description": (
-            "Typed ConfGen v3 torsion ensemble over one declared bond grid "
-            "(deterministic full grid; add a sampling cap plus seed for "
-            "capped subsets). Confirm the bond selection for each structure."
+            "Typed ConfGen v4 DG-search ensemble over the input structures "
+            "(explicit seed plus a small explicit start count). Confirm the "
+            "seed and the start count for each system."
         ),
         "category": "Conformers",
         # Root decision: the original recipes keep their orders; the new card
@@ -104,31 +99,24 @@ def _confgen_v3_recipe() -> dict[str, Any]:
             [
                 {
                     "id": "confgen",
-                    "label": "Torsion scan",
+                    "label": "DG search",
                     "executor": "confgen",
                     "bindings": _run_binding(),
                     "confgen": {
-                        "schema_version": 3,
-                        "torsions": [
-                            {
-                                "id": "t1",
-                                "bond": [1, 2],
-                                "model": "relative_rotation_grid",
-                                "angles": [0, 120, 240],
-                                "treatment": "enumerate",
-                            }
-                        ],
+                        "schema_version": 4,
+                        "seed": 1,
+                        "search": {"starts": 8},
                     },
                 }
             ]
         ),
-        "required_fields": list(_CONFGEN_V3_REQUIRED),
-        "exposed_fields": list(_CONFGEN_V3_EXPOSED),
+        "required_fields": list(_CONFGEN_V4_REQUIRED),
+        "exposed_fields": list(_CONFGEN_V4_EXPOSED),
     }
 
 
 def _monomer_conformers_recipe() -> dict[str, Any]:
-    """Build the XTB2-preopt -> ConfGen(ring+torsion) -> dedup recipe."""
+    """Build the XTB2-preopt -> ConfGen(search) -> dedup recipe."""
     preopt = _calc_step(
         "preopt",
         program="orca",
@@ -140,34 +128,16 @@ def _monomer_conformers_recipe() -> dict[str, Any]:
     )
     confgen: dict[str, Any] = {
         "id": "confgen",
-        "label": "Ring+torsion ensemble",
+        "label": "DG-search ensemble",
         "executor": "confgen",
         "bindings": {"structure": {"source": {"step": "preopt", "port": "structures"}}},
         "confgen": {
-            "schema_version": 3,
-            # EXAMPLE AXES -- USER MUST CONFIRM/REPLACE. The example fits a
-            # propyl-cyclohexane-like 9-heavy-atom seed (isolated 6-ring
-            # 1-6 plus acyclic propyl tail 7-9; torsion 7-8 keeps a
-            # measurable 6-7-8-9 dihedral frame). Replace both axes with the
-            # user-confirmed ring/torsion declarations; empty axes are not a
-            # success signal.
-            "rings": [
-                {
-                    "id": "r1",
-                    "atoms": [1, 2, 3, 4, 5, 6],
-                    "templates": ["chair_A_6"],
-                    "treatment": "enumerate",
-                }
-            ],
-            "torsions": [
-                {
-                    "id": "t1",
-                    "bond": [7, 8],
-                    "model": "relative_rotation_grid",
-                    "angles": [0, 120, 240],
-                    "treatment": "enumerate",
-                }
-            ],
+            "schema_version": 4,
+            # EXAMPLE SEARCH -- USER MUST CONFIRM. The DG search runs
+            # restrained xTB relaxation plus audit over the given starts;
+            # confirm the seed and the start count for each system.
+            "seed": 1,
+            "search": {"starts": 8},
         },
     }
     dedup: dict[str, Any] = {
@@ -181,23 +151,23 @@ def _monomer_conformers_recipe() -> dict[str, Any]:
         "id": "monomer_conformers",
         "label": "Monomer Conformers (XTB2 preopt)",
         "description": (
-            "ORCA XTB2 pre-optimization into a typed ConfGen ring+torsion "
-            "ensemble plus deduplication. Confirm/replace the example ring "
-            "(r1) and torsion (t1) axes for each seed structure; the ConfGen "
-            "step consumes the preopt optimized product."
+            "ORCA XTB2 pre-optimization into a typed ConfGen DG-search "
+            "ensemble plus deduplication. Confirm the seed and the start "
+            "count for each system; the ConfGen step consumes the preopt "
+            "optimized product."
         ),
         "category": "Conformers",
         # Root decision: original recipes keep their orders; the new card goes
-        # last in catalog list order, so its order sits above confgen_torsion.
+        # last in catalog list order, so its order sits above confgen_search.
         "order": 130,
         "document": _document([preopt, confgen, dedup]),
         "required_fields": [
             "calc.program",
             "calc.native",
-            "confgen.v3.rings",
-            "confgen.v3.torsions",
+            "confgen.seed",
+            "confgen.v4.search",
         ],
-        "exposed_fields": list(_CALC_EXPOSED) + list(_CONFGEN_V3_EXPOSED),
+        "exposed_fields": list(_CALC_EXPOSED) + list(_CONFGEN_V4_EXPOSED),
     }
 
 
@@ -436,7 +406,7 @@ def _recipes() -> list[dict[str, Any]]:
             checks=["normal_termination", "imaginary_frequency_count"],
             check_params={"imaginary_frequency_count": {"expected": 1}},
         ),
-        _confgen_v3_recipe(),
+        _confgen_search_recipe(),
         _monomer_conformers_recipe(),
         _ensemble_refine_recipe(),
     ]
@@ -449,7 +419,7 @@ RECIPE_IDS_V4: tuple[str, ...] = (
     "frequency",
     "opt_freq",
     "transition_state",
-    "confgen_torsion",
+    "confgen_search",
     "monomer_conformers",
     "ensemble_refine",
 )

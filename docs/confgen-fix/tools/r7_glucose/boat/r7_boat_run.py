@@ -56,8 +56,6 @@ DRAFT_FILE = Path(
 )
 
 sys.path.insert(0, str(REPO_ROOT))
-from confflow.core.io import read_xyz_file  # noqa: E402
-from confflow.domain.structure import StructureRecord  # noqa: E402
 from confflow.science.confgen.engine import ConfgenEngine  # noqa: E402
 from confflow.science.confgen.model import build_context  # noqa: E402
 from confflow.science.confgen.ring.puckering import (  # noqa: E402
@@ -65,6 +63,9 @@ from confflow.science.confgen.ring.puckering import (  # noqa: E402
     cp_distance,
     cremer_pople,
 )
+
+from confflow.core.io import read_xyz_file  # noqa: E402
+from confflow.domain.structure import StructureRecord  # noqa: E402
 
 CSV = OUT / "csv"
 OUT.mkdir(parents=True, exist_ok=True)

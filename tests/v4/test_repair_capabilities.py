@@ -250,18 +250,15 @@ class TestSeedValidation:
     def test_confgen_seed_rules_preserved(self) -> None:
         bindings = {"structure": {"source": {"run": "structures"}}}
 
-        def doc_with(seed: int | None, *, cap: int | None) -> dict:
+        def doc_with(seed: int | None) -> dict:
             step = confgen_step("s_conf", bindings=bindings, seed=seed)
-            if cap is not None:
-                step["confgen"]["sampling"] = {"cap": cap}
             return v4_doc([step], inputs=STRUCTURE_INPUTS)
 
-        # v3 rule: full enumeration needs no seed; capped sampling does.
-        assert compile_doc(doc_with(None, cap=None)).ok
-        bad = compile_doc(doc_with(None, cap=3))
+        # v4 rule: the DG search is stochastic, so a seed is always required.
+        bad = compile_doc(doc_with(None))
         assert not bad.ok
-        assert "invalid_value" in reasons(bad.errors)
-        assert compile_doc(doc_with(7, cap=3)).ok
+        assert "missing_required_member" in reasons(bad.errors)
+        assert compile_doc(doc_with(7)).ok
 
 
 class TestNativeModeProfileCombinations:

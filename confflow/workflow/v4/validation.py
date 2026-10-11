@@ -249,13 +249,8 @@ def resolve_step_input_ports(
 
 def _confgen_seed_requirement(native: Any) -> str | None:
     """Return why a confgen step needs a seed, or ``None`` when deterministic."""
-    if isinstance(native, Mapping) and native.get("schema_version") == 3:
-        sampling = native.get("sampling") or {}
-        if isinstance(sampling, Mapping) and sampling.get("cap") is not None:
-            return "v3 sampling cap requires an explicit top-level seed"
-        if native.get("search") is not None:
-            return "v3 search requires an explicit top-level seed"
-        return None
+    if isinstance(native, Mapping) and native.get("schema_version") == 4:
+        return "v4 search requires an explicit top-level seed"
     return "legacy confgen requires an explicit seed"
 
 

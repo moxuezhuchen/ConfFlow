@@ -1,48 +1,61 @@
-"""Typed v3 scope rejects ambiguous input before geometry generation."""
+"""Typed v4 scope rejects ambiguous input before geometry generation."""
 
 import json
 
 import pytest
 from pydantic import ValidationError
 
-from confflow.science.confgen.planner import normalize_spec
+from confflow.science.confgen.search_spec import normalize_search_spec
 from confflow.workflow.v4.confgen_schema import ConfgenModelV3
 from confflow.workflow.v4.schema import StepModel
 
 
 def declaration():
     return {
-        "schema_version": 3,
-        "torsions": [
-            {
-                "id": "T1",
-                "atoms": [1, 2, 3, 4],
-                "model": "absolute_dihedral_grid",
-                "angles": [60, 180, 300],
-            }
-        ],
+        "schema_version": 4,
+        "seed": 7,
+        "topology": {"add_bond": [[1, 2]]},
     }
 
 
 def test_typed_scope_normalizes_all_indices_once():
-    model = ConfgenModelV3.model_validate(declaration())
-    once = normalize_spec(model.scientific_native())
-    assert once["torsions"][0]["atoms"] == [0, 1, 2, 3]
-    assert normalize_spec(once) == once
-    assert "overrides" not in once
+    model = ConfgenModelV3.model_validate(
+        {
+            "schema_version": 4,
+            "seed": 7,
+            "coordination": {
+                "metal_center": 1,
+                "binding_sites": [
+                    {"id": "a", "atoms": [2]},
+                    {"id": "b", "atoms": [3]},
+                    {"id": "c", "atoms": [4]},
+                    {"id": "d", "atoms": [5]},
+                ],
+                "shapes": ["square_planar"],
+            },
+            "topology": {"add_bond": [[1, 2]]},
+        }
+    )
+    once = normalize_search_spec(model.scientific_native())
+    assert once["coordination"]["metal_center"] == 0
+    assert once["coordination"]["binding_sites"][0]["atoms"] == [1]
+    assert once["topology"]["add_bond"] == [[0, 1]]
+    assert normalize_search_spec(once) == once
 
 
 @pytest.mark.parametrize(
     "changes",
     [
-        {"schema_version": 3.0},
+        {"schema_version": 3},
+        {"schema_version": 4.0},
         {"index_base": True},
         {"seed": True},
-        {"sampling": {"cap": True}},
-        {"sampling": {"cap": 4, "seed": 1}},
+        {"sampling": {"cap": 4}},
         {"limits": {"max_declared_states": 0}},
-        {"tolerances": {"clash_threshold": float("nan")}},
-        {"rings": [{"id": "r1", "atoms": [1, 2, 3, 4], "hidden_option": 1}]},
+        {"tolerances": {"clash_threshold": 0.5}},
+        {"rings": [{"id": "r1", "atoms": [1, 2, 3, 4]}]},
+        {"torsions": [{"id": "t1", "bond": [1, 2]}]},
+        {"paths": [{"start": 1, "end": 2, "move": "start"}]},
         {"native": {"chains": ["1-2-3-4"]}},
     ],
 )
@@ -60,17 +73,16 @@ def test_step_accepts_typed_definitions_and_rejects_legacy_native():
     assert isinstance(typed.confgen, ConfgenModelV3)
 
 
-def test_sampling_uses_step_seed_only():
-    model = ConfgenModelV3.model_validate({**declaration(), "seed": 7, "sampling": {"cap": 2}})
-    normalized = normalize_spec(model.scientific_native())
-    assert normalized["seed"] == 7
-    assert normalized["sampling"]["cap"] == 2
+def test_seed_is_required():
+    with pytest.raises(ValidationError):
+        ConfgenModelV3.model_validate({"schema_version": 4})
 
 
 def test_topology_add_bond_accepts_typed_forming():
     model = ConfgenModelV3.model_validate(
         {
-            "schema_version": 3,
+            "schema_version": 4,
+            "seed": 7,
             "index_base": 1,
             "topology": {"add_bond": [[1, 2], {"atoms": [2, 3], "kind": "FORMING"}]},
         }
@@ -91,13 +103,14 @@ def test_topology_add_bond_accepts_typed_forming():
     ):
         with pytest.raises(ValidationError):
             ConfgenModelV3.model_validate(
-                {"schema_version": 3, "index_base": 1, "topology": {"add_bond": [bad]}}
+                {"schema_version": 4, "seed": 7, "index_base": 1, "topology": {"add_bond": [bad]}}
             )
     # del_bond stays plain pairs only: typed entries are refused there.
     with pytest.raises(ValidationError):
         ConfgenModelV3.model_validate(
             {
-                "schema_version": 3,
+                "schema_version": 4,
+                "seed": 7,
                 "index_base": 1,
                 "topology": {"del_bond": [{"atoms": [1, 2], "kind": "FORMING"}]},
             }
@@ -111,7 +124,7 @@ _PLAIN_ADD_BOND_WIRE = '{"add_bond": [[1, 2]], "atoms": []}'
 
 def test_plain_pair_add_bond_wire_stable():
     model = ConfgenModelV3.model_validate(
-        {"schema_version": 3, "index_base": 1, "topology": {"add_bond": [[1, 2]]}}
+        {"schema_version": 4, "seed": 7, "index_base": 1, "topology": {"add_bond": [[1, 2]]}}
     )
     assert json.dumps(model.scientific_native()["topology"], sort_keys=True) == (
         _PLAIN_ADD_BOND_WIRE

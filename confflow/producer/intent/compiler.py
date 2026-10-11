@@ -52,16 +52,10 @@ def __getattr__(name: str) -> Any:
         from .capabilities.calculation import _wire_calculation as _wc
 
         return {"_resolve_program": _rp, "_wire_calculation": _wc}[name]
-    if name in (
-        "_LEGACY_PATH_SCOPE_KEYS",
-        "_LEGACY_PATH_KEYS",
-        "_LEGACY_DEFAULT_PATH_STEP",
-        "_legacy_paths_to_v3",
-        "_wire_confgen",
-    ):
+    if name == "_wire_confgen":
         from .capabilities import confgen as _cg
 
-        return getattr(_cg, name)
+        return _cg._wire_confgen
     if name == "_wire_transform":
         from .capabilities.transform import _wire_transform as _wt
 

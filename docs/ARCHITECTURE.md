@@ -2,8 +2,8 @@
 
 本文是当前代码结构的总览：有哪些包、各自负责什么、数据怎样从一份工作流文档流到结果、依赖规则由什么测试把关。
 工作流 V4 的逐项语义（digest 四轴、端口契约、持久化、remote、多输出……）见
-[`architecture/WORKFLOW_V4.md`](architecture/WORKFLOW_V4.md)；输入简化与 ConfGen paths 见
-[`PRODUCER_INTENT.md`](PRODUCER_INTENT.md) 与 [`CONFGEN_PATHS.md`](CONFGEN_PATHS.md)。代码和测试是第一权威。
+[`architecture/WORKFLOW_V4.md`](architecture/WORKFLOW_V4.md)；输入简化见 [`PRODUCER_INTENT.md`](PRODUCER_INTENT.md)，ConfGen 能力边界见
+[`CONFGEN_CAPABILITIES.md`](CONFGEN_CAPABILITIES.md)。代码和测试是第一权威。
 
 ## 1. 它是什么
 
@@ -24,7 +24,7 @@ confflow/
   workflow/v4/   V4 编译器：严格解析 → 语义校验 → 带类型的绑定图 → 不可变 ExecutionPlan → 合成 WorkItem
   execution/     能力注册表与各类执行器：calculation / confgen / structure_transform / script、
                  检查（checks）、恢复（recovery）、结果 profile、原生进程边界、批执行
-  science/       纯科学计算：ConfGen v3 引擎（扭转/环/配位）、工作拓扑权威、图同构映射、帧比较、键感知
+  science/       纯科学计算：ConfGen DG 搜索（`confgen/`：dg_seed、search、search_spec、topology、graph）、工作拓扑权威、图同构映射、帧比较、键感知
   programs/      量化程序适配器（Gaussian、ORCA）：输入渲染与输出解析
   persistence/   持久化：逐 work item 的 SQLite 存储、发布协议、复用判定、孤儿回收、run state
   application/   应用层：正式 V4 入口 `v4_entry`、整次运行 `v4_run`、执行服务与仓库（SQLite）
@@ -79,7 +79,7 @@ confflow/
 | `confflow v4 validate` | 对精确的工作流字节做 producer 校验 |
 | `confflow v4 contract --json` | 发布配置契约（`confflow.configuration-contract.v4`） |
 | `confflow v4 boundary --json` | 发布边界协议文档（`confflow.boundary.v4`） |
-| `confflow v4 authoring --json --stdin` | authoring 接口：`describe_step`、`binding_candidates`、`instantiate_card`、`validate_document`、`check_compatibility`、`compile_intent`、`preview_paths` |
+| `confflow v4 authoring --json --stdin` | authoring 接口：`describe_step`、`binding_candidates`、`instantiate_card`、`validate_document`、`check_compatibility`、`compile_intent` |
 | `confflow v4 canonical --json --stdin` | RFC 8785（JCS）规范化 |
 | `confflow --capabilities --json` | 能力握手 JSON |
 | `confflow-control-worker` | 控制协议 v1 的外部 worker |
@@ -100,8 +100,8 @@ confflow/
 
 ## 6. 科学包要点
 
-- **ConfGen v3**（`science/confgen/`）：条件式的 配位 → 环 → 扭转 树；每个目标以唯一终态结束；报告里区分
-  "带标号的状态数"和"最终发布的叶子数"。种子是唯一的随机性权威，缺失即编译错误（全枚举时不需要种子）。
+- **ConfGen**（`science/confgen/`）：唯一引擎是 DG 搜索（ETKDG 出发 → GFN2-xTB 受限松弛 → 八项审计）。
+  种子是唯一的随机性权威，缺失即编译错误。能力与配置见 [`CONFGEN_CAPABILITIES.md`](CONFGEN_CAPABILITIES.md)。
 - **工作拓扑权威**（`science/topology.py`）：结构记录自带 `working_topology` / `topology_patch`；
   ConfGen、refine、计算输出 profile 都经 `resolve_working_adjacency` 取同一份"预期共价图"，
   不再各自做感知加修正。spec 级拓扑声明与记录级权威同时出现会失败关闭。

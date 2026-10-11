@@ -1,9 +1,9 @@
 """FIX-1A POLICY-COMPAT regression (minimal, real scan entry only).
 
 Covers exactly:
-- contract.py uses ``default_registry`` (no ``build_default_registry``) and
+- contract.py names no ``build_default_registry`` and no confgen registry, and
   AP-090 is clean on the real tree;
-- AP-002 allows precisely ``confflow.science.confgen.registry`` in precisely
+- AP-002 allows precisely the search-spec and topology modules in precisely
   ``confflow/execution/transform_executor.py``, while other science modules
   and other files are still rejected;
 - the 15 SCANNER_PATTERNS are byte-identical (no widened licence).
@@ -28,11 +28,10 @@ def _write(root: Path, rel: str, content: str) -> None:
     p.write_text(content, encoding="utf-8")
 
 
-def test_contract_uses_default_registry_and_ap090_clean() -> None:
+def test_contract_uses_no_confgen_registry_and_ap090_clean() -> None:
     text = (_REAL_ROOT / "confflow/producer/contract.py").read_text(encoding="utf-8")
     assert "build_default_registry" not in text
-    assert "from ..science.confgen.registry import default_registry" in text
-    assert "registry = default_registry()" in text
+    assert "science.confgen.registry" not in text
     hits = [v for v in scan(_REAL_ROOT, rule_ids=("AP-090",)) if v["rule"] == "AP-090"]
     bad = [v for v in hits if v["path"] == "confflow/producer/contract.py"]
     assert bad == []
@@ -49,13 +48,13 @@ def test_ap002_other_science_module_still_rejected(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "confflow/execution/transform_executor.py",
-        "from confflow.science.confgen.planner import normalize_spec\n",
+        "from confflow.science.confgen.search import audit_structure\n",
     )
     hits = scan(tmp_path, rule_ids=("AP-002",))
     assert [(v["path"], v["detail"]) for v in hits if v["rule"] == "AP-002"] == [
         (
             "confflow/execution/transform_executor.py",
-            "confflow.science.confgen.planner",
+            "confflow.science.confgen.search",
         )
     ]
 
@@ -66,11 +65,11 @@ def test_ap002_same_module_in_other_file_still_rejected(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "confflow/execution/other_mod.py",
-        "from confflow.science.confgen.registry import resolve_registry\n",
+        "from confflow.science.confgen.topology import build_typed_graph\n",
     )
     hits = scan(tmp_path, rule_ids=("AP-002",))
     assert [(v["path"], v["detail"]) for v in hits if v["rule"] == "AP-002"] == [
-        ("confflow/execution/other_mod.py", "confflow.science.confgen.registry")
+        ("confflow/execution/other_mod.py", "confflow.science.confgen.topology")
     ]
 
 
@@ -83,21 +82,6 @@ def test_ap090_build_default_still_rejected_comment_silent(tmp_path: Path) -> No
     hits = scan(tmp_path, rule_ids=("AP-090",))
     by_path = sorted((v["path"], v["line"]) for v in hits if v["rule"] == "AP-090")
     assert by_path == [("confflow/producer/evil.py", 1)]
-
-
-def test_default_registry_equivalent_and_cached() -> None:
-    from confflow.science.confgen.registry import build_default_registry, default_registry
-
-    fresh = build_default_registry()
-    shared = default_registry()
-    assert fresh.ids() == shared.ids() == ("coordination", "rings", "torsions")
-    assert default_registry() is default_registry()
-    # Frozen: mutating a spec_default must fail or leave the cache unaffected.
-    try:
-        shared.descriptors[0].spec_defaults[0][1].append("X")  # type: ignore[attr-defined]
-    except Exception:
-        pass
-    assert default_registry().ids() == ("coordination", "rings", "torsions")
 
 
 def test_fifteen_patterns_byte_identical() -> None:
@@ -120,15 +104,17 @@ def test_fifteen_patterns_byte_identical() -> None:
     }
     precise = rule.get("exempt_precise_imports", {})
     assert precise == {
-        "confflow/execution/transform_executor.py": ["confflow.science.confgen.registry"],
+        "confflow/execution/transform_executor.py": [
+            "confflow.science.confgen.search_spec",
+            "confflow.science.confgen.topology",
+        ],
         "confflow/execution/confgen_search_worker.py": [
             "confflow.science.confgen.search",
-            "confflow.science.confgen.coordination.stage",
+            "confflow.science.confgen.search_spec",
             "confflow.science.confgen.graph",
         ],
         "confflow/execution/confgen_search_run.py": [
-            "confflow.science.confgen.coordination.stage",
-            "confflow.science.confgen.model",
+            "confflow.science.confgen.search_spec",
             "confflow.science.topology",
         ],
     }
