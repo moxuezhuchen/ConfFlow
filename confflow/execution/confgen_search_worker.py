@@ -182,7 +182,8 @@ def _xtb_version(exe: str) -> str:
 
 def _comment(r: search.SearchRecord, low: float) -> str:
     energy = float(r.energy_eh or 0.0)
-    return f"target={r.target} start={r.start} energy_eh={energy:.6f} rel_kcal={(energy - low) * HARTREE_TO_KCAL:.3f}"
+    text = f"target={r.target} start={r.start} energy_eh={energy:.6f} rel_kcal={(energy - low) * HARTREE_TO_KCAL:.3f}"
+    return text if r.actual_target is None else f"{text} actual={r.actual_target}"
 
 
 def _relax_one(exe: str, here: Path, xyz: np.ndarray, cfg: tuple[Any, ...]) -> search.RelaxOutcome:
@@ -297,7 +298,7 @@ def _run(job_path: str) -> int:
     summary = {"settings": settings_doc, **run.summary()}
     summary["xtb"] = {"executable": exe, "version": version}
     Path(job["summary_file"]).write_text(json.dumps(summary, sort_keys=True, indent=2) + "\n")
-    if not run.passing:
+    if not any(r.target != search.REFERENCE_TARGET for r in run.passing):
         sys.stderr.write("error: no structure passed all audit checks\n")
         return 2
     low = float(run.passing[0].energy_eh or 0.0)

@@ -136,6 +136,9 @@ def test_exit_zero_metal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     assert energies == sorted(energies)
     text = out.read_text(encoding="utf-8")
     assert [float(v) for v in re.findall(r"energy_eh=(\S+)", text)] == energies
+    assert re.findall(r"target=ref start=0 ", text) == ["target=ref start=0 "]
+    assert len(re.findall(r" actual=t\d\d\n", text)) == summary["totals"]["passed"]
+    assert summary["totals"]["reference_passed"] == 1
     cinp = next(work.glob("t*_s00/c.inp")).read_text(encoding="utf-8")
     assert cinp.startswith("$constrain\n  force constant=1.0\n") and cinp.endswith("$end\n")
     for donor in (2, 3, 4, 5):
@@ -144,7 +147,7 @@ def test_exit_zero_metal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         )
     assert f"  distance: 2, 4, {float(np.linalg.norm(ref[1] - ref[3])):.5f}" in cinp
     rows = [json.loads(line) for line in (tmp_path / "record.jsonl").read_text().splitlines()]
-    assert len(rows) == summary["totals"]["generated"]
+    assert len(rows) == summary["totals"]["generated"] + 1
     tail = ["in.xyz", "--gfn", "2", "--opt", "--input", "c.inp", "--chrg", "0", "--uhf", "0"]
     for row in rows:
         assert row["argv"] == [str(tmp_path / "fake_xtb.py")] + tail + ["--cycles", "1000"]
@@ -189,7 +192,8 @@ def test_resume_skips_xtb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     job, work, _, _ = _job(tmp_path, *_metal_parts(tmp_path))
     assert worker.main([job]) == 0
     first = (tmp_path / "count.txt").read_text(encoding="utf-8").count("x")
-    assert first == 3 and (work / "t00_s00" / "done.json").is_file()
+    assert first == 4 and (work / "t00_s00" / "done.json").is_file()
+    assert (work / "ref_s00" / "done.json").is_file()
     assert worker.main([job]) == 0
     assert (tmp_path / "count.txt").read_text(encoding="utf-8").count("x") == first
     (work / "t00_s00" / "done.json").write_text("corrupt", encoding="utf-8")
@@ -206,12 +210,18 @@ def test_exit_two_modes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     job, _, out, summary_path = _job(tmp_path, *base[:5], tag="n")
     assert worker.main([job]) == 2
     launches = (tmp_path / "count.txt").read_text(encoding="utf-8").count("x")
-    assert launches == 3
+    assert launches == 4
     assert worker.main([job]) == 2
     assert (tmp_path / "count.txt").read_text(encoding="utf-8").count("x") == launches
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert not out.exists()
-    assert summary["totals"] == {"generated": 3, "passed": 0, "relaxed": 0, "targets": 3}
+    assert summary["totals"] == {
+        "generated": 3,
+        "passed": 0,
+        "relaxed": 0,
+        "targets": 3,
+        "reference_passed": 0,
+    }
     assert all(r["failed_checks"] == ["converged"] for r in summary["structures"])
     monkeypatch.setenv("FAKE_XTB_MODE", "crash")
     job, _, _, summary_path = _job(tmp_path, *base[:5], tag="c")
@@ -391,6 +401,37 @@ def test_sigterm_subprocess(tmp_path: Path) -> None:
     interrupted = work / "t01_s00" / "done.json"
     if interrupted.is_file():
         assert json.loads(interrupted.read_text(encoding="utf-8"))["converged"] is False
+
+
+def test_reference_label_matches_search_module() -> None:
+    assert search_run._REFERENCE_TARGET == search.REFERENCE_TARGET == "ref"
+
+
+def test_reference_only_pass_is_not_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reference start may pass alone; the search still fails (exit 2, no structures)."""
+    els, ref = _toy()
+    broken = np.array(ref, copy=True)
+    broken[5] += (3.0, 0.0, 0.0)
+
+    def _broken(*args: Any, **kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(coords=(broken,) * args[-1].count, stereo_centers=())
+
+    monkeypatch.setattr(search, "generate_dg_seeds", _broken)
+    job, _, out, summary_path = _job(tmp_path, *_metal_parts(tmp_path))
+    assert worker.main([job]) == 2
+    assert not out.exists()
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["totals"] == {
+        "targets": 3,
+        "generated": 3,
+        "passed": 1,
+        "relaxed": 3,
+        "reference_passed": 1,
+    }
+    (ref_row,) = [r for r in summary["structures"] if r["target"] == "ref"]
+    assert ref_row["passed"] is True and ref_row["actual_target"] is not None
 
 
 def test_equal_energy_keeps_frame_metadata(tmp_path: Path) -> None:

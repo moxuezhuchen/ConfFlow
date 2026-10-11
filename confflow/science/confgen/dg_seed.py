@@ -65,10 +65,9 @@ class DGSeedSettings:
     fragment_charges : tuple[tuple[int, int], ...]
         ``(atom index of the fragment, charge)`` overrides.
     timeout_seconds : int
-        Maximum time in seconds to generate one conformer of one molecule
-        fragment (RDKit ETKDG ``params.timeout`` scope: per conformer per
-        fragment; 0 means no limit). A timeout never raises: embedding
-        returns the starts obtained so far (possibly none).
+        Maximum time in seconds per start (one conformer per RDKit call;
+        0 means no limit). A timed-out start is skipped and the other starts
+        are kept; a timeout never raises.
     """
 
     count: int = 20
@@ -305,29 +304,30 @@ def _perceive_fragment(
     return orders, charges, picked_charge
 
 
-def _embed_singly(
-    mol: Any, requested: int, params: Any, cause: Exception
-) -> tuple[np.ndarray, ...]:
-    """Embed the starts one at a time after the batch call raised.
+def _embed_per_start(mol: Any, requested: int, params: Any) -> tuple[np.ndarray, ...]:
+    """Embed the starts one conformer per RDKit call, each with its own seed.
 
-    RDKit aborts a whole ``EmbedMultipleConfs`` batch when one conformer hits
-    an internal invariant, so the remaining starts are recovered singly and
-    the failing ones are skipped.
+    ``params.timeout`` bounds a single call, so a timed-out, unembeddable, or
+    raising start is skipped and the others are kept. Each start is copied out
+    of the molecule immediately, before the next call adds a conformer. Only
+    when every attempt raised is the failure reported.
     """
     from rdkit.Chem import rdDistGeom
 
     base = int(params.randomSeed)
     found: list[np.ndarray] = []
+    raised: list[Exception] = []
     for offset in range(requested):
         params.randomSeed = (base * (offset + 1) + offset) % (2**31 - 1)
         try:
             conf_id = int(rdDistGeom.EmbedMolecule(mol, params))
-        except Exception:
+        except Exception as exc:
+            raised.append(exc)
             continue
         if conf_id >= 0:
             found.append(np.array(mol.GetConformer(conf_id).GetPositions(), dtype=float))
-    if not found:
-        raise DGSeedError(f"RDKit embedding failed: {cause}") from cause
+    if requested and len(raised) == requested:
+        raise DGSeedError(f"RDKit embedding failed: {raised[-1]}") from raised[-1]
     return tuple(found)
 
 
@@ -501,16 +501,7 @@ def generate_dg_seeds(
     params.SetBoundsMat(bounds)
     if core:
         params.SetCoordMap({i: Point3D(*targets[i]) for i in core})
-    try:
-        conf_ids = rdDistGeom.EmbedMultipleConfs(mol, requested, params)
-    except Exception as exc:
-        starts = _embed_singly(mol, requested, params, exc)
-    else:
-        starts = tuple(
-            np.array(mol.GetConformer(int(conf_id)).GetPositions(), dtype=float)
-            for conf_id in conf_ids
-            if int(conf_id) >= 0
-        )
+    starts = _embed_per_start(mol, requested, params)
     return DGSeedResult(
         coords=starts,
         requested=requested,

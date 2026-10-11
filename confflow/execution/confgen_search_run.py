@@ -46,6 +46,8 @@ from .xyz_import import import_xyz
 __all__ = ["run_search_item"]
 
 _HARTREE_TO_KCAL = 627.5094740631
+#: Reference-start label; equals ``search.REFERENCE_TARGET`` (pinned by a test).
+_REFERENCE_TARGET = "ref"
 
 
 class _ImportError(DomainError):
@@ -55,7 +57,7 @@ class _ImportError(DomainError):
 def _histogram(rows: Any) -> dict[str, int]:
     counts: dict[str, int] = {}
     for row in rows if isinstance(rows, list) else []:
-        if not isinstance(row, Mapping):
+        if not isinstance(row, Mapping) or row.get("target") == _REFERENCE_TARGET:
             continue
         for check in row.get("failed_checks", []) or []:
             counts[str(check)] = counts.get(str(check), 0) + 1
@@ -382,6 +384,7 @@ def _run(
                             "rel_kcal": (float(energy or 0.0) - low) * _HARTREE_TO_KCAL,
                             "search_target": rec.get("target"),
                             "search_start": rec.get("start"),
+                            "search_actual_target": rec.get("actual_target"),
                         }
                     ),
                     inherit_patch,

@@ -170,6 +170,19 @@ def test_rearranged_placements_embed_into_commanded_class() -> None:
             assert _perceived_class(start, spec) == wanted
 
 
+def test_trigonal_prismatic_bounds_do_not_fail_smoothing() -> None:
+    graph, spec, ref = _load_ts1()
+    classes = enumeration.enumerate_targets(spec, "trigonal_prismatic")["shape_classes"]
+    settings = DGSeedSettings(count=1, max_iterations=1, timeout_seconds=1)
+    for cls in classes[:3]:
+        try:
+            generate_dg_seeds(
+                graph, spec, ref, list(cls.representative), "trigonal_prismatic", settings
+            )
+        except DGSeedError as exc:
+            assert "triangle smoothing" not in str(exc), exc
+
+
 def test_tetrahedral_carbon_stereo_preserved_in_every_start() -> None:
     graph, _, ref = _load_ts1()
     result = _shared(True)
@@ -396,14 +409,44 @@ def test_spec_none_metal_free_embedding() -> None:
     assert centres and all(isinstance(c, int) for c in centres)
 
 
-def test_batch_embed_failure_recovers_starts_singly(monkeypatch) -> None:
+def test_per_start_embed_skips_failed_calls(monkeypatch) -> None:
+    """One conformer per RDKit call: failed calls are skipped, the rest are kept."""
+    from rdkit.Chem import rdDistGeom
+
+    real = rdDistGeom.EmbedMolecule
+    seeds: list[int] = []
+
+    def _flaky(mol, params):
+        seeds.append(int(params.randomSeed))
+        if len(seeds) % 2 == 0:
+            return -1
+        return real(mol, params)
+
+    chiral, crel = _organic_graph()
+    monkeypatch.setattr(rdDistGeom, "EmbedMolecule", _flaky)
+    result = generate_dg_seeds(chiral, None, crel, [], "x", DGSeedSettings(4, 7))
+    assert len(seeds) == 4 and len(set(seeds)) == 4
+    assert len(result.coords) == 2 and result.requested == 4
+    assert result.stereo_centers == (2,)
+    assert not np.allclose(result.coords[0], result.coords[1])
+
+
+def test_per_start_embed_all_unembeddable_is_empty(monkeypatch) -> None:
+    from rdkit.Chem import rdDistGeom
+
+    chiral, crel = _organic_graph()
+    monkeypatch.setattr(rdDistGeom, "EmbedMolecule", lambda *_a, **_k: -1)
+    result = generate_dg_seeds(chiral, None, crel, [], "x", DGSeedSettings(3, 7))
+    assert result.coords == () and result.requested == 3
+
+
+def test_per_start_embed_all_raising_fails(monkeypatch) -> None:
     from rdkit.Chem import rdDistGeom
 
     def _raise(*_args, **_kwargs):
         raise RuntimeError("Invariant Violation")
 
     chiral, crel = _organic_graph()
-    monkeypatch.setattr(rdDistGeom, "EmbedMultipleConfs", _raise)
     first = generate_dg_seeds(chiral, None, crel, [], "x", DGSeedSettings(3, 7))
     again = generate_dg_seeds(chiral, None, crel, [], "x", DGSeedSettings(3, 7))
     assert len(first.coords) == 3 and first.stereo_centers == (2,)
