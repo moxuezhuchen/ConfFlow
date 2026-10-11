@@ -79,6 +79,36 @@ def test_completed_projects_real_bytes(tmp_path: Path) -> None:
     assert bound == artifacts
 
 
+def test_completed_artifact_projection_accepts_producer_identity_metadata(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    payload = b"producer output\n"
+    (work / "out.txt").write_bytes(payload)
+    manifest = build_run_result_manifest(
+        run_id="run-1",
+        status="completed",
+        definition_digest=_DEF,
+        producer_version="0.0.test",
+        steps=[],
+        analyses=[],
+        artifacts=[
+            {
+                "role": "native_output",
+                "checksum": "sha256:" + hashlib.sha256(payload).hexdigest(),
+                "locator": "out.txt",
+                "step_id": "sp",
+                "work_item_id": "wi:sp:water",
+            }
+        ],
+    )
+    _write_manifest(work, manifest)
+
+    artifacts = load_v4_completed_artifacts(str(work))
+
+    assert len(artifacts) == 1
+    assert artifacts[0].path == "out.txt"
+
+
 def test_missing_manifest_is_not_published_not_corrupt(tmp_path: Path) -> None:
     work = tmp_path / "work"
     work.mkdir()

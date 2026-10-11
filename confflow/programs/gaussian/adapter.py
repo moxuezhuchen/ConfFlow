@@ -45,7 +45,7 @@ __all__ = [
 ADAPTER_VERSION: str = "confflow.program.gaussian.v2"
 
 #: Parser contract version folded into digests.
-PARSER_VERSION: str = "confflow.program.gaussian.parser.v2"
+PARSER_VERSION: str = "confflow.program.gaussian.parser.v3"
 
 #: Media types recorded on discovered artifacts, keyed by file extension.
 MEDIA_TYPES_BY_EXTENSION: dict[str, str] = {
@@ -492,6 +492,7 @@ class GaussianProgramAdapter:
                     {
                         "program": ProgramName.GAUSSIAN.value,
                         "parser_version": PARSER_VERSION,
+                        "optimization_converged": False,
                         "log_file": log_file_name,
                         "electronic_source": "absent",
                         "gibbs_source": "absent",
@@ -522,6 +523,7 @@ class GaussianProgramAdapter:
         committed = _parsing.parse_frequencies(text)
         frequencies = _parsing.true_vibrational_modes(committed)
         geometry = _parsing.parse_final_geometry(text)
+        optimization_converged = _parsing.optimization_converged(text)
         final_geometry: ParsedGeometry | None = None
         geometry_output = GeometryOutput.NONE
         if geometry is not None:
@@ -550,6 +552,7 @@ class GaussianProgramAdapter:
         metadata: dict[str, Any] = {
             "program": ProgramName.GAUSSIAN.value,
             "parser_version": PARSER_VERSION,
+            "optimization_converged": optimization_converged,
             "log_file": log_file_name,
             "electronic_source": sources.get("electronic", "absent"),
             "gibbs_source": sources.get("gibbs", "absent"),

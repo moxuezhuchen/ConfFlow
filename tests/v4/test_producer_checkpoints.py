@@ -131,6 +131,35 @@ class TestWiredEdge:
             "mode": "readfc",
             "allow_method_change": False,
             "version": CHECKPOINT_REUSE_VERSION,
+            "generated_fields": {
+                "source_write_chk": {"before_present": False, "after_value": True},
+                "target_keyword": {
+                    "before_value": "B3LYP/6-31G* opt",
+                    "after_value": "B3LYP/6-31G* opt=ReadFC",
+                },
+            },
+        }
+
+    def test_provenance_records_existing_native_write_chk(self) -> None:
+        wired = wire_checkpoint_reuse(_doc(source_native={"write_chk": True}), "s_opt", "s_freq")
+        generated = wired["steps"][1]["annotations"]["confflow.checkpoint_reuse"][
+            "generated_fields"
+        ]
+        assert generated["source_write_chk"] == {
+            "before_present": True,
+            "before_value": True,
+            "after_value": True,
+        }
+
+    def test_readfc_provenance_keeps_preexisting_route_value(self) -> None:
+        doc = _doc(target_keyword="B3LYP/6-31G* opt=(ReadFC)")
+        wired = wire_checkpoint_reuse(doc, "s_opt", "s_freq", mode="readfc")
+        generated = wired["steps"][1]["annotations"]["confflow.checkpoint_reuse"][
+            "generated_fields"
+        ]
+        assert generated["target_keyword"] == {
+            "before_value": "B3LYP/6-31G* opt=(ReadFC)",
+            "after_value": "B3LYP/6-31G* opt=(ReadFC)",
         }
 
     def test_binding_moves_definition_digest(self) -> None:

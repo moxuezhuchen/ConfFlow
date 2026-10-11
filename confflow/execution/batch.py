@@ -1254,7 +1254,19 @@ class BatchStepExecutor:
         for item in accepted:
             structures = structures + item.structures
             results = results + item.results
-            artifacts = artifacts + item.artifacts
+        # Native input/output/stderr files are valuable failure evidence even
+        # when the scientific structures/results are rejected. Failed geometry
+        # and checkpoint files are not deliverable scientific outputs.
+        for item in collected:
+            if item.is_completed:
+                artifacts = artifacts + item.artifacts
+                continue
+            evidence = tuple(
+                artifact
+                for artifact in item.artifacts
+                if artifact.role in {"native_input", "native_output", "stderr"}
+            )
+            artifacts = artifacts + ArtifactSet(evidence)
         completed = sum(1 for item in collected if item.is_completed)
         failed = sum(1 for item in collected if item.status is WorkItemStatus.FAILED)
         cancelled = sum(1 for item in collected if item.status is WorkItemStatus.CANCELLED)

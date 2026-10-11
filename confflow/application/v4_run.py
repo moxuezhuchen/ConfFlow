@@ -955,6 +955,21 @@ class V4RunApplication:
             )
             for artifact in result.artifacts:
                 artifacts.append(artifact_entry(artifact))
+        # Set transformations keep their semantic outputs in memory/persistence;
+        # downloadable XYZ files are projections published by the application.
+        from .structure_exports import publish_transform_structures
+
+        transform_ids = {
+            item.step_id for item in plan.steps if item.executor.value == "structure_transform"
+        }
+        for result in step_results:
+            if result.step_id in transform_ids:
+                artifacts.extend(
+                    artifact_entry(item)
+                    for item in publish_transform_structures(
+                        result, run_root=run_root, generation_id=generation_id
+                    )
+                )
         # Authoritative ResultRef universe: the current generation's actually
         # published results plus legitimate run-input references.
         # R2.3a: no analysis citations remain; the index still guards

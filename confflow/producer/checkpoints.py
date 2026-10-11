@@ -199,6 +199,18 @@ def _check_write_chk(source: Mapping[str, Any]) -> None:
     native["write_chk"] = True
 
 
+def _write_chk_provenance(source: Mapping[str, Any]) -> dict[str, Any]:
+    """Record the source value that checkpoint wiring changed, if any."""
+    native = _native_of(_calculation_block(source), str(source.get("id")))
+    generated: dict[str, Any] = {
+        "before_present": "write_chk" in native,
+        "after_value": True,
+    }
+    if "write_chk" in native:
+        generated["before_value"] = copy.deepcopy(native["write_chk"])
+    return generated
+
+
 def _check_target_link0(target: Mapping[str, Any]) -> None:
     """Refuse a target that hand-manages checkpoint Link0 directives."""
     step_id = str(target.get("id"))
@@ -733,6 +745,7 @@ def wire_checkpoint_reuse(
         )
 
     source_keyword, target_keyword = _check_gaussian_sides(active, source, target)
+    source_write_chk = _write_chk_provenance(source)
     _check_write_chk(source)
     _check_target_link0(source)
     _check_target_link0(target)
@@ -747,8 +760,14 @@ def wire_checkpoint_reuse(
     )
 
     target_native = _native_of(_calculation_block(target), target_step_id)
+    generated_fields: dict[str, Any] = {"source_write_chk": source_write_chk}
     if mode == "readfc":
+        before_keyword = target_native["keyword"]
         target_native["keyword"] = _add_opt_option(target_keyword, "ReadFC", step_id=target_step_id)
+        generated_fields["target_keyword"] = {
+            "before_value": before_keyword,
+            "after_value": target_native["keyword"],
+        }
 
     target_bindings["checkpoint"] = {
         "source": {
@@ -767,6 +786,7 @@ def wire_checkpoint_reuse(
         "mode": mode,
         "allow_method_change": allow_method_change,
         "version": CHECKPOINT_REUSE_VERSION,
+        "generated_fields": generated_fields,
     }
 
     compiled = compile_workflow(wired, registry=active)

@@ -22,6 +22,7 @@ __all__ = [
     "TERMINATION_MARKER",
     "analyze_vibrational_frequencies",
     "check_termination",
+    "optimization_converged",
     "parse_energies",
     "parse_final_geometry",
     "parse_frequencies",
@@ -443,3 +444,14 @@ def parse_final_geometry(
         coords = tuple((entry[1], entry[2], entry[3]) for entry in current)
         last = (atoms, coords)
     return last
+
+
+def optimization_converged(text: str) -> bool:
+    """Return whether Gaussian explicitly reported a converged optimization.
+
+    Gaussian's completion pair is parser evidence that an optimization
+    reached a stationary point, even when the final coordinates round to the
+    same values as the supplied input geometry. Other output, including a
+    normal termination and an orientation table alone, is not sufficient.
+    """
+    return "Optimization completed." in text and "-- Stationary point found." in text
