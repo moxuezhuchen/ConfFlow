@@ -49,7 +49,7 @@ DEFAULT_JOBDESK_SRC = Path("/opt/jobdesk-v2-v4/src")
 #: Pinned JobDesk revision the cross-repo evidence was produced against.
 #: Tracks JobDesk-v2 ``refactor/diet-p4`` at J4.1' (no longer edits the retired
 #: ``confgen.native`` field; validation answers bind to content, contract and target).
-EXPECTED_JOBDESK_SHA = "7b592c364d440cd56b8b013629f37bb26db5f226"
+EXPECTED_JOBDESK_SHA = "f6b1ee94410f3b574370a477943fb1f33ab5f9d1"
 
 #: Explicit escape hatch for development against a different checkout.
 ALLOW_ANY_SHA_ENV = "JOBDESK_V2_ALLOW_ANY_SHA"
