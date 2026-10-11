@@ -381,65 +381,38 @@ def _native_section() -> dict[str, Any]:
 
 
 def _confgen_section() -> dict[str, Any]:
-    """Build confgen v3 typed-option descriptors from the component registry.
+    """Build confgen v4 typed-option descriptors (single DG-search engine).
 
-    Component-owned slices come from each descriptor's ``contract_options()``
-    (lightweight constants only, never stage/realization/enumeration/hgeom);
-    generic keys (tolerances/limits/provenance/description) stay here on the
-    existing authorities. Key order and values match the pre-A5 section
-    byte-for-byte; the merge walks the registry in order then emits the
-    frozen key sequence.
+    The confgen step runs the DG search only, declared with
+    ``schema_version: 4``: an explicit index base, a required seed, typed
+    topology, the ``bond_scale`` tolerance, an optional single-shape
+    coordination scope, and the optional ``search`` settings (absent means
+    all defaults; ``starts: null`` resolves at run time to 8 per
+    coordination class with a metal, else 400).
     """
-    import dataclasses
+    from ..science.confgen.graph import CN_SHAPES, SUPPORTED_SHAPES
+    from ..science.confgen.search_spec import (
+        DEFAULT_BOND_SCALE,
+        DEFAULT_SEARCH_STARTS_WITH_METAL,
+        DEFAULT_SEARCH_STARTS_WITHOUT_METAL,
+    )
 
-    from ..science.confgen.registry import default_registry
-    from ..science.confgen.tolerances import ConfgenTolerances
-    from ..workflow.v4.confgen_schema import ConfgenModelV3
-
-    registry = default_registry()
-    owned: dict[str, Any] = {}
-    for _descriptor in registry._ordered():
-        _options = _descriptor.contract_options
-        if _options is None:
-            continue
-        for _key, _value in dict(_options()).items():
-            if _key in owned:
-                raise ValueError(f"duplicate contract option {_key!r}")
-            owned[_key] = _value
-    tolerances = ConfgenTolerances()
-    probe = ConfgenModelV3.model_validate({"schema_version": 3})
     ordered: dict[str, Any] = {
-        "schema_version": 3,
-        "coordination_shapes": owned["coordination_shapes"],
-        "coordination_shapes_by_cn": owned["coordination_shapes_by_cn"],
-        "ring_templates_by_size": owned["ring_templates_by_size"],
-        "ring_forms_by_size": owned["ring_forms_by_size"],
-        "torsion_models": owned["torsion_models"],
-        "treatments": owned["treatments"],
-        "coordination_backends": owned["coordination_backends"],
-        "coordination_budgets": owned["coordination_budgets"],
-        "coordination_site_group_scope": owned["coordination_site_group_scope"],
-        "result_provenance": ["certificate_digest", "inherited_scope"],
-        # JSON pointers into ``ensemble_report`` of scientific provenance
-        # digests: published and consumed on purpose, not dead fields.
-        "report_provenance": [
-            "/certificate/digest",
-            "/enumeration/digest",
-            "/input_state_digest",
-            "/input_certificate_digest",
-        ],
-        "tolerances": {
-            field.name: getattr(tolerances, field.name) for field in dataclasses.fields(tolerances)
+        "schema_version": 4,
+        "coordination_shapes": sorted(SUPPORTED_SHAPES),
+        "coordination_shapes_by_cn": {
+            str(number): list(shapes) for number, shapes in sorted(CN_SHAPES.items())
         },
-        "limits": dict(probe.limits.model_dump()),
+        "search_defaults": {
+            "starts_with_coordination": DEFAULT_SEARCH_STARTS_WITH_METAL,
+            "starts_without_metal": DEFAULT_SEARCH_STARTS_WITHOUT_METAL,
+        },
+        "tolerances": {"bond_scale": DEFAULT_BOND_SCALE},
         "description": (
-            "Typed ConfGen v3 scope: schema_version 3 with explicit index_base, "
-            "coordination/rings/torsions declarations, Phase 0 path-based rotor "
-            "declarations (endpoint pairs resolved on the working topology), "
-            "typed topology, recorded stereochemistry, policy exclusions, "
-            "tolerances, limits, and seed-authored sampling. The legacy "
-            "native.chains vocabulary stays available as an explicitly "
-            "versioned adapter path."
+            "Typed ConfGen v4 scope: schema_version 4 with explicit index_base, "
+            "a required seed, typed topology, the bond_scale tolerance, an "
+            "optional single-shape coordination scope with FORBIDDEN_TRANS "
+            "policies, and optional search settings for the DG-search engine."
         ),
     }
     return ordered

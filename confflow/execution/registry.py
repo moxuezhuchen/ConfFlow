@@ -494,17 +494,6 @@ def _confgen_input_ports() -> tuple[PortSpec, ...]:
             Pairing.PER_STRUCTURE,
             "Seed structure to generate conformers for.",
         ),
-        PortSpec(
-            name="confgen_state",
-            kind=PortKind.RESULT,
-            cardinality=Cardinality.OPTIONAL,
-            pairing=Pairing.BY_SUBJECT,
-            description=(
-                "Optional upstream confgen_state result bound to the same "
-                "subject structure for chained generation; the value is the "
-                "input StateKey, selected strictly by result identity."
-            ),
-        ),
     )
 
 
@@ -641,7 +630,7 @@ def _default_executors() -> tuple[ExecutorContract, ...]:
         ),
         ExecutorContract(
             capability=ExecutorCapability.CONFGEN,
-            contract_version="confflow.contract.executor.confgen.v3",
+            contract_version="confflow.contract.executor.confgen.v4",
             input_ports=_confgen_input_ports(),
             output_ports=(
                 _structure_port(
@@ -655,15 +644,14 @@ def _default_executors() -> tuple[ExecutorContract, ...]:
                     "artifacts",
                     Cardinality.MANY,
                     Pairing.SINGLE,
-                    ("ensemble_report", "ensemble_targets"),
-                    "Conformer ensemble report and canonical target records.",
+                    ("search_summary", "search_structures", "search_log"),
+                    "DG-search summary, passing structures, and worker logs.",
                 ),
             ),
             stochastic=False,
             description=(
-                "Conformer generation; deterministic by default. A seed is "
-                "required only when v3 sampling requests a capped subset or "
-                "when the versioned legacy capped path is used."
+                "DG-search conformer generation (schema_version 4); "
+                "an explicit seed is always required."
             ),
         ),
         ExecutorContract(

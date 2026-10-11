@@ -82,10 +82,9 @@ def test_operation_enum_adds_structure_preview_single_source() -> None:
         "validate_document",
         "check_compatibility",
         "compile_intent",
-        "preview_paths",
     ):
         assert legacy in AUTHORING_OPERATIONS
-    assert len(AUTHORING_OPERATIONS) == 8
+    assert len(AUTHORING_OPERATIONS) == 7
 
 
 def test_dispatch_success_equals_direct_call_xyz_gjf_inp() -> None:
@@ -304,44 +303,9 @@ def test_cli_malformed_utf8_stdin_structured_no_traceback() -> None:
     assert envelope["diagnostics"]
 
 
-def test_old_preview_paths_success_and_fail_verbatim() -> None:
-    import pathlib
-
-    case = json.loads(
-        (
-            pathlib.Path(__file__).resolve().parent.parent
-            / "fixtures"
-            / "paths_equivalence"
-            / "cases.json"
-        ).read_text(encoding="utf-8")
-    )["hydrogen_cases"][0]
-    record = case["record"]
-    butane = {
-        "id": "preview",
-        "atoms": list(record["atoms"]),
-        "coordinates": [list(point) for point in record["coordinates"]],
-    }
-    path = {"start": 1, "end": 4, "move": "end", "angles": [0.0, 120.0, 240.0]}
-    ok_payload = json.dumps(
-        {
-            "content_schema": "confflow.authoring.v4",
-            "operation": "preview_paths",
-            "parameters": {
-                "structure": butane,
-                "native": {"schema_version": 3, "index_base": 1, "paths": [path]},
-            },
-        }
-    ).encode("utf-8")
-    ok_response = dispatch_request(ok_payload)
-    assert ok_response["ok"] is True
-    assert ok_response["result"]["raw_conformers"] == 27
-    assert ok_response["request_document_digest"] is None
-    _validate_response_envelope(ok_response)
+def test_removed_preview_paths_operation_fails_closed() -> None:
     fail_response = dispatch_request(_request({}, operation="preview_paths"))
     assert fail_response["ok"] is False
     assert fail_response["diagnostics"][0]["code"] == "schema_error"
-    assert fail_response["diagnostics"][0]["reason"] == "invalid_request"
+    assert fail_response["diagnostics"][0]["reason"] == "unsupported_operation"
     assert fail_response["request_document_digest"] is None
-    # The global Diagnostic serializer is untouched: old operations project
-    # only the existing wire members, never the new-op details member.
-    assert "details" not in fail_response["diagnostics"][0]

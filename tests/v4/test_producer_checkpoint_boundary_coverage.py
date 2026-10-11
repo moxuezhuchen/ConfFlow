@@ -802,7 +802,7 @@ class TestSelectiveRegistryLineageProof:
                 registry=self._selective_registry("profile"),  # type: ignore[arg-type]
             )
 
-    def test_confgen_override_propagates_declared_state(self) -> None:
+    def test_confgen_step_passes_checkpoint_lineage(self) -> None:
         from tests.v4._builders import confgen_step
 
         doc = _no_global_doc(
@@ -810,17 +810,18 @@ class TestSelectiveRegistryLineageProof:
                 confgen_step(
                     "s_gen",
                     bindings={"structure": {"source": {"run": "structures"}}},
-                    overrides={"charge": 1, "multiplicity": 2},
                 ),
                 calc_step(
                     "s_freq",
                     bindings={"structure": {"source": {"step": "s_gen", "port": "structures"}}},
                     native={"keyword": "B3LYP/6-31G* freq"},
+                    overrides={"charge": 1, "multiplicity": 2},
                 ),
                 calc_step(
                     "s_opt",
                     bindings={"structure": {"source": {"step": "s_freq", "port": "structures"}}},
                     native={"keyword": "B3LYP/6-31G*"},
+                    overrides={"charge": 1, "multiplicity": 2},
                 ),
             ],
             {"structures": {"kind": "structure", "cardinality": "many"}},

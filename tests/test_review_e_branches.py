@@ -442,7 +442,6 @@ def test_process_collect_sees_tombstone_on_recheck() -> None:
 
 
 def test_assembly_artifact_ids_selector() -> None:
-    from types import SimpleNamespace
 
     from confflow.domain import ArtifactSet, ResultSet, StructureSet
     from confflow.domain.binding import PortKind, SelectorKind
@@ -469,57 +468,7 @@ def test_assembly_artifact_ids_selector() -> None:
 # --- engine.py:408 + 575-576 (registry without _ordered) -----------------------
 
 
-def test_engine_inherited_states_falls_back_to_descriptors() -> None:
-    from types import SimpleNamespace
-
-    from confflow.science.confgen.engine import _collect_inherited_states
-    from confflow.science.confgen.kernel_records import ComponentStateKey
-
-    key = ComponentStateKey(components={"torsions": {"T1": 1.0}})
-    scope = {"torsions": {"kind": "x"}}
-    registry = SimpleNamespace(descriptors=[])  # no _ordered -> fallback
-    assert _collect_inherited_states(key, scope, registry) == []
-
-
-def test_engine_component_diagnostics_falls_back_to_descriptors() -> None:
-    from types import SimpleNamespace
-
-    from confflow.science.confgen.engine import _collect_component_diagnostics
-
-    registry = SimpleNamespace(descriptors=[])  # no _ordered -> fallback
-    assert _collect_component_diagnostics(registry, {}, SimpleNamespace()) == {}
-
-
 # --- ring import-failure fallbacks --------------------------------------------
-
-
-def test_ring_realization_tolerates_missing_tolerances(monkeypatch: pytest.MonkeyPatch) -> None:
-    import sys as _sys
-
-    import confflow.science.confgen.ring.realization as realizes
-    from confflow.science.confgen.ring.realization import RingNumericalFailure
-
-    monkeypatch.setitem(_sys.modules, "confflow.science.confgen.tolerances", None)
-    with pytest.raises(RingNumericalFailure):
-        realizes.realize_cp_target(
-            [[0.0, 0.0, 0.0]],
-            ["H"],
-            None,
-            SimpleNamespace(atoms=[]),
-            None,
-            rigid_units=(),
-            tolerances=None,
-        )
-
-
-def test_ring_edge_kind_tolerates_missing_graph(monkeypatch: pytest.MonkeyPatch) -> None:
-    import sys as _sys
-
-    from confflow.science.confgen.ring.rigid_units import _edge_kind_is_covalent
-
-    monkeypatch.setitem(_sys.modules, "confflow.science.confgen.graph", None)
-    assert _edge_kind_is_covalent("covalent") is True
-    assert _edge_kind_is_covalent(None) is None
 
 
 # --- process.py:707 + 791 (census OSError tolerance) ---------------------------
@@ -617,192 +566,22 @@ def test_process_live_boundary_tolerates_permission_errors(
 # --- engine.py:452 (descriptors iteration TypeError) ---------------------------
 
 
-def test_engine_report_entries_tolerates_bad_descriptors() -> None:
-    from types import SimpleNamespace
-
-    from confflow.science.confgen.engine import _inherited_report_entries
-
-    context = SimpleNamespace(resolved_spec={}, registry=SimpleNamespace(descriptors=123))
-    assert _inherited_report_entries([], SimpleNamespace(), context) == []
-
-
 # --- engine.py:461 (carries property TypeError) --------------------------------
-
-
-def test_engine_report_entries_tolerates_exploding_carries() -> None:
-    from types import SimpleNamespace
-
-    from confflow.science.confgen.engine import _inherited_report_entries
-    from confflow.science.confgen.kernel_records import ComponentStateKey
-
-    class _Evil:
-        id = "c"
-
-        @property
-        def carries_inherited_locks(self) -> bool:
-            raise TypeError("boom")
-
-    key = ComponentStateKey(components={"c": {"ax": 1.0}})
-    states = [SimpleNamespace(component_id="c", payload={"ax": {"model": "x"}})]
-    context = SimpleNamespace(resolved_spec={}, registry=SimpleNamespace(descriptors=[_Evil()]))
-    assert _inherited_report_entries(states, key, context) == []
 
 
 # --- engine.py:476 (resolved non-iterable) --------------------------------------
 
 
-def test_engine_report_entries_tolerates_bad_resolved() -> None:
-    from types import SimpleNamespace
-
-    from confflow.science.confgen.engine import _inherited_report_entries
-    from confflow.science.confgen.kernel_records import ComponentStateKey
-
-    descriptor = SimpleNamespace(id="c", carries_inherited_locks=True)
-    key = ComponentStateKey(components={"c": {"ax": 1.0}})
-    payload = {"ax": {"model": "absolute_dihedral_grid", "frame": None}}
-    states = [SimpleNamespace(component_id="c", payload=payload)]
-    context = SimpleNamespace(
-        resolved_spec={"c": 123}, registry=SimpleNamespace(descriptors=[descriptor])
-    )
-    entries = _inherited_report_entries(states, key, context)
-    assert len(entries) == 1
-    assert entries[0]["axis"] == "c.ax"
-
-
 # --- engine.py:503 (bad chemical states map) ------------------------------------
-
-
-def test_engine_report_entries_skips_bad_chemical_state() -> None:
-    from types import SimpleNamespace
-
-    from confflow.science.confgen.engine import _inherited_report_entries
-    from confflow.science.confgen.kernel_records import ComponentStateKey
-
-    descriptor = SimpleNamespace(id="c", carries_inherited_locks=True)
-    key = ComponentStateKey(components={"c": {"ax": "missing-label"}})
-    payload = {"ax": {"model": "chemical", "states": {}, "reference_frame_value": 0.0}}
-    states = [SimpleNamespace(component_id="c", payload=payload)]
-    context = SimpleNamespace(resolved_spec={}, registry=SimpleNamespace(descriptors=[descriptor]))
-    assert _inherited_report_entries(states, key, context) == []
 
 
 # --- engine.py:581 (exploding descriptor id) -------------------------------------
 
 
-def test_engine_diagnostics_skips_exploding_id() -> None:
-    from types import SimpleNamespace
-
-    from confflow.science.confgen.engine import _collect_component_diagnostics
-
-    class _BadId:
-        @property
-        def id(self) -> str:
-            raise TypeError("boom")
-
-    registry = SimpleNamespace(_ordered=lambda: [_BadId()], descriptors=[_BadId()])
-    assert _collect_component_diagnostics(registry, {}, SimpleNamespace()) == {}
-
-
 # --- engine.py:588 (exploding bound mapping) --------------------------------------
-
-
-def test_engine_diagnostics_tolerates_exploding_bound() -> None:
-    from collections.abc import Mapping
-    from types import SimpleNamespace
-
-    from confflow.science.confgen.engine import _collect_component_diagnostics
-
-    class _BoomMap(Mapping):
-        def __getitem__(self, key: object) -> object:
-            raise KeyError(key)
-
-        def __iter__(self):  # type: ignore[no-untyped-def]
-            return iter(())
-
-        def __len__(self) -> int:
-            return 0
-
-        def get(self, key: object, default: object = None) -> object:
-            raise TypeError("boom")
-
-    descriptor = SimpleNamespace(id="x")
-    registry = SimpleNamespace(_ordered=lambda: [descriptor], descriptors=[descriptor])
-    assert _collect_component_diagnostics(registry, _BoomMap(), SimpleNamespace()) == {}
 
 
 # --- engine.py:2075/2081/2085 (bond integrity fallbacks) ---------------------------
 
 
-def test_engine_bond_integrity_tolerates_exploding_hooks() -> None:
-    from confflow.science.confgen.engine import _RunState
-
-    class _EvilProp:
-        @property
-        def check_bond_integrity(self) -> bool:
-            raise TypeError("boom")
-
-        def __init__(self) -> None:
-            self.__dict__["check_bond_integrity"] = self
-
-    # Overridden stage whose property explodes -> False (2075).
-    class _Overridden:
-        def __init__(self) -> None:
-            self.__dict__["check_bond_integrity"] = _EvilProp()
-
-        @property
-        def check_bond_integrity(self) -> bool:  # type: ignore[override]
-            raise TypeError("boom")
-
-    shell = _RunState.__new__(_RunState)
-    assert shell._check_bond_integrity("ax", _Overridden()) is False  # type: ignore[arg-type]
-
-    # Descriptor whose attribute explodes -> falls through to stage default (2081).
-    class _BadDesc:
-        @property
-        def check_bond_integrity(self) -> bool:
-            raise TypeError("boom")
-
-    shell2 = _RunState.__new__(_RunState)
-    shell2._descriptor_for = lambda _axis: _BadDesc()  # type: ignore[method-assign]
-    assert shell2._check_bond_integrity("ax", SimpleNamespace()) is False
-
-    # Stage with exploding __getattr__ on the final fallback -> False (2085).
-    class _EvilGetattr:
-        def __getattr__(self, name: str) -> object:
-            raise TypeError("boom")
-
-    shell3 = _RunState.__new__(_RunState)
-    shell3._descriptor_for = lambda _axis: None  # type: ignore[method-assign]
-    assert shell3._check_bond_integrity("ax", _EvilGetattr()) is False  # type: ignore[arg-type]
-
-
 # --- engine.py:2793/2799/2803 (carries inherited fallbacks) --------------------------
-
-
-def test_engine_carries_inherited_tolerates_exploding_hooks() -> None:
-    from confflow.science.confgen.engine import _RunState
-
-    class _Overridden:
-        @property
-        def carries_inherited_locks(self) -> bool:  # type: ignore[override]
-            raise ValueError("boom")
-
-    shell = _RunState.__new__(_RunState)
-    assert shell._carries_inherited_locks("ax", _Overridden()) is False  # type: ignore[arg-type]
-
-    class _BadDesc:
-        @property
-        def carries_inherited_locks(self) -> bool:
-            raise TypeError("boom")
-
-    shell2 = _RunState.__new__(_RunState)
-    shell2._descriptor_for = lambda _axis: _BadDesc()  # type: ignore[method-assign]
-    assert shell2._carries_inherited_locks("ax", SimpleNamespace()) is False
-
-    class _EvilGetattr:
-        def __getattr__(self, name: str) -> object:
-            raise ValueError("boom")
-
-    shell3 = _RunState.__new__(_RunState)
-    shell3._descriptor_for = lambda _axis: None  # type: ignore[method-assign]
-    assert shell3._carries_inherited_locks("ax", _EvilGetattr()) is False  # type: ignore[arg-type]

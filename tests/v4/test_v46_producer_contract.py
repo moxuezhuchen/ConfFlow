@@ -271,6 +271,56 @@ class TestAnalysisCapabilities:
         assert envelope["analysis_capabilities"]["source"] == "registry"
 
 
+class TestConfgenV4Section:
+    def test_confgen_section_describes_search_only(self) -> None:
+        section = _envelope()["confgen"]
+        assert section["schema_version"] == 4
+        assert "octahedral" in section["coordination_shapes"]
+        assert section["coordination_shapes_by_cn"]["6"] == [
+            "octahedral",
+            "trigonal_prismatic",
+        ]
+        assert section["search_defaults"] == {
+            "starts_with_coordination": 8,
+            "starts_without_metal": 400,
+        }
+        assert section["tolerances"] == {"bond_scale": 1.15}
+        for gone in (
+            "ring_templates_by_size",
+            "ring_forms_by_size",
+            "torsion_models",
+            "treatments",
+            "coordination_backends",
+            "coordination_budgets",
+            "coordination_site_group_scope",
+            "result_provenance",
+            "report_provenance",
+            "limits",
+        ):
+            assert gone not in section
+
+    def test_manifest_v4_confgen_fields(self) -> None:
+        manifest = build_editor_manifest_v4()
+        ids = {field["field_id"] for field in manifest["fields"]}
+        assert {
+            "confgen.seed",
+            "confgen.v4.coordination",
+            "confgen.v4.topology",
+            "confgen.v4.tolerances",
+            "confgen.v4.search",
+        } <= ids
+        assert "confgen.native" not in ids
+        assert not {item for item in ids if item.startswith("confgen.v3.")}
+
+    def test_confgen_executor_contract_v4(self) -> None:
+        contract = default_registry().executor(ExecutorCapability.CONFGEN)
+        assert contract.contract_version == "confflow.contract.executor.confgen.v4"
+        assert "confgen_state" not in {port.name for port in contract.input_ports}
+        roles = {role for port in contract.output_ports for role in port.roles}
+        assert {"search_summary", "search_structures", "search_log"} <= roles
+        assert not {"ensemble_report", "ensemble_targets"} & roles
+
+
 class TestDriftGates:
     def test_schema_change_without_manifest_fails(self) -> None:
         live = build_workflow_json_schema()

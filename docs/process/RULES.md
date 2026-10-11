@@ -1,5 +1,7 @@
 # 通用规则（L0.1 迁入）
 
+> superseded 2026-10-11: ConfGen now has a single DG search engine (schema_version 4); the ring, torsion, path and coordination-realization engines and their gates described here no longer exist.
+
 > 本文件由 L0.1 从 `docs/refactor/PLAN.md` 的 §1.4（卡片类型）、§2.5（G1–G10）、§2.6（标准验收）、§2.7（提交信息格式）、§2.8（执行模型的调用方式）**逐字搬运**而成；工具与文档路径改为新位置（`tools/refactor/`、`docs/process/ACCEPTANCE.md`）。v3.3 方案对这些规则的修订（G5'/G6'、G11–G14 等）以 `docs/confgen-fix/PLAN.md` §2.2 为准。
 
 ### 1.4 卡片类型

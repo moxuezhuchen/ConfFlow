@@ -109,7 +109,7 @@ _CARD_TABLE: dict[str, dict[str, Any]] = {
         "recovery": "none",
         "default_role": None,
         "requires_explicit_bindings": False,
-        "description": "Typed conformer generation (v3 or legacy native).",
+        "description": "DG-search conformer generation (typed v4 scope).",
     },
     "refine": {
         "executor": "structure_transform",

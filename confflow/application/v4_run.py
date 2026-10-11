@@ -30,6 +30,7 @@ from ..execution.binding_resolution import (
     BindingRequestDefaults,
     resolve_execution_binding,
 )
+from ..execution.contracts import ExecutorCapability
 from ..execution.registry import default_registry
 from ..execution.xyz_import import import_xyz
 from ..persistence import arbitration
@@ -153,6 +154,31 @@ def _map_step_status(status: StepStatus) -> RunStepStatus:
         StepStatus.FAILED: RunStepStatus.FAILED,
         StepStatus.CANCELLED: RunStepStatus.CANCELLED,
     }[status]
+
+
+def _search_xtb_binding(planned: Any, request: V4RunRequest) -> Any:
+    """Return the xTB binding for a confgen search step, else None.
+
+    Every v4 confgen step runs the DG search (the ``search`` section is
+    optional; absent means all defaults), so every v4 confgen step gets a
+    binding (program ``xtb``: planned step execution wins, else the
+    request default). Every other pure step keeps today's empty binding.
+    Unresolvable xTB also yields None: the executor then fails the work
+    item before anything is launched.
+    """
+    if planned.executor is not ExecutorCapability.CONFGEN:
+        return None
+    native = planned.scientific.native
+    if not isinstance(native, Mapping) or native.get("schema_version") != 4:
+        return None
+    try:
+        return resolve_execution_binding(
+            program="xtb",
+            planned=planned.execution,
+            defaults=BindingRequestDefaults(executables=dict(request.executables.thaw())),
+        )
+    except DomainError:
+        return None
 
 
 def _declared_input_grouping(document: Any) -> dict[str, str]:
@@ -757,7 +783,7 @@ class V4RunApplication:
             profile = None
             checks = ()
             recovery = None
-            binding = None
+            binding = _search_xtb_binding(planned, request)
             provenance = FrozenDict(dict(provenance))
         batch = BatchStepExecutor(executor)
         if supervisor is not None:

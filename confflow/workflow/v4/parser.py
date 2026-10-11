@@ -442,7 +442,7 @@ def _build_scientific(
                 result_profile="ensemble",
                 native=FrozenDict(raw_native),
                 seed=step.confgen.seed,
-                overrides=FrozenDict(step.confgen.overrides),
+                overrides=FrozenDict({}),
             )
         except DomainError as exc:
             diagnostics.append(

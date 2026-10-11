@@ -1,5 +1,7 @@
 # ConfGen v3 validation record
 
+> superseded 2026-10-11: ConfGen now has a single DG search engine (schema_version 4); the ring, torsion, path and coordination-realization engines and their gates described here no longer exist.
+
 Date: 2026-10-01. ConfGen v3 implementation checkpoint.
 This record supersedes stale in-progress notes in `/tmp/confgen-v3-workers`.
 Completed OpenCode workers were not rerun during final science-gate repair.
