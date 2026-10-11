@@ -47,13 +47,12 @@ defaults), `preset` (transform cards), `from` (semantic predecessor
 allow_method_change?}` — explicit only, strict boolean, wired late via
 `producer.checkpoints`), `execution`/`label`.
 
-Confgen cards: `native` must be a typed `schema_version: 3` scope.  A
-legacy `paths` scope (optionally with `angle_step`, `bond_scale`,
-`strict_path_bond_check`) is rewritten mechanically into the equivalent v3
-block (see `CONFGEN_PATHS.md` §2); any other legacy native vocabulary
-(`chains`, ...) and `waypoint` path declarations are refused at compile time
-with a message that names the offending key.  A seed is declared at the step
-level, never inside `native`.
+Confgen cards: `native` must be a typed `schema_version: 4` scope (the DG
+search, the only confgen engine; see `CONFGEN_CAPABILITIES.md`).  A
+`schema_version: 3` scope is refused with the engine-removal message; legacy
+`paths`, `chains`, ring and torsion vocabulary is not rewritten and fails as an
+unknown member.  A seed is declared at the step level, never inside `native`,
+and step-level `overrides` are refused for confgen steps.
 
 Non-applicable fields are rejected, never silently dropped (a seed or
 program on a transform, a program/role/adapter/profile/checks/recovery

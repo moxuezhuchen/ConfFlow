@@ -139,7 +139,6 @@ class TestPublishedSchemas:
             "validate_document",
             "check_compatibility",
             "compile_intent",
-            "preview_paths",
             "structure_preview",
         ]
 

@@ -1,5 +1,7 @@
 # 验收协议
 
+> superseded 2026-10-11: ConfGen now has a single DG search engine (schema_version 4); the ring, torsion, path and coordination-realization engines and their gates described here no longer exist.
+
 > 适用于 `PLAN.md` 中的每一张卡。执行模型每完成一张卡（一个提交）就交给验收方。验收方只读、只运行，不修改执行分支。
 > 验收方的工作目录：`/tmp/refactor-acc/<CARD>/`。验收工具位于 `tools/refactor/`；Plan2 的分片 runner、`weights.json` 与 `noeditable/` 位于并列目录 `tools/refactor-acc/`。结论追加到 `docs/confgen-fix/LOG.md`（不进入执行分支）。
 

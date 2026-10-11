@@ -44,12 +44,13 @@ R7D_DIR = Path(os.environ.get("R7_D_OUT", Path.cwd() / "r7d-out"))
 R7J_DIR = Path(os.environ.get("R7_JOINT_RUN_OUT", Path.cwd() / "r7joint-run"))
 
 sys.path.insert(0, str(REPO_ROOT))
-from confflow.core.io import read_xyz_file  # noqa: E402
 from confflow.science.confgen.ring.puckering import (  # noqa: E402
     CPCoords,
     cp_distance,
     cremer_pople,
 )
+
+from confflow.core.io import read_xyz_file  # noqa: E402
 
 CSV = OUT / "csv"
 OPT = OUT / "opt_boat200"

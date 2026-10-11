@@ -30,15 +30,7 @@ OPT_NATIVE = {"keyword": "B3LYP D3BJ Opt"}
 FREQ_NATIVE = {"keyword": "B3LYP D3BJ Freq"}
 SP_NATIVE = {"keyword": "B3LYP D3BJ SP"}
 
-TORSIONS = [
-    {
-        "id": "t1",
-        "bond": [1, 2],
-        "model": "relative_rotation_grid",
-        "angles": [0, 120, 240],
-        "treatment": "enumerate",
-    }
-]
+SEARCH_NATIVE = {"schema_version": 4, "search": {"starts": 8}}
 
 
 def _intent(steps: list[dict[str, Any]], **top: Any) -> dict[str, Any]:
@@ -99,32 +91,28 @@ def test_explicit_id_and_role_overrides_preserved() -> None:
     assert compile_workflow(document).ok
 
 
-def test_confgen_full_enumeration_gets_no_seed() -> None:
+def test_confgen_search_derives_seed() -> None:
     document = compile_intent(
         _intent(
             [
                 {
                     "card": "confgen@v1",
-                    "native": {"schema_version": 3, "torsions": copy.deepcopy(TORSIONS)},
+                    "native": copy.deepcopy(SEARCH_NATIVE),
                 }
             ]
         )
     )
-    assert document["steps"][0]["confgen"].get("seed") is None
+    assert isinstance(document["steps"][0]["confgen"].get("seed"), int)
     assert compile_workflow(document).ok
 
 
-def test_confgen_capped_sampling_derives_stable_seed() -> None:
+def test_confgen_search_derives_stable_seed() -> None:
     def build() -> dict[str, Any]:
         return _intent(
             [
                 {
                     "card": "confgen@v1",
-                    "native": {
-                        "schema_version": 3,
-                        "torsions": copy.deepcopy(TORSIONS),
-                        "sampling": {"cap": 50},
-                    },
+                    "native": copy.deepcopy(SEARCH_NATIVE),
                 }
             ]
         )
@@ -166,11 +154,7 @@ def test_stochastic_change_moves_seed_operational_change_does_not() -> None:
     def build(extra: dict[str, Any]) -> dict[str, Any]:
         step: dict[str, Any] = {
             "card": "confgen@v1",
-            "native": {
-                "schema_version": 3,
-                "torsions": copy.deepcopy(TORSIONS),
-                "sampling": {"cap": 50},
-            },
+            "native": copy.deepcopy(SEARCH_NATIVE),
         }
         step.update(extra)
         return _intent([step])
@@ -528,10 +512,7 @@ def test_program_on_confgen_rejected() -> None:
                     {
                         "card": "confgen@v1",
                         "program": "orca",
-                        "native": {
-                            "schema_version": 3,
-                            "torsions": copy.deepcopy(TORSIONS),
-                        },
+                        "native": copy.deepcopy(SEARCH_NATIVE),
                     }
                 ]
             )
@@ -556,11 +537,7 @@ def test_memory_spelling_equality_in_seed() -> None:
             [
                 {
                     "card": "confgen@v1",
-                    "native": {
-                        "schema_version": 3,
-                        "torsions": copy.deepcopy(TORSIONS),
-                        "sampling": {"cap": 50},
-                    },
+                    "native": copy.deepcopy(SEARCH_NATIVE),
                     "resources": {"cores_per_item": 1, "memory_per_item": memory},
                 }
             ]
@@ -586,11 +563,7 @@ def test_input_description_does_not_move_seed() -> None:
             "steps": [
                 {
                     "card": "confgen@v1",
-                    "native": {
-                        "schema_version": 3,
-                        "torsions": copy.deepcopy(TORSIONS),
-                        "sampling": {"cap": 50},
-                    },
+                    "native": copy.deepcopy(SEARCH_NATIVE),
                 }
             ],
         }
@@ -616,11 +589,7 @@ def test_machine_profile_leaves_seed_and_digest_unchanged() -> None:
             [
                 {
                     "card": "confgen@v1",
-                    "native": {
-                        "schema_version": 3,
-                        "torsions": copy.deepcopy(TORSIONS),
-                        "sampling": {"cap": 50},
-                    },
+                    "native": copy.deepcopy(SEARCH_NATIVE),
                 }
             ]
         )

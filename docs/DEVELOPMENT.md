@@ -56,9 +56,9 @@ pytest -q                  # 见 TESTING.md；scripts/test.sh 会把所有产物
 **新的科学检查 / 结果 profile**：在 `execution/contracts.py` 描述符中声明（带 contract version）→ 实现 → 注册 →
 测试覆盖"通过/失败/缺数据"三种情形。
 
-**新的 ConfGen 声明（torsion / ring / coordination / path）**：改 `workflow/v4/confgen_schema.py` 与
-`science/confgen/` 中对应的 lane；任何改变构象集合的改动都要有等价性或回归证据，并且要重新捕获引擎报告基线
-（外部基线 `$BASE` 与 `tools/refactor/`；本轮实际路径示例 `/tmp/l0-baseline-run-v2/baseline`，配套 `MANIFEST.json`，不是通用设计）。
+**ConfGen 声明（`schema_version: 4`）**：改 `workflow/v4/confgen_schema.py`、`science/confgen/search_spec.py`，
+以及搜索路径（`dg_seed.py`、`search.py`、`execution/confgen_search_run.py`、`execution/confgen_search_worker.py`）。
+任何改变搜索结果的改动都要用固定种子的 `structures.xyz` 校验和做对照。
 
 ## 5. 契约与指纹
 
@@ -100,4 +100,4 @@ pytest -q                  # 见 TESTING.md；scripts/test.sh 会把所有产物
 历史归档：`docs/refactor/`（`PLAN.md`、`LOG.md`、`baseline/` 等）已随 architecture-diet-1 归档出树
 （`ls docs/refactor` 不存在；内容见 `docs/archive_manifests/architecture_diet_1.json`，
 按归档提交 SHA/blob 定位，另见 `docs/ARCHITECTURE_DIET_1.md`）。
-等价性证据 `paths_equivalence/` 已迁至 `tests/fixtures/paths_equivalence/`。验收协议在 `docs/process/ACCEPTANCE.md`，通用规则在 `docs/process/RULES.md`，验收工具在 `tools/refactor/` 与并列的 `tools/refactor-acc/`。这些文件是历史记录与证据，普通开发不需要改它们。
+旧路径引擎的等价性证据（`paths_equivalence/`）已随引擎删除。验收协议在 `docs/process/ACCEPTANCE.md`，通用规则在 `docs/process/RULES.md`，验收工具在 `tools/refactor/` 与并列的 `tools/refactor-acc/`。这些文件是历史记录与证据，普通开发不需要改它们。

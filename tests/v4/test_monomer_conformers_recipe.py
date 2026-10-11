@@ -37,35 +37,38 @@ from confflow.workflow.v4.parser import parse_workflow_document
 
 # R2.2 声明重钉：目录剩 7 项（irc/qst2/qst3/neb/goat/tspes 退役）；
 # 未动的前 6 个 recipe 字节不变（自身内容未改，只退役邻居）。
-OLD6_SHA = "8b62e352d4743202137423104b31895666d0ef9baab6f264f34a5a874be3190b"
+OLD6_SHA = "03e6f5be792530c528db766b82d14b123e724571f865ac73bd75b0a05511a5db"
 OLD6_IDS = (
     "optimize",
     "single_point",
     "frequency",
     "opt_freq",
     "transition_state",
-    "confgen_torsion",
+    "confgen_search",
 )
 
 FAKES_DIR = Path(__file__).resolve().parent / "fakes"
 FAKE_ORCA = FAKES_DIR / "fake_orca.py"
 
-# 9-heavy-atom propyl-cyclohexane-like seed matching the recipe example
-# (isolated 6-ring 1-6 + acyclic tail 7-9; torsion 7-8 keeps the 6-7-8-9
-# dihedral frame measurable). Coordinates mirror the frozen chair_A_6
-# template plus a radial 1.54 A tail.
-PROPYL_XYZ = """9
-propyl-cyclohexane example seed (USER MUST CONFIRM/REPLACE axes)
-C 1.451926 -0.000000 0.256667
-C 0.725963 1.257405 -0.256667
-C -0.725963 1.257405 0.256667
-C -1.451926 0.000000 -0.256667
-C -0.725963 -1.257405 0.256667
-C 0.725963 -1.257405 -0.256667
-C 2.968413 -0.000000 0.524746
-C 4.484900 -0.000000 0.792826
-C 4.984900 1.400000 1.092826
-"""
+
+# Chemically complete seed for the recipe E2E (the DG search embeds via
+# RDKit, so the seed must carry explicit hydrogens; bare-carbon skeletons
+# misperceive). Methylcyclohexane keeps the recipe spirit (isolated 6-ring
+# plus acyclic tail). Embedded once with a fixed RDKit seed.
+def _seed_xyz() -> str:
+    from rdkit import Chem
+    from rdkit.Chem import rdDistGeom
+
+    mol = Chem.AddHs(Chem.MolFromSmiles("C1CCCCC1C"))
+    params = rdDistGeom.ETKDGv3()
+    params.randomSeed = 7
+    assert rdDistGeom.EmbedMolecule(mol, params) == 0
+    conf = mol.GetConformer()
+    lines = [str(mol.GetNumAtoms()), "methylcyclohexane example seed"]
+    for atom in mol.GetAtoms():
+        pos = conf.GetAtomPosition(atom.GetIdx())
+        lines.append(f"{atom.GetSymbol()} {pos.x:.6f} {pos.y:.6f} {pos.z:.6f}")
+    return "\n".join(lines) + "\n"
 
 
 def _recipe() -> dict[str, Any]:
@@ -95,8 +98,8 @@ class TestCatalogIdentity:
         assert set(recipe["required_fields"]) == {
             "calc.program",
             "calc.native",
-            "confgen.v3.rings",
-            "confgen.v3.torsions",
+            "confgen.seed",
+            "confgen.v4.search",
         }
 
     def test_old6_bytes_unchanged(self) -> None:
@@ -163,73 +166,52 @@ class TestCompilePlan:
         assert edges[("dedup", "structure")][0] == "confgen"
 
     def test_required_fields_are_not_a_compiler_gate(self) -> None:
-        # ROOT-REVIEW correction: required_fields is an editor prompt. An
-        # empty-axes copy still compiles (identity scope) and must never be
-        # presented as a success signal; the E2E below always uses real axes.
-        empty = copy.deepcopy(_recipe()["document"])
-        empty["steps"][1]["confgen"] = {"schema_version": 3}
-        compiled = compile_workflow(empty)
+        # ROOT-REVIEW correction: required_fields is an editor prompt. A
+        # seed-carrying copy with defaulted search still compiles and must
+        # never be presented as a success signal; the E2E below always uses
+        # the recipe search settings.
+        minimal = copy.deepcopy(_recipe()["document"])
+        minimal["steps"][1]["confgen"] = {"schema_version": 4, "seed": 1}
+        compiled = compile_workflow(minimal)
         assert compiled.ok
         assert _recipe()["required_fields"] != []
 
 
 class TestUserReplacementScope:
-    def test_replace_axes_via_wire_copy_recompiles(self) -> None:
-        # Legal scope: copy the wire document, replace both axes, recompile
-        # through the real parser/compiler. No dotted-path override API is
-        # invented; unknown scopes fail closed below.
+    def test_replace_search_via_wire_copy_recompiles(self) -> None:
+        # Legal scope: copy the wire document, replace the search settings,
+        # recompile through the real parser/compiler. No dotted-path override
+        # API is invented; unknown scopes fail closed below.
         doc = copy.deepcopy(_recipe()["document"])
-        doc["steps"][1]["confgen"]["rings"] = [
-            {"id": "r9", "atoms": [1, 2, 3, 4, 5, 6], "forms": ["C_0"], "treatment": "enumerate"}
-        ]
-        doc["steps"][1]["confgen"]["torsions"] = [
-            {
-                "id": "t9",
-                "atoms": [6, 7, 8, 9],
-                "model": "absolute_dihedral_grid",
-                "angles": [0, 180],
-                "treatment": "enumerate",
-            }
-        ]
+        doc["steps"][1]["confgen"]["search"] = {"starts": 4}
+        doc["steps"][1]["confgen"]["seed"] = 9
         compiled = compile_workflow(doc)
         assert compiled.ok, [str(d) for d in compiled.diagnostics]
 
-    def test_illegal_axes_fail_closed(self) -> None:
+    def test_illegal_scopes_fail_closed(self) -> None:
         from pydantic import ValidationError
 
         from confflow.workflow.v4.confgen_schema import ConfgenModelV3
 
-        # Ring template/size mismatch.
+        # v3 documents are rejected with the engine-removal message.
+        with pytest.raises(ValidationError, match="ring, torsion, path"):
+            ConfgenModelV3.model_validate({"schema_version": 3, "seed": 1})
+        # Removed ring/torsion members are rejected as unknown keys.
         with pytest.raises(ValidationError):
             ConfgenModelV3.model_validate(
                 {
-                    "schema_version": 3,
-                    "rings": [{"id": "r1", "atoms": [1, 2, 3, 4], "templates": ["chair_A_6"]}],
-                }
-            )
-        # Torsion periodic duplicate.
-        with pytest.raises(ValidationError):
-            ConfgenModelV3.model_validate(
-                {
-                    "schema_version": 3,
-                    "torsions": [
-                        {
-                            "id": "t1",
-                            "bond": [7, 8],
-                            "model": "relative_rotation_grid",
-                            "angles": [0, 360],
-                            "treatment": "enumerate",
-                        }
-                    ],
+                    "schema_version": 4,
+                    "seed": 1,
+                    "rings": [{"id": "r1", "atoms": [1, 2, 3, 4]}],
                 }
             )
         # Unknown field is forbidden.
         bad = copy.deepcopy(_recipe()["document"])
         bad["steps"][1]["confgen"]["no_such_field"] = 1
         assert not compile_workflow(bad).ok
-        # sampling.cap without seed is refused.
+        # A seed is always required.
         bad2 = copy.deepcopy(_recipe()["document"])
-        bad2["steps"][1]["confgen"]["sampling"] = {"cap": 2}
+        del bad2["steps"][1]["confgen"]["seed"]
         assert not compile_workflow(bad2).ok
 
     def test_intent_recipe_lane_requires_preopt_science(self) -> None:
@@ -261,8 +243,8 @@ class TestUserReplacementScope:
         )
         by_id = {s["id"]: s for s in wire["steps"]}
         assert by_id["preopt"]["calculation"]["native"] == {"keyword": "XTB2 Opt"}
-        # ConfGen base passes through with the example axes intact.
-        assert by_id["confgen"]["confgen"]["rings"][0]["id"] == "r1"
+        # ConfGen base passes through with the recipe search settings intact.
+        assert by_id["confgen"]["confgen"]["search"] == {"starts": 8}
 
 
 def _install_fake_orca(
@@ -294,12 +276,14 @@ class TestFakeProtocolE2E:
         """Fake external ORCA (protocol only) + real confgen/dedup engines."""
         from confflow.application.v4_run import V4RunApplication, V4RunRequest, import_xyz
         from confflow.workflow.v4.assembly import RunInputs
+        from tests.v4._dg_search_helpers import _write_fake
 
         count = _install_fake_orca(tmp_path, monkeypatch)
+        fake_xtb = _write_fake(tmp_path)
         document = copy.deepcopy(_recipe()["document"])
         compiled = compile_workflow(document)
         assert compiled.ok and compiled.plan is not None
-        structures = import_xyz(PROPYL_XYZ, source_name="propyl.xyz")
+        structures = import_xyz(_seed_xyz(), source_name="seed.xyz")
         assert len(structures) == 1
         orig_x = tuple(structures)[0].coordinates[0][0]
         run_root = str(tmp_path / "run")
@@ -308,6 +292,7 @@ class TestFakeProtocolE2E:
                 workflow_document=json.loads(canonical_json_bytes(document).decode("utf-8")),
                 run_inputs=RunInputs(structures=FrozenDict({"structures": structures})),
                 run_root=run_root,
+                executables=FrozenDict({"xtb": str(fake_xtb)}),
             )
         )
         assert report.status == "completed", [
@@ -331,14 +316,13 @@ class TestFakeProtocolE2E:
         lines = Path(produced).read_text().splitlines()
         first_x = float(lines[2].split()[1])
         assert abs(first_x - (orig_x + 0.01)) < 1e-6
-        # ConfGen consumed the preopt product (driving id names preopt), and
-        # published the full 3-member grid; dedup kept all 3.
-        ensemble = glob.glob(
-            str(tmp_path / "run/steps/confgen/**/ensemble_report.json"), recursive=True
-        )[0]
-        data = json.loads(Path(ensemble).read_text())
-        assert str(data["driving_id"]).startswith("preopt:")
-        assert data["counts"]["published"] == 3
+        # ConfGen consumed the preopt product and published the DG-search
+        # ensemble; dedup kept every passing member.
+        summaries = glob.glob(str(tmp_path / "run/steps/confgen/**/summary.json"), recursive=True)
+        assert len(summaries) == 1
+        data = json.loads(Path(summaries[0]).read_text())
+        assert data["totals"]["passed"] >= 1
+        assert len(by_id["dedup"].structures) == data["totals"]["passed"]
 
 
 WATER_PAIR_XYZ = """3

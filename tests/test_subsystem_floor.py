@@ -55,18 +55,16 @@ def test_confgen_kernel_excludes_component_dirs(tmp_path: Path):
     xml = _write_xml(
         tmp_path,
         {
-            "science/confgen/engine.py": [(1, 1), (2, 0)],
-            "science/confgen/coordination/stage.py": [(1, 1), (2, 1)],
-            "science/confgen/ring/stage.py": [(1, 1), (2, 1)],
-            "science/confgen/torsion/stage.py": [(1, 1), (2, 1)],
+            "science/confgen/search.py": [(1, 1), (2, 0)],
+            "science/confgen/coordination/shapes.py": [(1, 1), (2, 1)],
+            "science/confgen/coordination/perception.py": [(1, 1), (2, 1)],
         },
     )
     got = sc.measure_xml(xml)
     assert (got["confgen_kernel"]["covered"], got["confgen_kernel"]["valid"]) == (1, 2)
-    assert sc.subsystem_of("science/confgen/coordination/stage.py") is None
-    assert sc.subsystem_of("science/confgen/ring/forms.py") is None
-    assert sc.subsystem_of("science/confgen/torsion/spec.py") is None
-    assert sc.subsystem_of("science/confgen/engine.py") == "confgen_kernel"
+    assert sc.subsystem_of("science/confgen/coordination/shapes.py") is None
+    assert sc.subsystem_of("science/confgen/coordination/perception.py") is None
+    assert sc.subsystem_of("science/confgen/search.py") == "confgen_kernel"
 
 
 def test_subsystem_prefix_mapping():
@@ -74,7 +72,7 @@ def test_subsystem_prefix_mapping():
     assert sc.subsystem_of("confflow/execution/batch.py") == "execution"
     assert sc.subsystem_of("persistence/run_state.py") == "persistence"
     assert sc.subsystem_of("workflow/v4/compiler.py") == "workflow"
-    assert sc.subsystem_of("confflow/science/confgen/model.py") == "confgen_kernel"
+    assert sc.subsystem_of("confflow/science/confgen/search.py") == "confgen_kernel"
     assert sc.subsystem_of("analysis/compute.py") is None
 
 

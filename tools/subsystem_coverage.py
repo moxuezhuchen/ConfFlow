@@ -3,8 +3,7 @@
 Measure per-subsystem line coverage from cobertura XML with row-weighted
 covered/valid counts (same line caliber as coverage.py). ConfGen kernel
 covers top-level files under science/confgen/ only; the component
-subpackages coordination/, ring/ and torsion/ (each with component.py,
-spec.py, stage.py, scope.py) are excluded.
+subpackage coordination/ (shapes, enumeration, perception) is excluded.
 
 Usage: measure --xml F | check --xml F --baseline tools/coverage_baseline.json
 """
@@ -17,7 +16,7 @@ import sys
 import xml.etree.ElementTree as ET
 from typing import TypedDict
 
-CONFGEN_COMPONENT_DIRS: tuple[str, ...] = ("coordination", "ring", "torsion")
+CONFGEN_COMPONENT_DIRS: tuple[str, ...] = ("coordination",)
 
 SUBSYSTEMS: tuple[str, ...] = ("execution", "persistence", "workflow", "confgen_kernel")
 

@@ -381,18 +381,13 @@ class TransformExecutor:
             raise DomainError(f"refine bond perception failed for {record.id}: {exc}") from exc
 
     @staticmethod
-    def _declared_topology(
-        native: Mapping[str, Any], *, registry: Any | None = None
-    ) -> dict[str, Any] | None:
+    def _declared_topology(native: Mapping[str, Any]) -> dict[str, Any] | None:
         """Resolve ``topology_bonds`` into the normalised ConfGen spec, or ``None``."""
         raw = native.get("topology_bonds")
         if raw is None:
             return None
         if not isinstance(raw, Mapping):
             raise DomainError(f"refine topology_bonds must be a mapping, got {raw!r}")
-        from confflow.science.confgen.registry import resolve_registry
-
-        resolved_registry = resolve_registry(registry)
         allowed = {
             "index_base",
             "bonds",
@@ -400,10 +395,8 @@ class TransformExecutor:
             "del_bond",
             "atoms",
             "bond_scale",
+            "coordination",
         }
-        for descriptor in resolved_registry._ordered():
-            for key in tuple(getattr(descriptor, "topology_input_keys", ()) or ()):
-                allowed.add(key)
         unknown = sorted(set(raw) - allowed)
         if unknown:
             raise DomainError(
@@ -415,22 +408,20 @@ class TransformExecutor:
                 "perception scale is topology_bonds.bond_scale (default: the ConfGen default)"
             )
         spec: dict[str, Any] = {
-            "schema_version": 3,
+            "schema_version": 4,
             "index_base": raw.get("index_base", 1),
             "topology": {
                 key: raw[key] for key in ("bonds", "add_bond", "del_bond", "atoms") if key in raw
             },
         }
-        for descriptor in resolved_registry._ordered():
-            for key in tuple(getattr(descriptor, "topology_input_keys", ()) or ()):
-                if raw.get(key) is not None:
-                    spec[key] = raw[key]
+        if raw.get("coordination") is not None:
+            spec["coordination"] = raw["coordination"]
         if raw.get("bond_scale") is not None:
             spec["tolerances"] = {"bond_scale": raw["bond_scale"]}
-        from ..science.confgen.planner import normalize_spec
+        from ..science.confgen.search_spec import normalize_search_spec
 
         try:
-            return dict(normalize_spec(spec, registry=resolved_registry))
+            return dict(normalize_search_spec(spec))
         except (ValueError, TypeError, KeyError) as exc:
             raise DomainError(f"refine topology_bonds is invalid: {exc}") from exc
 
@@ -440,8 +431,6 @@ class TransformExecutor:
         record: StructureRecord,
         bond_scale: float,
         declared: dict[str, Any] | None = None,
-        *,
-        registry: Any | None = None,
     ) -> dict[str, Any]:
         """Return the comparison frame (atoms, coordinates, bonding graph) of one record."""
         from ..science.topology_mapping import graph_from_adjacency, with_typed_edges
@@ -449,12 +438,10 @@ class TransformExecutor:
         if declared is None:
             graph = graph_from_adjacency(record.atoms, cls._adjacency(record, bond_scale))
         else:
-            from ..science.confgen.planner import build_typed_graph
+            from ..science.confgen.topology import build_typed_graph
 
             try:
-                adjacency, typed = build_typed_graph(
-                    record, declared["topology"], declared, registry=registry
-                )
+                adjacency, typed = build_typed_graph(record, declared["topology"], declared)
             except (ValueError, TypeError, KeyError) as exc:
                 raise DomainError(f"refine topology_bonds does not fit {record.id}: {exc}") from exc
             graph = with_typed_edges(

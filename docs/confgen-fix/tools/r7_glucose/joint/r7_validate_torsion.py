@@ -71,9 +71,10 @@ def main() -> int:
     print("structure-independent OK:", [(a.axis_id, a.bond, a.values) for a in axes])
 
     # 结构相关校验(夹具 input.xyz, 只读): 成键/非环键/可测帧 + 联合计数
-    from confflow.domain.structure import StructureRecord
     from confflow.science.confgen.model import WorkingRealization, build_context
     from confflow.science.confgen.torsion.stage import TorsionStage
+
+    from confflow.domain.structure import StructureRecord
 
     lines = open(FIXTURE).read().splitlines()
     n = int(lines[0].strip())
