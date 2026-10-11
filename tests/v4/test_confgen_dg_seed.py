@@ -394,3 +394,21 @@ def test_spec_none_metal_free_embedding() -> None:
         graph1, spec1, ref1, commanded, "octahedral", DGSeedSettings(1, 11)
     ).stereo_centers
     assert centres and all(isinstance(c, int) for c in centres)
+
+
+def test_batch_embed_failure_recovers_starts_singly(monkeypatch) -> None:
+    from rdkit.Chem import rdDistGeom
+
+    def _raise(*_args, **_kwargs):
+        raise RuntimeError("Invariant Violation")
+
+    chiral, crel = _organic_graph()
+    monkeypatch.setattr(rdDistGeom, "EmbedMultipleConfs", _raise)
+    first = generate_dg_seeds(chiral, None, crel, [], "x", DGSeedSettings(3, 7))
+    again = generate_dg_seeds(chiral, None, crel, [], "x", DGSeedSettings(3, 7))
+    assert len(first.coords) == 3 and first.stereo_centers == (2,)
+    assert all(np.array_equal(a, b) for a, b in zip(first.coords, again.coords))
+    assert not np.allclose(first.coords[0], first.coords[1])
+    monkeypatch.setattr(rdDistGeom, "EmbedMolecule", _raise)
+    with pytest.raises(DGSeedError, match="RDKit embedding failed: Invariant Violation"):
+        generate_dg_seeds(chiral, None, crel, [], "x", DGSeedSettings(3, 7))

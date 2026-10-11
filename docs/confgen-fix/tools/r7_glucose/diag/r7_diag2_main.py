@@ -47,8 +47,6 @@ DATA_DIR = _require_dir("R7_DATA_DIR", "未发布的 root 全体系输入 beta_d
 DIAG_DIR = Path(os.environ.get("R7_DIAG_OUT", Path.cwd() / "r7diag-out"))
 
 sys.path.insert(0, str(REPO_ROOT))
-from confflow.core.io import read_xyz_file  # noqa: E402
-from confflow.domain.structure import StructureRecord  # noqa: E402
 from confflow.science.confgen.engine import ConfgenEngine  # noqa: E402
 from confflow.science.confgen.model import build_context  # noqa: E402
 from confflow.science.confgen.ring.puckering import (  # noqa: E402
@@ -57,6 +55,9 @@ from confflow.science.confgen.ring.puckering import (  # noqa: E402
     cp_distance,
     cremer_pople,
 )  # noqa: E402
+
+from confflow.core.io import read_xyz_file  # noqa: E402
+from confflow.domain.structure import StructureRecord  # noqa: E402
 
 FIXD = FIXTURE_DIR
 PRIOR = DATA_DIR

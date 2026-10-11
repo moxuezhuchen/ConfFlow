@@ -42,12 +42,13 @@ OUT = OUT_DIR
 DATA_DIR = _require_dir("R7_DATA_DIR", "未发布的 root 全体系输入 beta_d_glucopyranose 目录")
 
 sys.path.insert(0, str(REPO_ROOT))
-from confflow.core.io import read_xyz_file  # noqa: E402
 from confflow.science.confgen.ring.puckering import (  # noqa: E402
     CPCoords,
     cp_distance,
     cremer_pople,
 )
+
+from confflow.core.io import read_xyz_file  # noqa: E402
 
 CSV = OUT / "csv"
 

@@ -48,11 +48,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-
-import confflow  # noqa: E402
-from confflow.core.io import read_xyz_file  # noqa: E402
-from confflow.domain.structure import StructureRecord  # noqa: E402
-from confflow.science.confgen import tolerances as _tolmod  # noqa: E402
 from confflow.science.confgen.engine import ConfgenEngine  # noqa: E402
 from confflow.science.confgen.model import (  # noqa: E402
     ConfgenStateKey,
@@ -68,6 +63,11 @@ from confflow.science.confgen.ring.puckering import (  # noqa: E402
     cremer_pople,
 )
 from confflow.science.confgen.ring.stage import RingStage  # noqa: E402
+
+import confflow  # noqa: E402
+from confflow.core.io import read_xyz_file  # noqa: E402
+from confflow.domain.structure import StructureRecord  # noqa: E402
+from confflow.science.confgen import tolerances as _tolmod  # noqa: E402
 
 CP_HIT_DEG = 15.0
 QMIN = 0.05

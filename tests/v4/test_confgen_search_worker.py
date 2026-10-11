@@ -170,7 +170,8 @@ def test_metal_free_no_restraint_argv(tmp_path: Path, monkeypatch: pytest.Monkey
 def test_metal_free_real_dg(tmp_path: Path) -> None:
     mol, els, ref = _embed("C[C@H]1CC[C@@H](O)C1")
     fake = _write_fake(tmp_path)
-    job, _, _, summary_path = _job(tmp_path, els, ref, (None, [], [(0, 1)], [], 1.25), None, fake)
+    sel = (None, [], [(0, 1)], [], 1.25)
+    job, _, _, summary_path = _job(tmp_path, els, ref, sel, None, fake, settings_over={"starts": 4})
     assert worker.main([job]) == 0
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert summary["totals"]["passed"] >= 1
