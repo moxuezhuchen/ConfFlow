@@ -10,6 +10,7 @@ multi-frame fan-in) are proven on the single V4 application.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -196,6 +197,13 @@ def test_cli_resumes_failed_calculation_after_external_cause_is_fixed(tmp_path: 
     failed = _manifest(work)
     assert failed["status"] == "failed"
     assert failed["steps"][0]["counts"]["failed"] == 1
+    failed_locators = {item["locator"] for item in failed["artifacts"]}
+    assert any(locator.endswith(".inp") for locator in failed_locators)
+    assert any(locator.endswith(".out") for locator in failed_locators)
+    assert any(locator.endswith(".err") for locator in failed_locators)
+    for item in failed["artifacts"]:
+        payload = (work / item["locator"]).read_bytes()
+        assert item["checksum"] == "sha256:" + hashlib.sha256(payload).hexdigest()
 
     (tmp_path / "mode").write_text("success_sp", encoding="utf-8")
     _assert_success(_invoke(seed, config, work, "--resume"), seed)

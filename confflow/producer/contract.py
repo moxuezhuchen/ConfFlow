@@ -511,6 +511,15 @@ def run_result_json_schema() -> dict[str, Any]:
             "producer_digest": {"type": ["string", "null"], "pattern": f"({digest_pattern})?"},
             "value_digest": {"type": ["string", "null"]},
             "identity_digest": {"type": ["string", "null"]},
+            # V4 frequency ResultRefs carry their canonical ScientificResult
+            # values directly; the parallel imaginary-mode count comes from
+            # the sibling ScientificResult emitted by the same work item.
+            "frequencies_cm_1": {
+                "type": "array",
+                "items": {"type": "number"},
+            },
+            "frequencies_unit": {"const": "cm^-1"},
+            "num_imaginary_frequencies": {"type": "integer", "minimum": 0},
             # R2.0-logic (D4, additive): optional inline energies copied
             # verbatim from the sibling ScientificResult values (Hartree).
             # Missing keys are omitted, never null/0.  ``gibbs_correction``
@@ -620,6 +629,8 @@ def run_result_json_schema() -> dict[str, Any]:
                         "locator": {"type": "string", "minLength": 1},
                         "subject": {"type": ["string", "null"]},
                         "fetch": {"type": ["string", "null"]},
+                        "step_id": {"type": "string", "minLength": 1},
+                        "work_item_id": {"type": "string", "minLength": 1},
                     },
                 },
             },

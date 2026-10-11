@@ -111,7 +111,7 @@ class TestProgramResolution:
         assert orca.log_extension == "out"
         assert orca.default_executable == "orca"
         assert gaussian.adapter_version == "confflow.program.gaussian.v2"
-        assert gaussian.parser_version == "confflow.program.gaussian.parser.v2"
+        assert gaussian.parser_version == "confflow.program.gaussian.parser.v3"
         assert orca.adapter_version == "confflow.program.orca.v2"
         assert orca.parser_version == "confflow.program.orca.parser.v2"
 
@@ -387,7 +387,29 @@ class TestGaussianParse:
         assert result.final_geometry.atoms == WATER_ATOMS
         assert result.energy == pytest.approx(fake_g16.ENERGY_HARTREE)
         assert result.frequencies_cm == ()
+        assert result.native_metadata["optimization_converged"] is False
         assert result.log_file_name == "s_opt_item0.log"
+
+    def test_explicit_optimization_completion_is_reported(self, tmp_path: Path) -> None:
+        adapter = GaussianProgramAdapter()
+        materialized = adapter.materialize_native_input(gaussian_inputs())
+        log_text = (
+            " Optimization completed.\n"
+            "    -- Stationary point found.\n"
+            + fake_g16.render_log_text("success_opt", WATER_ATOMS, WATER_COORDS)
+        )
+        (tmp_path / materialized.main_input_name).write_text(
+            materialized.files[0].content, encoding="utf-8"
+        )
+        (tmp_path / "s_opt_item0.log").write_text(log_text, encoding="utf-8")
+        result = adapter.parse_native_result(
+            work_dir=str(tmp_path),
+            log_file_name="s_opt_item0.log",
+            materialized=materialized,
+        )
+        assert result.terminated_normally is True
+        assert result.geometry_output is GeometryOutput.PRODUCED
+        assert result.native_metadata["optimization_converged"] is True
 
     def test_success_sp_has_no_geometry(self, tmp_path: Path) -> None:
         result, _ = _parse_gaussian_static(tmp_path, "success_sp")

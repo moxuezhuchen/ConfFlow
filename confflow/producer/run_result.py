@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from collections.abc import Iterable, Mapping
 from typing import Any
 
 from ..domain.canonical import canonical_json_bytes, canonical_sha256
+from ..domain.units import Unit
 from ..persistence.fsatomic import publish_bytes
 from .contract import (
     RESULT_MANIFEST_SCHEMA,
@@ -109,7 +111,11 @@ def _energies_by_subject(
 
 
 def result_ref_entry(
-    record: Any, *, origin: str | None = None, energies: Mapping[str, Any] | None = None
+    record: Any,
+    *,
+    origin: str | None = None,
+    energies: Mapping[str, Any] | None = None,
+    frequency_siblings: Iterable[Any] = (),
 ) -> dict[str, Any]:
     """Project one real ``ScientificResult`` onto its ResultRef wire entry.
 
@@ -139,6 +145,51 @@ def result_ref_entry(
         entry["origin"] = origin
     if energies is not None:
         entry["energies"] = dict(energies)
+    entry.update(_frequency_result_fields(record, frequency_siblings))
+    return entry
+
+
+def _frequency_result_fields(record: Any, siblings: Iterable[Any]) -> dict[str, Any]:
+    """Project canonical frequency values and their real count result."""
+    if getattr(record, "kind", None) != "frequencies":
+        return {}
+    unit = getattr(record, "unit", None)
+    if unit is not Unit.CM_INVERSE:
+        return {}
+    raw_values = getattr(record, "value", None)
+    if not isinstance(raw_values, (tuple, list)):
+        return {}
+    frequencies: list[int | float] = []
+    for value in raw_values:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return {}
+        if not math.isfinite(value):
+            return {}
+        frequencies.append(value)
+
+    identity = (
+        getattr(record, "source_step_id", None),
+        getattr(record, "source_work_item_id", None),
+        getattr(record, "subject_structure_id", None),
+    )
+    count_values = [
+        getattr(candidate, "value", None)
+        for candidate in siblings
+        if getattr(candidate, "kind", None) == "num_imaginary_frequencies"
+        and (
+            getattr(candidate, "source_step_id", None),
+            getattr(candidate, "source_work_item_id", None),
+            getattr(candidate, "subject_structure_id", None),
+        )
+        == identity
+    ]
+    count = count_values[0] if len(count_values) == 1 else None
+    entry: dict[str, Any] = {
+        "frequencies_cm_1": frequencies,
+        "frequencies_unit": Unit.CM_INVERSE.value,
+    }
+    if type(count) is int and count >= 0:
+        entry["num_imaginary_frequencies"] = count
     return entry
 
 
@@ -164,8 +215,11 @@ def build_result_reference_index(
     """
     index: dict[str, dict[str, Any]] = {}
     for step_result in step_results:
-        for record in step_result.results:
-            entry = result_ref_entry(record, origin="produced")
+        records = tuple(step_result.results)
+        for record in records:
+            entry = result_ref_entry(
+                record, origin="produced", frequency_siblings=records
+            )
             result_id = entry["result_id"]
             if result_id in index:
                 raise ValueError(
@@ -173,8 +227,11 @@ def build_result_reference_index(
                     f"(step {step_result.step_id!r})"
                 )
             index[result_id] = entry
-    for record in _iter_run_input_results(run_input_results):
-        entry = result_ref_entry(record, origin="run_input")
+    run_input_records = _iter_run_input_results(run_input_results)
+    for record in run_input_records:
+        entry = result_ref_entry(
+            record, origin="run_input", frequency_siblings=run_input_records
+        )
         result_id = entry["result_id"]
         if result_id in index:
             raise ValueError(
@@ -193,18 +250,25 @@ def result_ref_entries(
     """Ordered ResultRef wire entries: produced results, then run-input refs."""
     entries: list[dict[str, Any]] = []
     for step_result in step_results:
-        energies_map = _energies_by_subject(step_result.results)
-        for record in step_result.results:
+        records = tuple(step_result.results)
+        energies_map = _energies_by_subject(records)
+        for record in records:
             key = (
                 getattr(record, "source_step_id", None),
                 getattr(record, "subject_structure_id", None),
             )
             entries.append(
-                result_ref_entry(record, origin="produced", energies=energies_map.get(key))
+                result_ref_entry(
+                    record,
+                    origin="produced",
+                    energies=energies_map.get(key),
+                    frequency_siblings=records,
+                )
             )
+    run_input_records = _iter_run_input_results(run_input_results)
     entries.extend(
-        result_ref_entry(record, origin="run_input")
-        for record in _iter_run_input_results(run_input_results)
+        result_ref_entry(record, origin="run_input", frequency_siblings=run_input_records)
+        for record in run_input_records
     )
     return entries
 
@@ -246,6 +310,10 @@ def artifact_entry(record: Any) -> dict[str, Any]:
     }
     if record.subject_structure_id:
         entry["subject"] = record.subject_structure_id
+    if record.producer_step_id:
+        entry["step_id"] = record.producer_step_id
+    if record.producer_work_item_id:
+        entry["work_item_id"] = record.producer_work_item_id
     entry["fetch"] = f"run-relative:{path}"
     return entry
 
@@ -336,8 +404,9 @@ def build_runtime_manifest(
             )
         )
         base = len(results)
-        for record in result.results:
-            entry = result_ref_entry(record)
+        records = tuple(result.results)
+        for record in records:
+            entry = result_ref_entry(record, frequency_siblings=records)
             if entry["result_id"] in seen_result_ids:
                 raise ValueError(f"duplicate result_id {entry['result_id']!r} across steps")
             seen_result_ids.add(entry["result_id"])

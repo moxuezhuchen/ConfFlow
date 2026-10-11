@@ -266,7 +266,18 @@ def load_v4_completed_artifacts(
     for entry in entries:
         if not isinstance(entry, dict):
             raise _integrity(f"V4 artifact entry must be an object: {entry!r}")
-        unknown = sorted(set(entry) - {"role", "checksum", "locator", "subject", "fetch"})
+        unknown = sorted(
+            set(entry)
+            - {
+                "role",
+                "checksum",
+                "locator",
+                "subject",
+                "fetch",
+                "step_id",
+                "work_item_id",
+            }
+        )
         if unknown:
             raise _integrity(f"V4 artifact entry has unknown fields: {', '.join(unknown)}")
         role = entry.get("role")

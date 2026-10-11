@@ -24,7 +24,7 @@ import shutil
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from ..domain._immutable import FrozenDict
@@ -46,12 +46,14 @@ from .contracts import ExecutionBinding
 from .execution_adapters import DRIVING_STRUCTURE_PORT
 from .native import (
     CancelOutcome,
+    GeometryOutput,
     MaterializedNativeInput,
     NativeErrorCode,
     NativeExecutionRequest,
     NativeExecutionResult,
     NativeResult,
     ProcessSupervisor,
+    ProducedFile,
     ProgramAdapter,
     ResolvedCalculationInputs,
     StagedArtifact,
@@ -135,6 +137,7 @@ def error_result(
     details: dict[str, Any] | None = None,
     timing: Timing | None = None,
     recovery: RecoveryInfo | None = None,
+    artifacts: ArtifactSet | None = None,
     status: WorkItemStatus = WorkItemStatus.FAILED,
 ) -> WorkItemResult:
     """Build a failed or cancelled work-item result with a typed error."""
@@ -143,7 +146,7 @@ def error_result(
         status=status,
         structures=StructureSet(),
         results=ResultSet(),
-        artifacts=ArtifactSet(),
+        artifacts=artifacts or ArtifactSet(),
         diagnostics=diagnostics,
         timing=timing,
         error=ResultError(
@@ -643,7 +646,14 @@ class WorkItemExecutor:
         except QuotaError as exc:
             if isinstance(exc, QuotaCancelled):
                 return self._finish_cancelled(
-                    work_item, context, wall_start, monotonic_start, confirmed=True
+                    work_item,
+                    context,
+                    wall_start,
+                    monotonic_start,
+                    confirmed=True,
+                    artifacts=self._partial_artifacts(
+                        work_item, context, item_dir, materialized, request=request
+                    ),
                 )
             return self._finish_error(
                 work_item,
@@ -658,7 +668,14 @@ class WorkItemExecutor:
             cancelled = should_cancel is not None and should_cancel()
             if cancelled:
                 return self._finish_cancelled(
-                    work_item, context, wall_start, monotonic_start, confirmed=False
+                    work_item,
+                    context,
+                    wall_start,
+                    monotonic_start,
+                    confirmed=False,
+                    artifacts=self._partial_artifacts(
+                        work_item, context, item_dir, materialized, request=request
+                    ),
                 )
             return self._finish_error(
                 work_item,
@@ -668,12 +685,22 @@ class WorkItemExecutor:
                 wall_start,
                 monotonic_start,
                 diagnostics=tuple(diagnostics),
+                artifacts=self._partial_artifacts(
+                    work_item, context, item_dir, materialized, request=request
+                ),
             )
         execution_result, cancel_outcome = launched
         if cancel_outcome is not None:
             if cancel_outcome.confirmed:
                 return self._finish_cancelled(
-                    work_item, context, wall_start, monotonic_start, confirmed=True
+                    work_item,
+                    context,
+                    wall_start,
+                    monotonic_start,
+                    confirmed=True,
+                    artifacts=self._partial_artifacts(
+                        work_item, context, item_dir, materialized, request=request
+                    ),
                 )
             details: dict[str, Any] = {}
             if execution_result.timed_out:
@@ -690,6 +717,13 @@ class WorkItemExecutor:
                 diagnostics=tuple(diagnostics),
                 details=details or None,
                 recovery=RecoveryInfo(profile=self._recovery_name(context), attempted=False),
+                artifacts=self._partial_artifacts(
+                    work_item,
+                    context,
+                    item_dir,
+                    materialized,
+                    request=request,
+                ),
             )
         if execution_result.timed_out:
             return self._finish_error(
@@ -701,6 +735,13 @@ class WorkItemExecutor:
                 monotonic_start,
                 diagnostics=tuple(diagnostics),
                 details={"timed_out": True, "walltime_seconds": walltime},
+                artifacts=self._partial_artifacts(
+                    work_item,
+                    context,
+                    item_dir,
+                    materialized,
+                    request=request,
+                ),
             )
         log_name = (
             materialized.main_input_name.rsplit(".", 1)[0] + "." + context.adapter.log_extension
@@ -720,8 +761,45 @@ class WorkItemExecutor:
                 wall_start,
                 monotonic_start,
                 diagnostics=tuple(diagnostics),
+                artifacts=self._partial_artifacts(
+                    work_item,
+                    context,
+                    item_dir,
+                    materialized,
+                    request=request,
+                ),
+            )
+        if execution_result.exit_code not in (None, 0) and native_result.terminated_normally:
+            failed_artifacts = self._partial_artifacts(
+                work_item,
+                context,
+                item_dir,
+                materialized,
+                request=request,
+                native_result=native_result,
+                log_file_name=log_name,
+            )
+            return self._finish_error(
+                work_item,
+                context,
+                NativeErrorCode.NATIVE_EXECUTION_ERROR,
+                f"native program exited with code {execution_result.exit_code}",
+                wall_start,
+                monotonic_start,
+                diagnostics=tuple(diagnostics),
+                details={"exit_code": execution_result.exit_code},
+                artifacts=failed_artifacts,
             )
         if not native_result.terminated_normally:
+            failed_artifacts = self._partial_artifacts(
+                work_item,
+                context,
+                item_dir,
+                materialized,
+                request=request,
+                native_result=native_result,
+                log_file_name=log_name,
+            )
             failure = self._finish_error(
                 work_item,
                 context,
@@ -740,6 +818,7 @@ class WorkItemExecutor:
                         details={"check": "normal_termination", "reason": "abnormal_termination"},
                     ),
                 ),
+                artifacts=failed_artifacts,
             )
             return self._maybe_recover(
                 work_item,
@@ -822,6 +901,98 @@ class WorkItemExecutor:
             duration_seconds=max(0.0, time.monotonic() - monotonic_start),
         )
 
+    def _partial_artifacts(
+        self,
+        work_item: WorkItem,
+        context: ItemExecutionContext,
+        item_dir: str,
+        materialized: MaterializedNativeInput,
+        *,
+        request: NativeExecutionRequest | None = None,
+        native_result: NativeResult | None = None,
+        log_file_name: str | None = None,
+        strict: bool = False,
+    ) -> ArtifactSet:
+        """Discover actual native files for a failed item.
+
+        Parsed files remain adapter-authoritative.  When parsing itself
+        failed, this fallback lists only the adapter's known input/output
+        names and includes a file only when it exists in the work directory.
+        """
+        program = materialized.program
+        job = str(materialized.metadata.get("job") or materialized.main_input_name.rsplit(".", 1)[0])
+        outputs: dict[str, str] = {}
+        for entry in materialized.files:
+            outputs[entry.name] = "native_input"
+        if program.value == "orca":
+            base = materialized.main_input_name.rsplit(".", 1)[0]
+            outputs.update(
+                {
+                    f"{base}.out": "native_output",
+                    f"{base}.inp": "native_input",
+                    f"{base}.xyz": "native_geometry",
+                    f"{base}.finalensemble.xyz": "ensemble_geometries",
+                    f"{base}.gbw": "checkpoint_wavefunction",
+                    f"{base}.err": "stderr",
+                }
+            )
+        else:
+            outputs.update(
+                {
+                    log_file_name or f"{job}.{context.adapter.log_extension}": "native_output",
+                    materialized.main_input_name: "native_input",
+                    f"{job}.chk": "checkpoint",
+                    f"{job}.err": "stderr",
+                }
+            )
+        if request is not None:
+            if request.stdout_file:
+                outputs[os.path.basename(request.stdout_file)] = "native_output"
+            if request.stderr_file:
+                outputs[os.path.basename(request.stderr_file)] = "stderr"
+
+        discovered: list[ProducedFile] = []
+        for name, role in outputs.items():
+            # Materialized input names and adapter outputs are flat by
+            # contract.  Refuse accidental path traversal in this fallback.
+            if not name or name in (".", "..") or os.path.basename(name) != name:
+                continue
+            path = os.path.join(item_dir, name)
+            try:
+                if not os.path.isfile(path):
+                    continue
+                discovered.append(ProducedFile(name=name, role=role, size_bytes=os.path.getsize(path)))
+            except OSError:
+                continue
+
+        if native_result is None:
+            native_result = NativeResult(
+                program=program,
+                terminated_normally=False,
+                geometry_output=GeometryOutput.NONE,
+                produced_files=tuple(discovered),
+                log_file_name=log_file_name or "",
+            )
+        else:
+            by_name = {item.name: item for item in native_result.produced_files}
+            for item in discovered:
+                by_name.setdefault(item.name, item)
+            native_result = replace(native_result, produced_files=tuple(by_name.values()))
+        try:
+            return context.adapter.discover_artifacts(
+                work_dir=item_dir,
+                run_relative_prefix=self._run_relative_prefix(context, work_item),
+                native_result=native_result,
+                step_id=context.step_id,
+                work_item_id=work_item.id,
+                subject_structure_id=self._subject_of(work_item),
+            )
+        except Exception:
+            if strict:
+                raise
+            logging.debug("partial native artifact discovery failed", exc_info=True)
+            return ArtifactSet()
+
     def _finish_error(
         self,
         work_item: WorkItem,
@@ -834,6 +1005,7 @@ class WorkItemExecutor:
         diagnostics: tuple[Diagnostic, ...] = (),
         details: dict[str, Any] | None = None,
         recovery: RecoveryInfo | None = None,
+        artifacts: ArtifactSet | None = None,
     ) -> WorkItemResult:
         return error_result(
             work_item,
@@ -847,6 +1019,7 @@ class WorkItemExecutor:
                 if recovery is not None
                 else RecoveryInfo(profile=self._recovery_name(context), attempted=False)
             ),
+            artifacts=artifacts,
         )
 
     def _finish_cancelled(
@@ -857,6 +1030,7 @@ class WorkItemExecutor:
         monotonic_start: float,
         *,
         confirmed: bool,
+        artifacts: ArtifactSet | None = None,
     ) -> WorkItemResult:
         from ..domain.completion import WorkItemStatus
 
@@ -881,6 +1055,7 @@ class WorkItemExecutor:
             ),
             timing=self._timing(wall_start, monotonic_start),
             recovery=RecoveryInfo(profile=self._recovery_name(context), attempted=False),
+            artifacts=artifacts,
             status=WorkItemStatus.CANCELLED,
         )
 
@@ -1181,6 +1356,19 @@ class WorkItemExecutor:
         recovery_attempt: int = 0,
     ) -> WorkItemResult:
         geometry = native_result.final_geometry
+        try:
+            item_dir = context.attempt_dir(work_item)
+        except Exception:
+            item_dir = context.item_directory(work_item.logical_key)
+        discovered = self._partial_artifacts(
+            work_item,
+            context,
+            item_dir,
+            materialized,
+            native_result=native_result,
+            log_file_name=native_result.log_file_name,
+            strict=True,
+        )
         if geometry is not None and tuple(geometry.atoms) != tuple(
             self._resolved_inputs(work_item, context).structure.atoms
         ):
@@ -1193,19 +1381,8 @@ class WorkItemExecutor:
                 monotonic_start,
                 diagnostics=base_diagnostics + tuple(native_result.parser_diagnostics),
                 details={"reason": "geometry_atoms_mismatch"},
+                artifacts=discovered,
             )
-        try:
-            item_dir = context.attempt_dir(work_item)
-        except Exception:
-            item_dir = context.item_directory(work_item.logical_key)
-        discovered = context.adapter.discover_artifacts(
-            work_dir=item_dir,
-            run_relative_prefix=self._run_relative_prefix(context, work_item),
-            native_result=native_result,
-            step_id=context.step_id,
-            work_item_id=work_item.id,
-            subject_structure_id=self._subject_of(work_item),
-        )
         profile_output = context.profile.apply(
             ProfileContext(
                 work_item_id=work_item.id,
@@ -1286,6 +1463,7 @@ class WorkItemExecutor:
             tuple(diagnostics),
             attempted=False,
             succeeded=None,
+            artifacts=profile_output.artifacts,
         )
         return self._maybe_recover(
             work_item,
@@ -1314,6 +1492,7 @@ class WorkItemExecutor:
         attempted: bool,
         succeeded: bool | None,
         extra_diagnostics: tuple[Diagnostic, ...] = (),
+        artifacts: ArtifactSet | None = None,
     ) -> WorkItemResult:
         primary = failures[0] if failures else None
         message = primary.message if primary is not None else "work item failed checks"
@@ -1322,7 +1501,7 @@ class WorkItemExecutor:
             status=WorkItemStatus.FAILED,
             structures=StructureSet(),
             results=ResultSet(),
-            artifacts=ArtifactSet(),
+            artifacts=artifacts or ArtifactSet(),
             diagnostics=tuple(diagnostics) + tuple(failures) + tuple(extra_diagnostics),
             timing=self._timing(wall_start, monotonic_start),
             error=ResultError(

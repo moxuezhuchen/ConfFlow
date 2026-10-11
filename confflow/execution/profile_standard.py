@@ -212,6 +212,9 @@ def _output_structure(context: ProfileContext) -> tuple[StructureRecord, Geometr
         native_result.final_geometry is not None
     ):
         geometry = native_result.final_geometry
+        optimization_converged = (
+            native_result.native_metadata.get("optimization_converged") is True
+        )
         if (
             tuple(geometry.atoms) == tuple(source.atoms)
             and _geometry_digest_of(geometry) == source.geometry_digest
@@ -219,6 +222,7 @@ def _output_structure(context: ProfileContext) -> tuple[StructureRecord, Geometr
             and charge == source.charge
             and multiplicity == source.multiplicity
             and not topo_changed
+            and not optimization_converged
         ):
             # Measurement of unchanged geometry and unchanged state:
             # retain input identity.

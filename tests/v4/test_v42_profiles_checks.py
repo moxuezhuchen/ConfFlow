@@ -92,6 +92,7 @@ def native_result(
     geometry: tuple[tuple[str, ...], tuple[tuple[float, float, float], ...]] | None = None,
     energies: dict[str, float] | None = None,
     frequencies: tuple[float, ...] = (),
+    native_metadata: dict[str, object] | None = None,
 ) -> NativeResult:
     """Build parser facts for profile and check tests."""
     if geometry is None:
@@ -108,7 +109,7 @@ def native_result(
         final_geometry=final,
         energies_hartree=FrozenDict(dict(energies or {})),
         frequencies_cm=frequencies,
-        native_metadata=FrozenDict({}),
+        native_metadata=FrozenDict(dict(native_metadata or {})),
         produced_files=(),
         parser_diagnostics=(),
         log_file_name="job.log",
@@ -229,6 +230,28 @@ class TestProducedVsPassthrough:
         assert record.parent_ids == ("s0",)
         assert record.lineage_root_id == structure("s0").lineage_root_id
         assert record.geometry_digest == structure("s0").geometry_digest
+
+    def test_unchanged_geometry_is_derived_only_after_converged_optimization(self) -> None:
+        source = structure("s0")
+        result = native_result(
+            geometry=(source.atoms, source.coordinates),
+            native_metadata={"optimization_converged": True},
+        )
+        output = apply_profile(result)
+        assert output.geometry_semantics is GeometrySemantics.PRODUCED
+        record = output.structures[0]
+        assert record.id == produced_structure_id(LOGICAL_KEY, 0)
+        assert record.parent_ids == (source.id,)
+        assert record.geometry_digest == source.geometry_digest
+        assert run_check("geometry_required", result).passed is True
+
+    def test_unchanged_geometry_without_optimization_evidence_is_passthrough(self) -> None:
+        source = structure("s0")
+        output = apply_profile(
+            native_result(geometry=(source.atoms, source.coordinates))
+        )
+        assert output.geometry_semantics is GeometrySemantics.PASSTHROUGH
+        assert output.structures[0].id == source.id
 
     def test_passthrough_id_rule(self) -> None:
         assert passthrough_structure_id("step:key") == "step:key:structure:passthrough"
