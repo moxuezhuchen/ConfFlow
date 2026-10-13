@@ -244,6 +244,28 @@ class TestGaussianRendering:
         assert "Extra=1" in text
         assert "B 1 2 F" in text
 
+    def test_extra_sections_keep_their_section_breaks(self) -> None:
+        # Gaussian reads a basis set and a pseudopotential as two sections
+        # only when a blank line separates them.
+        basis_then_ecp = "C H 0\n6-31G(d)\n****\n\nPt 0\nSDD\n"
+        assert grender.resolve_extra_section({"extra_sections": basis_then_ecp}) == basis_then_ecp
+        # Outer blank lines are dropped, a run of blank lines is one break,
+        # and a list entry may carry the break as an empty string.
+        assert (
+            grender.resolve_extra_section({"extra_sections": "\n\n  a\n\n\n\n b \n\n"})
+            == "a\n\nb\n"
+        )
+        assert grender.resolve_extra_section({"gaussian_extra": ["a", "", None, "b", ""]}) == (
+            "a\n\nb\n"
+        )
+        assert grender.resolve_extra_section({"extra_sections": "\n \n"}) == ""
+        # Text without a blank line renders exactly as before.
+        assert grender.resolve_extra_section({"extra_sections": " a\nb "}) == "a\nb\n"
+        with pytest.raises(ValueError, match="must be a string or a list of strings"):
+            grender.resolve_extra_section({"extra_sections": 3})
+        with pytest.raises(ValueError, match="conflict"):
+            grender.resolve_extra_section({"extra_sections": "a\n\nb", "gaussian_extra": "a\nb"})
+
     def test_apply_freeze(self) -> None:
         atoms = ["O", "H"]
         coords = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)]

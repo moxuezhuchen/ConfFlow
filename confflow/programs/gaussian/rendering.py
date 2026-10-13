@@ -298,6 +298,45 @@ def coerce_section_lines(value: Any, key: str) -> list[str]:
     )
 
 
+def _section_text_lines(value: Any, key: str) -> list[str]:
+    """Coerce a trailing-section entry to lines, keeping its section breaks.
+
+    Gaussian separates the sections that follow the geometry (a basis set,
+    then a pseudopotential, ...) with one blank line each, so a blank line
+    inside the entry is part of the input.  Leading and trailing blank lines
+    are dropped and a run of blank lines is one break.
+
+    Parameters
+    ----------
+    value : Any
+        Candidate entry value; ``None`` means absent.
+    key : str
+        Entry name used in error messages.
+
+    Returns
+    -------
+    list[str]
+        Stripped lines in declared order, with ``""`` marking a section break.
+
+    Raises
+    ------
+    ValueError
+        Raised for the shapes :func:`coerce_section_lines` refuses.
+    """
+    coerce_section_lines(value, key)  # the shape check, and its messages
+    if isinstance(value, str):
+        raw = [line.strip() for line in value.splitlines()]
+    else:
+        raw = [str(item).strip() for item in value or () if item is not None]
+    lines: list[str] = []
+    for line in raw:
+        if line or (lines and lines[-1]):
+            lines.append(line)
+    while lines and not lines[-1]:
+        lines.pop()
+    return lines
+
+
 def resolve_extra_section(native: Mapping[str, Any]) -> str:
     """Resolve the trailing extra-section text from native options.
 
@@ -311,7 +350,8 @@ def resolve_extra_section(native: Mapping[str, Any]) -> str:
     str
         ``""`` when no extra content was declared, otherwise the joined
         ``extra_sections``/``gaussian_extra`` lines followed by any
-        ``modredundant`` lines, ending with a newline.
+        ``modredundant`` lines, ending with a newline.  A blank line inside
+        ``extra_sections``/``gaussian_extra`` is kept as a section break.
 
     Raises
     ------
@@ -319,8 +359,8 @@ def resolve_extra_section(native: Mapping[str, Any]) -> str:
         Raised when ``extra_sections`` and ``gaussian_extra`` are both
         non-empty but disagree.
     """
-    primary = coerce_section_lines(native.get("extra_sections"), "extra_sections")
-    alias = coerce_section_lines(native.get("gaussian_extra"), "gaussian_extra")
+    primary = _section_text_lines(native.get("extra_sections"), "extra_sections")
+    alias = _section_text_lines(native.get("gaussian_extra"), "gaussian_extra")
     if primary and alias and primary != alias:
         raise ValueError(
             "native_input_error: Gaussian 'extra_sections' and 'gaussian_extra' "
