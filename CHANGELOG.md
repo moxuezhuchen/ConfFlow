@@ -13,6 +13,16 @@ ConfFlow commit (card) that made it. ConfGen now has one input form, typed
 `confgen.native`); removing the legacy native path (`250f947`) left the
 published boundary (`confflow.boundary.v4`) byte-identical.
 
+### Fixed
+
+- **Gaussian `extra_sections` / `gaussian_extra` keep their blank lines.** The
+  text after the geometry was rendered with every blank line removed, so two
+  sections (a basis set and then a pseudopotential, for example) reached
+  Gaussian as one. A blank line inside the entry is now a section break:
+  leading and trailing blank lines are dropped and a run of them is one break.
+  An entry without a blank line renders byte-for-byte as before; `modredundant`
+  and `link0` are unchanged. Uncommitted at the time of writing.
+
 ### Removed
 
 - **`confgen.native`** (the legacy `chains` / `paths` / `angle_step` / `no_rotate`
