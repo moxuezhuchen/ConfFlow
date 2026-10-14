@@ -604,6 +604,11 @@ class _Explorer:
             good = [t for t in self.targets if self.yields.get(t.id)] or list(self.targets)
             more = max(2, math.ceil(120 / max(1, len(good))))
             self._relax(self._dg([(t, more) for t in good], "dg1"), self.pool, self.restraints)
+        tries = 0
+        while not len(self.pool) and self._left() > 0 and tries < 3:
+            tries += 1  # nothing accepted yet (e.g. every embedding failed): more global starts
+            plan = [(t, max(first, 8) * 2**tries) for t in self.targets]
+            self._relax(self._dg(plan, f"dgr{tries}"), self.pool, self.restraints)
         if not len(self.pool):
             return self.pool, self._stats()
         if self.rotors and st.probes > 0:

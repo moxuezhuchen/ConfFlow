@@ -171,3 +171,19 @@ def test_budget_caps_search_and_release_is_reported() -> None:
     assert len(keys) - len(released) <= 40
     assert run.stats["release_relaxations"] == len(released)
     assert run.totals["generated"] == len(keys)
+
+
+def test_empty_first_rounds_retry_global_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    graph, spec, ref = _pt_toy()
+    real, calls = search.generate_starts, []
+
+    def _flaky(*args: Any, **kwargs: Any) -> search.SearchStarts:
+        calls.append(1)
+        if len(calls) <= 2:  # dg0 and dg1 embed nothing
+            return search.SearchStarts()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(search, "generate_starts", _flaky)
+    run = explore.explore(graph, spec, ref, _SHAPE, _settings(budget=40), _FakeCalc(), map)
+    assert len(calls) >= 3
+    assert run.passing
