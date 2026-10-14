@@ -31,7 +31,13 @@ from confflow.workflow.v4.confgen_schema import REMOVED_ENGINES_MESSAGE, Confgen
 from confflow.workflow.v4.validation import _confgen_seed_requirement
 from tests.v4._dg_search_helpers import _embed, _toy, _write_fake
 
-_SEARCH = {"starts": 2, "embed_timeout_seconds": 20, "max_cycles": 100, "bond_scale": 1.25}
+_SEARCH = {
+    "budget": 12,
+    "starts": 2,
+    "embed_timeout_seconds": 20,
+    "max_cycles": 100,
+    "bond_scale": 1.25,
+}
 _SITES = [{"id": f"s{i}", "atoms": [d]} for i, d in enumerate((2, 3, 4, 5))]
 
 # Byte-exact wire pin: sha256 of the canonical minimal v4 scope wire
@@ -281,9 +287,13 @@ def test_metal_search_completed(tmp_path: Path) -> None:
     first_meta = dict(out.structures[0].metadata)
     assert first_meta[CONFORMER_MEMBER_METADATA_KEY] == 0 and first_meta["seed"] == 7
     assert first_meta["rel_kcal"] == 0.0
-    assert first_meta["search_target"] in {"ref", "t00", "t01", "t02"}
+    assert first_meta["search_target"] in {"t00", "t01", "t02", "unclassified"}
     actual = {dict(r.metadata)["search_actual_target"] for r in out.structures}
-    assert actual <= {"t00", "t01", "t02"} and None not in actual
+    assert actual <= {"t00", "t01", "t02", "unclassified"} and None not in actual
+    for r in out.structures:
+        meta = dict(r.metadata)
+        assert meta["search_target"] == meta["search_actual_target"]
+        assert isinstance(meta["search_start"], int)
     energies = [dict(r.metadata)["energy_eh"] for r in out.structures]
     assert energies == sorted(energies)
     assert len(out.results) == 0
@@ -300,7 +310,8 @@ def test_metal_free_search_completed(tmp_path: Path) -> None:
     assert out.status.value == "completed", [str(d.message) for d in out.diagnostics]
     assert len(out.structures) >= 1 and len(out.results) == 0
     assert all(tuple(r.atoms) == tuple(driving.atoms) for r in out.structures)
-    assert all(dict(r.metadata)["search_actual_target"] is None for r in out.structures)
+    assert all(dict(r.metadata)["search_target"] == "t00" for r in out.structures)
+    assert all(dict(r.metadata)["search_actual_target"] == "t00" for r in out.structures)
 
 
 def test_zero_passing_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -308,12 +319,15 @@ def test_zero_passing_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     out, _ = _run(_native(), _driving_metal(), _write_fake(tmp_path), tmp_path)
     assert out.status.value == "failed"
     errors = [d for d in out.diagnostics if d.is_error]
-    assert len(errors) == 1 and "converged=6" in errors[0].message
-    assert _summary(out, tmp_path)["totals"]["passed"] == 0
+    assert len(errors) == 1 and "none passed all audit checks" in errors[0].message
+    summary = _summary(out, tmp_path)
+    assert summary["totals"]["passed"] == 0
+    assert dict(errors[0].details["failed_checks"]) == summary["search"]["failures"]
+    assert "not_converged" in summary["search"]["failures"]
 
 
-def test_reference_only_search_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A passing reference alone is not a search success: the item fails with the starts count."""
+def test_exit_two_reports_search_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exit 2 with no published rows: the item fails and reports ``search.failures``."""
     native, driving = _native(), _driving_metal()
     item = _item("cg-item", [driving])
     ctx = _ctx(_sci(native), str(tmp_path), _write_fake(tmp_path))
@@ -321,9 +335,10 @@ def test_reference_only_search_failed(tmp_path: Path, monkeypatch: pytest.Monkey
 
     def _launch(*args: Any, **kwargs: Any) -> Any:
         rundir.mkdir(parents=True, exist_ok=True)
-        rows = [{"target": "ref", "start": 0, "passed": True, "failed_checks": []}]
-        totals = {"targets": 3, "generated": 6, "relaxed": 6, "passed": 1, "reference_passed": 1}
-        summary = {"targets": [], "structures": rows, "fragment_charges": [], "totals": totals}
+        totals = {"targets": 3, "generated": 6, "relaxed": 6, "passed": 0, "reference_passed": 0}
+        search = {"relaxations": 6, "failures": {"stereo": 4, "topology": 2}}
+        summary = {"targets": [], "structures": [], "fragment_charges": [], "totals": totals,
+                   "search": search}  # fmt: skip
         (rundir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
         ended = NativeExecutionResult(exit_code=2, wall_time_seconds=0.1, timed_out=False)
         return (ended, None)
@@ -331,7 +346,9 @@ def test_reference_only_search_failed(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setattr(WorkItemExecutor, "launch_and_wait", _launch)
     out = ConfgenExecutor().execute(item, ctx)
     assert out.status.value == "failed"
-    assert "relaxed 6 starts but none passed" in out.diagnostics[0].message
+    assert "ran 6 relaxations but none passed" in out.diagnostics[0].message
+    assert "failed checks: stereo=4, topology=2" in out.diagnostics[0].message
+    assert dict(out.diagnostics[0].details["failed_checks"]) == {"stereo": 4, "topology": 2}
     assert not (rundir / "structures.xyz").exists()
 
 
@@ -477,25 +494,25 @@ def test_v3_scope_fails_with_removal_message(tmp_path: Path) -> None:
 
 
 def test_default_starts_resolution(tmp_path: Path) -> None:
-    """Absent search / null starts resolve to 8 with coordination, 400 without."""
+    """Absent / null starts: the engine default (None with coordination, 60 without)."""
     from confflow.science.confgen.search_spec import resolve_search_starts
 
-    assert resolve_search_starts(None, has_coordination=True) == 8
-    assert resolve_search_starts(None, has_coordination=False) == 400
-    assert resolve_search_starts({"starts": None}, has_coordination=True) == 8
+    assert resolve_search_starts(None, has_coordination=True) is None
+    assert resolve_search_starts(None, has_coordination=False) == 60
+    assert resolve_search_starts({"starts": None}, has_coordination=True) is None
     assert resolve_search_starts({"starts": 3}, has_coordination=False) == 3
     driving = _driving_metal()
     scope = _scope(seed=7)
-    scope.pop("search", None)
+    scope["search"] = {"budget": 12}
     native = FrozenDict(ConfgenModelV3.model_validate(scope).scientific_native())
     out, _ = _run(native, driving, _write_fake(tmp_path), tmp_path)
     assert out.status.value == "completed", [str(d.message) for d in out.diagnostics]
     jobs = list(tmp_path.rglob("search_job.json"))
     assert len(jobs) == 1
-    assert json.loads(jobs[0].read_text())["settings"]["starts"] == 8
+    assert json.loads(jobs[0].read_text())["settings"]["starts"] is None
     summary = _summary(out, tmp_path)
-    assert summary["settings"]["starts"] == 8
-    assert dict(out.structures[0].metadata)["starts"] == 8
+    assert summary["settings"]["starts"] is None
+    assert dict(out.structures[0].metadata)["starts"] is None
 
 
 def test_end_to_end_binding(tmp_path: Path) -> None:
@@ -554,9 +571,14 @@ def test_end_to_end_binding(tmp_path: Path) -> None:
     assert bare.status == "failed"
 
 
-def test_failed_check_histogram_skips_non_mapping_rows() -> None:
+def test_failed_check_histogram_reads_payload() -> None:
+    """The histogram sums ``search.failures`` and the per-row failed checks of a summary."""
     from confflow.execution.confgen_search_run import _histogram
 
     rows = ["junk", {"failed_checks": ["stereo"]}, {"failed_checks": ["stereo", "contacts"]}]
-    assert _histogram(rows) == {"stereo": 2, "contacts": 1}
-    assert _histogram("not a list") == {}
+    payload = {"search": {"failures": {"not_converged": 4, "bad": True}}, "structures": rows}
+    assert _histogram(payload) == {"contacts": 1, "not_converged": 4, "stereo": 2}
+    assert _histogram({"structures": "not a list"}) == {}
+    assert _histogram({"search": {"failures": {"x": True}}}) == {}
+    assert _histogram(rows) == {}
+    assert _histogram("not a mapping") == {}

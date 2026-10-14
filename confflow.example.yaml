@@ -24,9 +24,10 @@
 #
 #   executor: confgen           DG 搜索构象生成（随机性方法，需要显式种子）
 #     confgen.schema_version    4（typed 声明；唯一受支持的 confgen 形式）
-#     confgen.search            可选搜索设置（absent 为全默认；starts 为 null
-#                               时运行时解析：声明 coordination 为每配位类 8，
-#                               否则为 400）
+#     confgen.search            可选搜索设置（absent 为全默认：budget 1500 次优化、
+#                               window_kcal 6、arrangement keep 保持输入配位排布、
+#                               release true；starts 为首轮 DG 出发数，null 时
+#                               60 个分到各配位类，每类至少 2）
 #     confgen.seed              显式整数种子（随机性的唯一权威；v4 必须给出）
 #
 #   executor: calculation       一次量子化学计算
@@ -84,7 +85,7 @@ steps:
     confgen:
       schema_version: 4
       index_base: 1
-      search: {starts: 8}
+      search: {budget: 1500}
       seed: 20260928
     resources:
       cores_per_item: 1

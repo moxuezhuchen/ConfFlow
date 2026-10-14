@@ -1,0 +1,173 @@
+"""Tests for the iterative search ``confflow.science.confgen.explore`` with a fake engine.
+
+The engine is defined here: relaxations return their input geometry and a deterministic energy
+that depends on the central torsion of butane, so several distinct minima exist without any
+real optimisation.  Budgets are tiny because DG embedding runs real RDKit.
+"""
+
+from __future__ import annotations
+
+import math
+from typing import Any
+
+import numpy as np
+import pytest
+
+from confflow.science.confgen import explore, search
+from confflow.science.confgen.calculator import (
+    CAP_HESSIAN,
+    CalculatorInfo,
+    RelaxOutcome,
+    RelaxRequest,
+)
+from confflow.science.confgen.identity import HARTREE_TO_KCAL
+from confflow.science.confgen.rotors import dihedral
+from tests.v4._dg_search_helpers import _SHAPE, _embed, _toy, build_topology
+
+
+def _energy(xyz: np.ndarray) -> float:
+    """Torsion-dependent energy of a butane-like chain (atoms 0-3 are the backbone)."""
+    phi = dihedral(xyz, 0, 1, 2, 3)
+    return -100.0 + 0.004 * (1.0 - math.cos(math.radians(3.0 * phi))) + 0.0005 * (
+        1.0 - math.cos(math.radians(phi))
+    )  # fmt: skip
+
+
+class _FakeCalc:
+    """Deterministic engine: relax returns the input geometry; hessian is positive definite."""
+
+    def __init__(self, capabilities: frozenset[str] = frozenset()) -> None:
+        self.info = CalculatorInfo(
+            "fake", "fake", "0", frozenset(capabilities) | {"restrained_relax"}
+        )
+        self.requests: list[RelaxRequest] = []
+        self.hessian_calls = 0
+
+    def relax_many(self, requests):
+        self.requests += list(requests)
+        return [
+            RelaxOutcome(
+                coords=np.asarray(q.coords, dtype=float),
+                energy_eh=_energy(np.asarray(q.coords)),
+                converged=True,
+            )
+            for q in requests
+        ]
+
+    def hessian(self, request):
+        self.hessian_calls += 1
+        n3 = 3 * len(request.coords)
+        a = np.random.default_rng(7).normal(size=(n3, n3))
+        return a @ a.T + n3 * np.eye(n3)
+
+
+def _butane():
+    """Return (typed graph, reference) for metal-free n-butane."""
+    _, els, ref = _embed("CCCC")
+    graph, _, _ = build_topology(els, ref, (None, [], [], [], 1.25), None)
+    return graph, ref
+
+
+def _pt_toy():
+    """Return (typed graph, spec, reference) for the square-planar Pt toy with one reaction pair."""
+    els, ref = _toy()
+    graph, spec, _ = build_topology(els, ref, (0, [1, 2, 3, 4], [(1, 3)], [], 1.25), _SHAPE)
+    return graph, spec, ref
+
+
+def _settings(**kw: Any) -> explore.ExploreSettings:
+    base: dict[str, Any] = {"budget": 40, "window_kcal": 2.0, "starts": 4, "batch": 16}
+    base.update(kw)
+    return explore.ExploreSettings(**base)
+
+
+def test_budget_is_never_exceeded() -> None:
+    graph, ref = _butane()
+    calc = _FakeCalc()
+    run = explore.explore(graph, None, ref, None, _settings(budget=40), calc, map)
+    assert run.totals["generated"] <= 40
+    assert run.stats["relaxations"] <= 40
+    assert run.stats["relaxations"] > 0
+    assert run.stats["relaxations"] == run.totals["generated"]
+
+
+def test_published_records_are_windowed_sorted_and_unique() -> None:
+    graph, ref = _butane()
+    run = explore.explore(graph, None, ref, None, _settings(budget=60), _FakeCalc(), map)
+    recs = run.records
+    assert recs, "the fake engine should publish at least one minimum"
+    energies = [r.energy_eh for r in recs]
+    assert energies == sorted(energies)
+    lowest = min(energies)
+    assert all((e - lowest) * HARTREE_TO_KCAL <= 2.0 + 1e-9 for e in energies)
+    keys = [(r.target, r.start) for r in recs]
+    assert len(set(keys)) == len(keys)
+    assert all(r.target == "t00" for r in recs)  # metal-free: no coordination class
+    assert all(r.passed and r.coords is not None for r in recs)
+    assert run.totals["passed"] == len(recs)
+
+
+def test_cancellation_raises_search_cancelled() -> None:
+    graph, ref = _butane()
+    with pytest.raises(search.SearchCancelled):
+        explore.explore(
+            graph, None, ref, None, _settings(), _FakeCalc(), map, should_cancel=lambda: True
+        )
+
+
+def test_zero_budget_is_refused() -> None:
+    graph, ref = _butane()
+    with pytest.raises(search.SearchError):
+        explore.explore(graph, None, ref, None, _settings(budget=0), _FakeCalc(), map)
+
+
+def test_without_hessian_capability_no_hessians_run() -> None:
+    graph, ref = _butane()
+    calc = _FakeCalc()
+    run = explore.explore(graph, None, ref, None, _settings(lowmode_gate=2.0), calc, map)
+    assert run.stats["hessians"] == 0
+    assert calc.hessian_calls == 0
+
+
+def test_hessian_capability_enables_low_mode_moves() -> None:
+    graph, ref = _butane()
+    calc = _FakeCalc(frozenset({CAP_HESSIAN}))
+    run = explore.explore(graph, None, ref, None, _settings(lowmode_gate=2.0), calc, map)
+    assert run.stats["hessians"] > 0
+    assert calc.hessian_calls == run.stats["hessians"]
+    assert run.stats["relaxations"] <= 40
+
+
+def test_release_false_publishes_from_restrained_pool() -> None:
+    graph, spec, ref = _pt_toy()
+    off, on = _FakeCalc(), _FakeCalc()
+    run_off = explore.explore(graph, spec, ref, _SHAPE, _settings(release=False), off, map)
+    run_on = explore.explore(graph, spec, ref, _SHAPE, _settings(release=True), on, map)
+    assert not any(q.key.startswith("release/") for q in off.requests)
+    assert any(q.key.startswith("release/") for q in on.requests)
+    assert run_off.records
+    assert run_on.records
+    assert run_off.stats["relaxations"] <= 40
+
+
+def test_arrangement_keep_searches_fewer_classes_than_enumerate() -> None:
+    graph, spec, ref = _pt_toy()
+    kept = explore.explore(
+        graph, spec, ref, _SHAPE, _settings(arrangement="keep"), _FakeCalc(), map
+    )
+    allc = explore.explore(
+        graph, spec, ref, _SHAPE, _settings(arrangement="enumerate"), _FakeCalc(), map
+    )
+    assert len(kept.stats["targets_searched"]) < len(allc.stats["targets_searched"])
+    assert len(kept.stats["targets_searched"]) == 1
+
+
+def test_budget_caps_search_and_release_is_reported() -> None:
+    graph, spec, ref = _pt_toy()
+    calc = _FakeCalc()
+    run = explore.explore(graph, spec, ref, _SHAPE, _settings(budget=40), calc, map)
+    keys = [r.key for r in calc.requests]
+    released = [k for k in keys if k.startswith("release/")]
+    assert len(keys) - len(released) <= 40
+    assert run.stats["release_relaxations"] == len(released)
+    assert run.totals["generated"] == len(keys)

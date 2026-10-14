@@ -27,6 +27,10 @@ from confflow.science.confgen import search
 from tests.v4._dg_search_helpers import _SHAPE, _embed, _toy, _write_fake, build_topology
 
 _VALID_SETTINGS = {
+    "budget": 12,
+    "window_kcal": 6.0,
+    "arrangement": "keep",
+    "release": True,
     "starts": 1,
     "seed": 7,
     "small_ring_torsions": "both",
@@ -121,13 +125,18 @@ def test_exit_zero_metal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     _stub(monkeypatch, ref)
     monkeypatch.setenv("FAKE_XTB_RECORD", str(tmp_path / "record.jsonl"))
     monkeypatch.setenv("FAKE_XTB_PAD", "1")
-    job, work, out, summary_path = _job(tmp_path, *_metal_parts(tmp_path))
+    over = {"arrangement": "enumerate"}
+    job, work, out, summary_path = _job(tmp_path, *_metal_parts(tmp_path), settings_over=over)
     assert worker.main([job]) == 0
-    assert (work / "t00_s00" / "xtb.out").stat().st_size > 100000
+    assert any(p.stat().st_size > 100000 for p in work.rglob("xtb.out"))
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    assert summary["totals"]["generated"] == 3
+    assert 1 <= summary["search"]["relaxations"] <= 12  # the budget caps the search phase
     assert summary["totals"]["passed"] >= 1
     assert [t["id"] for t in summary["targets"]] == ["t00", "t01", "t02"]
+    assert (
+        summary["search"]["relaxations"] + summary["search"]["release_relaxations"]
+        == summary["totals"]["generated"]
+    )
     assert summary["xtb"] == {
         "executable": str(tmp_path / "fake_xtb.py"),
         "version": "fake xtb 99.9",
@@ -137,18 +146,20 @@ def test_exit_zero_metal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     assert energies == sorted(energies)
     text = out.read_text(encoding="utf-8")
     assert [float(v) for v in re.findall(r"energy_eh=(\S+)", text)] == energies
-    assert re.findall(r"target=ref start=0 ", text) == ["target=ref start=0 "]
-    assert len(re.findall(r" actual=t\d\d\n", text)) == summary["totals"]["passed"]
-    assert summary["totals"]["reference_passed"] == 1
-    cinp = next(work.glob("t*_s00/c.inp")).read_text(encoding="utf-8")
-    assert cinp.startswith("$constrain\n  force constant=1.0\n") and cinp.endswith("$end\n")
+    tags = re.findall(r"target=(\S+) start=(\d+) ", text)
+    assert {target for target, _ in tags} <= {"t00", "t01", "t02", "unclassified"}
+    starts = [int(start) for _, start in tags]
+    assert len(set(starts)) == len(starts) == summary["totals"]["passed"]
+    assert len(re.findall(r" actual=(t\d\d|unclassified)\n", text)) == len(tags)
+    cinps = "".join(p.read_text(encoding="utf-8") for p in work.rglob("c.inp"))
+    assert cinps.startswith("$constrain\n  force constant=1.0\n") and "$end\n" in cinps
     for donor in (2, 3, 4, 5):
         assert (
-            f"  distance: 1, {donor}, {float(np.linalg.norm(ref[0] - ref[donor - 1])):.5f}" in cinp
+            f"  distance: 1, {donor}, {float(np.linalg.norm(ref[0] - ref[donor - 1])):.5f}" in cinps
         )
-    assert f"  distance: 2, 4, {float(np.linalg.norm(ref[1] - ref[3])):.5f}" in cinp
+    assert f"  distance: 2, 4, {float(np.linalg.norm(ref[1] - ref[3])):.5f}" in cinps
     rows = [json.loads(line) for line in (tmp_path / "record.jsonl").read_text().splitlines()]
-    assert len(rows) == summary["totals"]["generated"] + 1
+    assert len(rows) >= summary["totals"]["generated"]
     tail = ["in.xyz", "--gfn", "2", "--opt", "--input", "c.inp", "--chrg", "0", "--uhf", "0"]
     for row in rows:
         assert row["argv"] == [str(tmp_path / "fake_xtb.py")] + tail + ["--cycles", "1000"]
@@ -179,11 +190,8 @@ def test_metal_free_real_dg(tmp_path: Path) -> None:
     assert worker.main([job]) == 0
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert summary["totals"]["passed"] >= 1
-    assert all(
-        tuple(r["skipped_checks"])
-        == ("coordination_class", "metal_donor_distance", "donor_orientation")
-        for r in summary["structures"]
-    )
+    assert summary["structures"] and all(r["target"] == "t00" for r in summary["structures"])
+    assert all(r["passed"] is True and r["failed_checks"] == [] for r in summary["structures"])
 
 
 def test_resume_skips_xtb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -193,11 +201,11 @@ def test_resume_skips_xtb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     job, work, _, _ = _job(tmp_path, *_metal_parts(tmp_path))
     assert worker.main([job]) == 0
     first = (tmp_path / "count.txt").read_text(encoding="utf-8").count("x")
-    assert first == 4 and (work / "t00_s00" / "done.json").is_file()
-    assert (work / "ref_s00" / "done.json").is_file()
+    dones = sorted(work.rglob("done.json"))
+    assert first >= 1 and len(dones) == first
     assert worker.main([job]) == 0
     assert (tmp_path / "count.txt").read_text(encoding="utf-8").count("x") == first
-    (work / "t00_s00" / "done.json").write_text("corrupt", encoding="utf-8")
+    dones[0].write_text("corrupt", encoding="utf-8")
     assert worker.main([job]) == 0
     assert (tmp_path / "count.txt").read_text(encoding="utf-8").count("x") == first + 1
 
@@ -211,29 +219,27 @@ def test_exit_two_modes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     job, _, out, summary_path = _job(tmp_path, *base[:5], tag="n")
     assert worker.main([job]) == 2
     launches = (tmp_path / "count.txt").read_text(encoding="utf-8").count("x")
-    assert launches == 4
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert 1 <= launches <= 12 and summary["totals"]["generated"] == launches
+    assert (
+        summary["totals"]["passed"] == 0 and summary["totals"]["relaxed"] == 0 and not out.exists()
+    )
+    assert summary["structures"] == []
+    assert summary["search"]["failures"] == {"not_converged": launches}
     assert worker.main([job]) == 2
     assert (tmp_path / "count.txt").read_text(encoding="utf-8").count("x") == launches
-    summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    assert not out.exists()
-    assert summary["totals"] == {
-        "generated": 3,
-        "passed": 0,
-        "relaxed": 0,
-        "targets": 3,
-        "reference_passed": 0,
-    }
-    assert all(r["failed_checks"] == ["converged"] for r in summary["structures"])
     monkeypatch.setenv("FAKE_XTB_MODE", "crash")
     job, _, _, summary_path = _job(tmp_path, *base[:5], tag="c")
     assert worker.main([job]) == 2
     crashed = json.loads(summary_path.read_text(encoding="utf-8"))
-    assert all(r["energy_eh"] is None for r in crashed["structures"])
+    assert crashed["totals"]["passed"] == 0 and crashed["structures"] == []
+    assert crashed["search"]["failures"].get("not_converged", 0) == crashed["totals"]["generated"]
     monkeypatch.setenv("FAKE_XTB_MODE", "break")
     job, _, _, summary_path = _job(tmp_path, *base[:5], tag="b")
     assert worker.main([job]) == 2
     broken = json.loads(summary_path.read_text(encoding="utf-8"))
-    assert all("topology" in r["failed_checks"] for r in broken["structures"])
+    assert broken["totals"]["passed"] == 0
+    assert broken["search"]["failures"].get("topology", 0) >= 1
 
 
 def test_fragment_charge_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -395,21 +401,12 @@ def test_sigterm_subprocess(tmp_path: Path) -> None:
     for pid in pids:
         with pytest.raises(ProcessLookupError):
             os.kill(pid, 0)
-    finished = json.loads((work / "t00_s00" / "done.json").read_text(encoding="utf-8"))
-    assert finished["converged"] is True
-    interrupted = work / "t01_s00" / "done.json"
-    if interrupted.is_file():
-        assert json.loads(interrupted.read_text(encoding="utf-8"))["converged"] is False
+    finished = [json.loads(p.read_text(encoding="utf-8")) for p in work.rglob("done.json")]
+    assert any(item["converged"] is True for item in finished)
 
 
-def test_reference_label_matches_search_module() -> None:
-    assert search_run._REFERENCE_TARGET == search.REFERENCE_TARGET == "ref"
-
-
-def test_reference_only_pass_is_not_success(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The reference start may pass alone; the search still fails (exit 2, no structures)."""
+def test_broken_starts_publish_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every DG start violates the topology: nothing is published (exit 2, no xyz)."""
     els, ref = _toy()
     broken = np.array(ref, copy=True)
     broken[5] += (3.0, 0.0, 0.0)
@@ -418,19 +415,31 @@ def test_reference_only_pass_is_not_success(
         return SimpleNamespace(coords=(broken,) * args[-1].count, stereo_centers=())
 
     monkeypatch.setattr(search, "generate_dg_seeds", _broken)
-    job, _, out, summary_path = _job(tmp_path, *_metal_parts(tmp_path))
+    # one core: DG runs in this process, so the patched seeder is the one used
+    job, _, out, summary_path = _job(tmp_path, *_metal_parts(tmp_path), cores=1)
     assert worker.main([job]) == 2
-    assert not out.exists()
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    assert summary["totals"] == {
-        "targets": 3,
-        "generated": 3,
-        "passed": 1,
-        "relaxed": 3,
-        "reference_passed": 1,
-    }
-    (ref_row,) = [r for r in summary["structures"] if r["target"] == "ref"]
-    assert ref_row["passed"] is True and ref_row["actual_target"] is not None
+    assert summary["totals"]["passed"] == 0 and not out.exists()
+    assert summary["totals"]["generated"] >= 1
+    assert summary["search"]["failures"].get("topology", 0) >= 1
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("budget", 0),
+        ("window_kcal", 0),
+        ("window_kcal", 0.0),
+        ("arrangement", "x"),
+        ("release", "yes"),
+    ],
+)
+def test_new_search_settings_exit_three(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], key: str, value: Any
+) -> None:
+    job, _, _, _ = _job(tmp_path, *_metal_parts(tmp_path), settings_over={key: value})
+    assert worker.main([job]) == 3
+    assert key in capsys.readouterr().err
 
 
 def test_equal_energy_keeps_frame_metadata(tmp_path: Path) -> None:

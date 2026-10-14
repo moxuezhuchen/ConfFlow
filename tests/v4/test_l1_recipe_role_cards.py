@@ -404,7 +404,7 @@ def test_b2_catalog_contract_bytes_unchanged() -> None:
     # PR146 adds optional frequency values/count and artifact step/work-item metadata;
     # boundary bytes remain unchanged.
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(env)).hexdigest() == (
-        "sha256:43a4025acea31970bee9edc5aed002227eb09c9433ba7e10a8fb74ceab4d0d39"
+        "sha256:3ac561e0d3cb42e43e5a8c3a4fc33dc5ff3b2def59924c368f9c1e5c67c7425e"
     )
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(bdoc)).hexdigest() == (
         "sha256:ff7491007ffd37e4e688e9dd1c73aba5301ccd699f9610d060bd2029cf370f27"

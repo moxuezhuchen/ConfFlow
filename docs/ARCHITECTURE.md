@@ -22,9 +22,9 @@ ConfFlow 是计算化学工作流的**生产者（producer）**：给定一份 V
 confflow/
   domain/        不可变语义核心：结构、绑定、work item、step result、完成策略、digest 规范化（无仓库内依赖）
   workflow/v4/   V4 编译器：严格解析 → 语义校验 → 带类型的绑定图 → 不可变 ExecutionPlan → 合成 WorkItem
-  execution/     能力注册表与各类执行器：calculation / confgen / structure_transform / script、
+  execution/     能力注册表与各类执行器：calculation / confgen / structure_transform / script、confgen_xtb（xTB 计算引擎）、
                  检查（checks）、恢复（recovery）、结果 profile、原生进程边界、批执行
-  science/       纯科学计算：ConfGen DG 搜索（`confgen/`：dg_seed、search、search_spec、topology、graph）、工作拓扑权威、图同构映射、帧比较、键感知
+  science/       纯科学计算：ConfGen 迭代 DG 搜索（`confgen/`：explore、calculator、identity、rotors、dg_seed、search、search_spec、topology、graph）、工作拓扑权威、图同构映射、帧比较、键感知
   programs/      量化程序适配器（Gaussian、ORCA）：输入渲染与输出解析
   persistence/   持久化：逐 work item 的 SQLite 存储、发布协议、复用判定、孤儿回收、run state
   application/   应用层：正式 V4 入口 `v4_entry`、整次运行 `v4_run`、执行服务与仓库（SQLite）
@@ -100,7 +100,7 @@ confflow/
 
 ## 6. 科学包要点
 
-- **ConfGen**（`science/confgen/`）：唯一引擎是 DG 搜索（ETKDG 出发 → GFN2-xTB 受限松弛 → 八项审计）。
+- **ConfGen**（`science/confgen/`）：唯一引擎是迭代 DG 搜索（ETKDG 全局出发与单键/局部重嵌入反馈 → 能量经 `Calculator` 协议的受限松弛（默认 GFN2-xTB）→ 审计 → 去重与去约束收尾）。
   种子是唯一的随机性权威，缺失即编译错误。能力与配置见 [`CONFGEN_CAPABILITIES.md`](CONFGEN_CAPABILITIES.md)。
 - **工作拓扑权威**（`science/topology.py`）：结构记录自带 `working_topology` / `topology_patch`；
   ConfGen、refine、计算输出 profile 都经 `resolve_working_adjacency` 取同一份"预期共价图"，

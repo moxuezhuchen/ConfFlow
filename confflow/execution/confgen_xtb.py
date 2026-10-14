@@ -26,6 +26,7 @@ from pathlib import Path
 import numpy as np
 
 from confflow.science.confgen.calculator import (
+    CAP_HESSIAN,
     CAP_RESTRAINED_RELAX,
     CalculatorInfo,
     RelaxOutcome,
@@ -116,7 +117,9 @@ class XtbCalculator:
     ) -> None:
         self._exe, self._work, self._els = exe, workdir, list(elements)
         self._charge, self._uhf, self._cycles, self._cores = charge, uhf, max_cycles, cores
-        self._info = CalculatorInfo("xtb", "GFN2-xTB", version, frozenset({CAP_RESTRAINED_RELAX}))
+        self._info = CalculatorInfo(
+            "xtb", "GFN2-xTB", version, frozenset({CAP_RESTRAINED_RELAX, CAP_HESSIAN})
+        )
         self._stop = threading.Event()
         self._live: set[subprocess.Popen[str]] = set()
         self._lock = threading.Lock()
@@ -155,6 +158,62 @@ class XtbCalculator:
         if self._stop.is_set():
             raise Cancelled("search cancelled")
         return outcomes
+
+    def hessian(self, request: RelaxRequest) -> np.ndarray | None:
+        """Return the xTB Hessian (3N x 3N, Eh/bohr^2) under the request's restraints."""
+        if self._stop.is_set():
+            raise Cancelled("search cancelled")
+        n3 = 3 * len(self._els)
+        here = self._work / request.key
+        here.mkdir(parents=True, exist_ok=True)
+        write_xyz_frames(here / "in.xyz", self._els, [(request.coords, "hessian")])
+        argv = [self._exe, "in.xyz", "--gfn", "2", "--hess"]
+        cinp = _constrain_block(request.restraints)
+        if cinp is not None:
+            (here / "c.inp").write_text(cinp, encoding="utf-8")
+            argv += ["--input", "c.inp"]
+        argv += ["--chrg", str(self._charge), "--uhf", str(self._uhf)]
+        env = dict(os.environ, OMP_NUM_THREADS=str(self._cores), OPENBLAS_NUM_THREADS="1")
+        env.update(MKL_NUM_THREADS="1", OMP_STACKSIZE="2G")
+        if not self._launch(argv, here, env):
+            return None
+        try:
+            rows = (here / "hessian").read_text(encoding="utf-8").splitlines()[1:]
+            vals = np.array([float(v) for line in rows for v in line.split()], dtype=float)
+        except (OSError, ValueError):
+            return None
+        if vals.size != n3 * n3 or not bool(np.all(np.isfinite(vals))):
+            return None
+        return vals.reshape(n3, n3)
+
+    def _launch(self, argv: list[str], here: Path, env: dict[str, str]) -> bool:
+        """Run one xtb process in ``here`` (cancellable); return whether it exited with 0."""
+        proc = None
+        try:
+            with open(here / "xtb.out", "w", encoding="utf-8") as log:
+                proc = subprocess.Popen(
+                    argv, cwd=here, stdout=log, stderr=subprocess.STDOUT, env=env, text=True
+                )
+        except OSError as exc:
+            (here / "xtb.out").write_text(f"xTB launch failed: {exc}", encoding="utf-8")
+            return False
+        with self._lock:
+            self._live.add(proc)
+        try:
+            while proc.poll() is None:
+                if self._stop.is_set():
+                    proc.terminate()
+                    break
+                time.sleep(0.02)
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        finally:
+            with self._lock:
+                self._live.discard(proc)
+        if self._stop.is_set():
+            raise Cancelled("search cancelled")
+        return proc.returncode == 0
 
     def _relax_one(self, here: Path, xyz: np.ndarray, cinp: str | None) -> RelaxOutcome:
         els = self._els

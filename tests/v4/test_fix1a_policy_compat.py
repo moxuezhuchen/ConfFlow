@@ -110,6 +110,7 @@ def test_fifteen_patterns_byte_identical() -> None:
         ],
         "confflow/execution/confgen_search_worker.py": [
             "confflow.science.confgen.search",
+            "confflow.science.confgen.explore",
             "confflow.science.confgen.search_spec",
             "confflow.science.confgen.graph",
         ],

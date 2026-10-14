@@ -80,7 +80,7 @@ def _confgen_wire() -> dict[str, Any]:
         {
             "schema_version": 4,
             "seed": 7,
-            "search": {"starts": 2},
+            "search": {"budget": 12, "starts": 2},
         }
     ).scientific_native()
 
@@ -168,7 +168,7 @@ _CONFGEN_STEP = """
     confgen:
       schema_version: 4
       seed: 7
-      search: {starts: 1}
+      search: {budget: 12, starts: 1}
 """
 _DOWNSTREAM = {
     "none": "",

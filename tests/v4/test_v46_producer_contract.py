@@ -281,8 +281,12 @@ class TestConfgenV4Section:
             "trigonal_prismatic",
         ]
         assert section["search_defaults"] == {
-            "starts_with_coordination": 8,
-            "starts_without_metal": 400,
+            "starts_with_coordination": None,
+            "starts_without_metal": 60,
+            "budget": 1500,
+            "window_kcal": 6.0,
+            "arrangement": "keep",
+            "release": True,
         }
         assert section["tolerances"] == {"bond_scale": 1.15}
         for gone in (

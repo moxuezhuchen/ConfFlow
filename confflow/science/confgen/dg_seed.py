@@ -14,6 +14,7 @@ is perceived as charge 0 o-quinone, nitrate as charge -3); use the
 
 from __future__ import annotations
 
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -319,8 +320,19 @@ def _embed_per_start(mol: Any, requested: int, params: Any) -> tuple[np.ndarray,
     raised: list[Exception] = []
     for offset in range(requested):
         params.randomSeed = (base * (offset + 1) + offset) % (2**31 - 1)
+        tick = time.monotonic()
         try:
             conf_id = int(rdDistGeom.EmbedMolecule(mol, params))
+            spent = time.monotonic() - tick
+            timed_out = params.timeout > 0 and spent >= 0.8 * params.timeout
+            if conf_id < 0 and params.useBasicKnowledge and not timed_out:
+                # a donor perceived with the wrong hybridisation once the metal is stripped
+                # (e.g. a carbene carbon read as sp) defeats the knowledge terms: retry without
+                params.useBasicKnowledge = False
+                try:
+                    conf_id = int(rdDistGeom.EmbedMolecule(mol, params))
+                finally:
+                    params.useBasicKnowledge = True
         except Exception as exc:
             raised.append(exc)
             continue
