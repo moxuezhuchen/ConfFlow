@@ -1,4 +1,8 @@
-"""DG search pipeline: starts, restrained relaxation driver, and audit."""
+"""DG search pipeline: starts, restrained relaxation driver, and audit.
+
+Relaxation goes through the backend-neutral ``Calculator`` protocol
+(``confflow.science.confgen.calculator``); this module never names an engine.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +13,15 @@ from typing import Any, Literal
 import numpy as np
 
 from confflow.science.bonding import covalent_radius
+from confflow.science.confgen.calculator import (
+    CAP_RESTRAINED_RELAX,
+    Calculator,
+    DistanceRestraint,
+    RelaxRequest,
+)
+from confflow.science.confgen.calculator import (
+    RelaxOutcome as RelaxOutcome,  # re-exported: search.RelaxOutcome predates the protocol
+)
 from confflow.science.confgen.coordination import enumeration, perception, shapes
 from confflow.science.confgen.dg_seed import DGSeedError, DGSeedSettings, generate_dg_seeds
 from confflow.science.confgen.graph import CoordinationSpec, TypedGraph
@@ -106,15 +119,6 @@ class AuditRecord:
     failed_checks: tuple[str, ...] = ()
     skipped_checks: tuple[str, ...] = ()
     actual_class: tuple[int, ...] | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class RelaxOutcome:
-    coords: np.ndarray | None = None
-    energy_eh: float | None = None
-    converged: bool = False
-    wall_s: float = 0.0
-    detail: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,13 +257,13 @@ def generate_starts(
 
 def distance_restraints(
     graph: TypedGraph, spec: CoordinationSpec | None, reference: np.ndarray
-) -> tuple[tuple[int, int, float], ...]:
+) -> tuple[DistanceRestraint, ...]:
     ref = np.asarray(reference, dtype=float)
     metal = graph.metal_center
     donors = list(spec.donor_indices) if spec is not None else []
     pairs = [(int(a), int(b)) for a, b in graph.reaction_pairs]
     wanted = ([(metal, d) for d in donors] if metal is not None else []) + pairs
-    return tuple((i, j, float(np.linalg.norm(ref[i] - ref[j]))) for i, j in wanted)
+    return tuple(DistanceRestraint(i, j, float(np.linalg.norm(ref[i] - ref[j]))) for i, j in wanted)
 
 
 def _radius(symbol: str) -> float:
@@ -417,11 +421,6 @@ def audit_structure(
     return AuditRecord(tuple(n for n in CHECKS if n in failed), tuple(skipped), actual)
 
 
-RelaxFn = Callable[
-    [tuple[SearchStart, ...], tuple[tuple[int, int, float], ...]], Sequence[RelaxOutcome]
-]
-
-
 def _energy_key(record: SearchRecord) -> tuple[float, str, int]:
     return (float(record.energy_eh or 0.0), record.target, record.start)
 
@@ -432,7 +431,7 @@ def run_search(
     reference: np.ndarray,
     shape: str | None,
     settings: SearchSettings,
-    relax: RelaxFn,
+    calculator: Calculator,
     should_cancel: Callable[[], bool] | None = None,
 ) -> SearchRun:
     targets = plan_targets(graph, spec, shape)
@@ -442,7 +441,10 @@ def run_search(
     ref_start = SearchStart(REFERENCE_TARGET, 0, np.asarray(reference, dtype=float), False)
     starts = (*found.starts, ref_start)
     restraints = distance_restraints(graph, spec, reference)
-    outcomes = relax(starts, restraints)
+    if restraints and not calculator.info.supports(CAP_RESTRAINED_RELAX):
+        raise SearchError(f"calculator {calculator.info.program!r} cannot honour restraints")
+    requests = [RelaxRequest(f"{s.target}_s{s.index:02d}", s.coords, restraints) for s in starts]
+    outcomes = calculator.relax_many(requests)
     if len(outcomes) != len(starts):
         raise SearchError(f"relax returned {len(outcomes)} outcomes for {len(starts)} starts")
     _poll(should_cancel)

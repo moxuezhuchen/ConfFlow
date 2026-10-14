@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from confflow.science.confgen import search
+from confflow.science.confgen.calculator import CalculatorInfo
 from confflow.science.confgen.coordination import enumeration, perception, shapes
 from tests.v4._dg_search_helpers import _SHAPE, _embed, _toy, build_topology
 
@@ -18,6 +19,19 @@ def _topo(els, ref, forbid=(), shape=_SHAPE):
     sel = (0, [1, 2, 3, 4], [(1, 3)], list(forbid), 1.25)
     graph, spec, _ = build_topology(els, ref, sel, shape)
     return graph, spec
+
+
+class _Calc:
+    """Fake engine: ``fn(requests)`` returns the outcomes; every batch it receives is kept."""
+
+    def __init__(self, fn, info: CalculatorInfo | None = None) -> None:
+        self._fn = fn
+        self.info = info or CalculatorInfo("fake", "fake")
+        self.batches: list[list[Any]] = []
+
+    def relax_many(self, requests):
+        self.batches.append(list(requests))
+        return self._fn(requests)
 
 
 _WANT_SKIPPED = ("coordination_class", "metal_donor_distance", "donor_orientation")
@@ -110,12 +124,12 @@ def test_restraints() -> None:
     els, ref = _toy()
     graph, spec = _topo(els, ref)
     got = search.distance_restraints(graph, spec, ref)
-    assert [(i, j) for i, j, _ in got] == [(0, 1), (0, 2), (0, 3), (0, 4), (1, 3)]
-    for i, j, d in got:
-        assert d == float(np.linalg.norm(ref[i] - ref[j]))
+    assert [(r.i, r.j) for r in got] == [(0, 1), (0, 2), (0, 3), (0, 4), (1, 3)]
+    for r in got:
+        assert r.target == float(np.linalg.norm(ref[r.i] - ref[r.j]))
     free = search.distance_restraints(graph, None, ref)
-    assert [(i, j) for i, j, _ in free] == [(1, 3)]
-    assert free[0][2] == float(np.linalg.norm(ref[1] - ref[3]))
+    assert [(r.i, r.j) for r in free] == [(1, 3)]
+    assert free[0].target == float(np.linalg.norm(ref[1] - ref[3]))
 
 
 def test_audit() -> None:
@@ -203,14 +217,15 @@ def test_run_search_metal(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(search, "generate_dg_seeds", _echo)
     settings = search.SearchSettings(count=1, seed=7, fragment_charges=((1, -1),))
 
-    def _relax(starts, restraints):
-        assert [(i, j) for i, j, _ in restraints] == [(0, 1), (0, 2), (0, 3), (0, 4), (1, 3)]
+    def _relax(requests):
+        for q in requests:
+            assert [(r.i, r.j) for r in q.restraints] == [(0, 1), (0, 2), (0, 3), (0, 4), (1, 3)]
         outs = []
-        for s in starts:
-            outs.append(search.RelaxOutcome(np.asarray(s.coords), -100.0, True, 0.2))
+        for q in requests:
+            outs.append(search.RelaxOutcome(np.asarray(q.coords), -100.0, True, 0.2))
         return outs
 
-    run = search.run_search(graph, spec, ref, _SHAPE, settings, _relax)
+    run = search.run_search(graph, spec, ref, _SHAPE, settings, _Calc(_relax))
     assert run.totals == {
         "targets": 3,
         "generated": 3,
@@ -241,15 +256,16 @@ def test_run_search_free(monkeypatch: pytest.MonkeyPatch) -> None:
     energies = [-100.0, -99.0, -99.0, None, -96.0, None, -98.0]
     walls = [0.2, 0.2, 0.25, 0.5, 0.2, 0.1, 0.2]
 
-    def _relax(starts, restraints):
-        assert [(i, j) for i, j, _ in restraints] == [(0, 1)]
+    def _relax(requests):
+        for q in requests:
+            assert [(r.i, r.j) for r in q.restraints] == [(0, 1)]
         outs = []
-        for pos, start in enumerate(starts):
-            coords = None if pos == 3 else (broken if pos == 2 else np.asarray(start.coords))
+        for pos, req in enumerate(requests):
+            coords = None if pos == 3 else (broken if pos == 2 else np.asarray(req.coords))
             outs.append(search.RelaxOutcome(coords, energies[pos], pos != 3, walls[pos]))
         return outs
 
-    run = search.run_search(topo, None, ref, None, search.SearchSettings(count=6), _relax)
+    run = search.run_search(topo, None, ref, None, search.SearchSettings(count=6), _Calc(_relax))
     assert run.totals == {
         "targets": 1,
         "generated": 6,
@@ -305,10 +321,10 @@ def test_cancel_and_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
     assert issubclass(search.SearchCancelled, search.SearchError)
     assert issubclass(search.SearchError, ValueError)
     with pytest.raises(search.SearchCancelled):
-        search.run_search(graph, spec, ref, _SHAPE, settings, lambda s, r: [], lambda: True)
+        search.run_search(graph, spec, ref, _SHAPE, settings, _Calc(lambda q: []), lambda: True)
     assert calls == []
     with pytest.raises(search.SearchError, match="relax returned"):
-        search.run_search(graph, spec, ref, _SHAPE, settings, lambda s, r: [], None)
+        search.run_search(graph, spec, ref, _SHAPE, settings, _Calc(lambda q: []), None)
     assert search.SearchRun().summary() == (
         {"targets": [], "structures": [], "fragment_charges": [], "totals": {}}
     )
@@ -351,15 +367,15 @@ def test_relaxed_structure_publishes_under_actual_class(monkeypatch: pytest.Monk
     _echo_dg(monkeypatch, ref)
     moved = _swap_13(ref)
 
-    def _relax(starts, restraints):
+    def _relax(requests):
         return [
             search.RelaxOutcome(
-                np.asarray(s.coords) if s.target == "ref" else moved, -100.0, True, 0.1
+                np.asarray(q.coords) if q.key.startswith("ref_") else moved, -100.0, True, 0.1
             )
-            for s in starts
+            for q in requests
         ]
 
-    run = search.run_search(topo, spec, ref, _SHAPE, search.SearchSettings(count=1), _relax)
+    run = search.run_search(topo, spec, ref, _SHAPE, search.SearchSettings(count=1), _Calc(_relax))
     planned = {t.command for t in run.targets}
     ref_cls = _cmd(ref, spec)
     moved_cls = search.audit_structure(
@@ -418,9 +434,11 @@ def test_class_outside_planned_set_fails(monkeypatch: pytest.MonkeyPatch) -> Non
         ref,
         _SHAPE,
         search.SearchSettings(count=1),
-        lambda starts, restraints: [
-            search.RelaxOutcome(np.asarray(s.coords), -100.0, True, 0.1) for s in starts
-        ],
+        _Calc(
+            lambda requests: [
+                search.RelaxOutcome(np.asarray(q.coords), -100.0, True, 0.1) for q in requests
+            ]
+        ),
     )
     assert run.totals["reference_passed"] == 0 and run.totals["passed"] == 0
     (ref_rec,) = [r for r in run.records if r.target == "ref"]
@@ -442,19 +460,59 @@ def test_reference_start_is_an_extra_relaxed_start(monkeypatch: pytest.MonkeyPat
     els, ref = _toy()
     graph, spec = _topo(els, ref)
     _echo_dg(monkeypatch, ref)
-    seen: list[tuple[search.SearchStart, ...]] = []
-
-    def _relax(starts, restraints):
-        seen.append(tuple(starts))
-        return [search.RelaxOutcome(np.asarray(s.coords), -100.0, True, 0.1) for s in starts]
-
-    run = search.run_search(graph, spec, ref, _SHAPE, search.SearchSettings(count=2), _relax)
-    (starts,) = seen
-    assert len(starts) == 3 * 2 + 1
-    ref_start = starts[-1]
-    assert (ref_start.target, ref_start.index, ref_start.small_ring_torsions) == ("ref", 0, False)
+    calc = _Calc(
+        lambda requests: [
+            search.RelaxOutcome(np.asarray(q.coords), -100.0, True, 0.1) for q in requests
+        ]
+    )
+    run = search.run_search(graph, spec, ref, _SHAPE, search.SearchSettings(count=2), calc)
+    (requests,) = calc.batches
+    assert len(requests) == 3 * 2 + 1
+    assert requests[-1].key == "ref_s00"
+    assert [r.small_ring_torsions for r in run.records if r.target == "ref"] == [False]
     assert [t.id for t in run.targets] == ["t00", "t01", "t02"]
     assert [t.generated for t in run.targets] == [2, 2, 2]
     assert run.totals["generated"] == 6 and run.totals["reference_passed"] == 1
     assert run.passing[0].target == "ref"  # equal energies tie-break on target id
     assert run.summary()["structures"][-1]["target"] == "ref"
+
+
+def test_relax_requests_carry_keys_and_restraints(monkeypatch: pytest.MonkeyPatch) -> None:
+    els, ref = _toy()
+    graph, spec = _topo(els, ref)
+    _echo_dg(monkeypatch, ref)
+    calc = _Calc(
+        lambda requests: [
+            search.RelaxOutcome(np.asarray(q.coords), -100.0, True, 0.1) for q in requests
+        ]
+    )
+    search.run_search(graph, spec, ref, _SHAPE, search.SearchSettings(count=2), calc)
+    (requests,) = calc.batches
+    targets = [t.id for t in search.plan_targets(graph, spec, _SHAPE)]
+    want_keys = [f"{t}_s{k:02d}" for t in targets for k in range(2)] + ["ref_s00"]
+    assert [q.key for q in requests] == want_keys
+    restraints = search.distance_restraints(graph, spec, ref)
+    assert all(q.restraints == restraints for q in requests)
+
+
+def test_calculator_without_restrained_relax_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    els, ref = _toy()
+    graph, spec = _topo(els, ref)
+    _echo_dg(monkeypatch, ref)
+    bare = CalculatorInfo("fake", "fake", capabilities=frozenset())
+    settings = search.SearchSettings(count=1)
+    with pytest.raises(search.SearchError):
+        search.run_search(graph, spec, ref, _SHAPE, settings, _Calc(lambda q: [], bare))
+    # Metal-free graph without reaction pairs: no restraints, so the engine is accepted.
+    mol, els, ref = _embed("C[C@H]1CC[C@@H](O)C1")
+    topo, free_spec, _ = build_topology(els, ref, (None, [], [], [], 1.25), None)
+    assert free_spec is None and search.distance_restraints(topo, None, ref) == ()
+    _echo_dg(monkeypatch, ref)
+    calc = _Calc(
+        lambda requests: [
+            search.RelaxOutcome(np.asarray(q.coords), -100.0, True, 0.1) for q in requests
+        ],
+        bare,
+    )
+    run = search.run_search(topo, None, ref, None, search.SearchSettings(count=1), calc)
+    assert len(run.records) == 2  # one planned start plus the reference start
