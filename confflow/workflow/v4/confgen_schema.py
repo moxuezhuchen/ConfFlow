@@ -9,8 +9,7 @@ rejected outright (see :data:`REMOVED_ENGINES_MESSAGE`).
 
 Only supported controls are exposed, with one explicit atom index
 convention. The ``search`` section is optional; an absent section means all
-defaults (starts resolve at run time: 8 per coordination class when
-``coordination`` is declared, else 400).
+defaults (budget 1500 relaxations, 6 kcal/mol window, input arrangement kept).
 """
 
 from __future__ import annotations
@@ -21,6 +20,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
     StrictFloat,
     StrictInt,
     StrictStr,
@@ -127,14 +127,22 @@ class FragmentChargeModel(ConfgenSpecModel):
 
 
 class ConfgenSearchModel(ConfgenSpecModel):
-    """DG-search settings: DG starts, restrained xTB relaxation, and audit.
+    """Iterative-search settings: DG starts, feedback moves, restrained relaxation, audit.
 
-    ``starts`` counts DG starts per coordination class (or in total without
-    a metal); ``None`` resolves at run time to 8 per coordination class
-    when ``coordination`` is declared, else 400. ``fragment_charges`` atoms
-    use the model's ``index_base``.
+    ``budget`` caps the relaxations of the search phase (the release step adds one per minimum
+    near the lowest); ``window_kcal`` is the energy window for parents and for
+    the published conformers.  ``arrangement: keep`` searches only the input structure's
+    donor arrangement (every class when the input fits none), ``enumerate`` all classes.
+    ``release`` re-relaxes the final minima with only reaction-pair restraints.  ``starts``
+    counts first-round DG starts per coordination class (in total without a metal); ``None``
+    spreads 60 over the classes in scope (at least 2 each), or 60 without a metal.
+    ``fragment_charges`` atoms use the model's ``index_base``.
     """
 
+    budget: StrictInt | None = Field(default=None, ge=1)
+    window_kcal: StrictFloat = Field(default=6.0, gt=0)
+    arrangement: Literal["keep", "enumerate"] = "keep"
+    release: StrictBool = True
     starts: StrictInt | None = Field(default=None, ge=1)
     small_ring_torsions: Literal["both", "on", "off"] = "both"
     embed_timeout_seconds: StrictInt = Field(default=120, ge=0)

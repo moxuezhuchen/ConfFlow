@@ -61,10 +61,10 @@ steps:
     bindings:
       structure: {source: {run: structures}}
     confgen:
-      schema_version: 4           # typed v4：DG 搜索是唯一的 confgen 引擎
+      schema_version: 4           # typed v4：迭代 DG 搜索是唯一的 confgen 引擎
       index_base: 1               # 原子序号从 1 开始
       seed: 11                    # 显式整数种子（随机性的唯一权威）
-      search: {starts: 400}       # 无金属时为总出发数；声明 coordination 时为每配位类
+      search: {budget: 1500}      # 搜索阶段的优化次数上限（收尾另加；默认 1500）
 
   - id: s_refine
     executor: structure_transform
@@ -89,7 +89,7 @@ steps:
 
 ### ConfGen 的声明方式
 
-ConfGen 只有一个生成引擎（DG 搜索），文档必须写 `schema_version: 4`，`seed` 必填。
+ConfGen 只有一个生成引擎（迭代 DG 搜索：全局 DG 出发、势阱探测、反馈轮次、去约束收尾），文档必须写 `schema_version: 4`，`seed` 必填。
 完整字段、默认值、审计项与输出见 [`CONFGEN_CAPABILITIES.md`](CONFGEN_CAPABILITIES.md)。
 
 - `index_base`（0 或 1）、`seed`（整数）、`topology`（`bonds`/`add_bond`/`del_bond`/`atoms`）、

@@ -387,14 +387,16 @@ def _confgen_section() -> dict[str, Any]:
     ``schema_version: 4``: an explicit index base, a required seed, typed
     topology, the ``bond_scale`` tolerance, an optional single-shape
     coordination scope, and the optional ``search`` settings (absent means
-    all defaults; ``starts: null`` resolves at run time to 8 per
-    coordination class with a metal, else 400).
+    all defaults: budget 1500 relaxations, 6 kcal/mol window, input arrangement kept;
+    ``starts: null`` spreads 60 first-round DG starts over the classes in scope).
     """
     from ..science.confgen.graph import CN_SHAPES, SUPPORTED_SHAPES
     from ..science.confgen.search_spec import (
         DEFAULT_BOND_SCALE,
+        DEFAULT_SEARCH_BUDGET,
         DEFAULT_SEARCH_STARTS_WITH_METAL,
         DEFAULT_SEARCH_STARTS_WITHOUT_METAL,
+        DEFAULT_SEARCH_WINDOW_KCAL,
     )
 
     ordered: dict[str, Any] = {
@@ -406,13 +408,17 @@ def _confgen_section() -> dict[str, Any]:
         "search_defaults": {
             "starts_with_coordination": DEFAULT_SEARCH_STARTS_WITH_METAL,
             "starts_without_metal": DEFAULT_SEARCH_STARTS_WITHOUT_METAL,
+            "budget": DEFAULT_SEARCH_BUDGET,
+            "window_kcal": DEFAULT_SEARCH_WINDOW_KCAL,
+            "arrangement": "keep",
+            "release": True,
         },
         "tolerances": {"bond_scale": DEFAULT_BOND_SCALE},
         "description": (
             "Typed ConfGen v4 scope: schema_version 4 with explicit index_base, "
             "a required seed, typed topology, the bond_scale tolerance, an "
             "optional single-shape coordination scope with FORBIDDEN_TRANS "
-            "policies, and optional search settings for the DG-search engine."
+            "policies, and optional search settings for the iterative search engine."
         ),
     }
     return ordered

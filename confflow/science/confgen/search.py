@@ -1,23 +1,21 @@
-"""DG search pipeline: starts, restrained relaxation driver, and audit.
+"""DG search building blocks: coordination targets, DG starts, restraints, and the audit.
 
-Relaxation goes through the backend-neutral ``Calculator`` protocol
-(``confflow.science.confgen.calculator``); this module never names an engine.
+The iterative search that uses them lives in ``confflow.science.confgen.explore``; every
+relaxation goes through the backend-neutral ``Calculator`` protocol, so this module never
+names an engine.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Literal
 
 import numpy as np
 
 from confflow.science.bonding import covalent_radius
 from confflow.science.confgen.calculator import (
-    CAP_RESTRAINED_RELAX,
-    Calculator,
     DistanceRestraint,
-    RelaxRequest,
 )
 from confflow.science.confgen.calculator import (
     RelaxOutcome as RelaxOutcome,  # re-exported: search.RelaxOutcome predates the protocol
@@ -28,9 +26,9 @@ from confflow.science.confgen.graph import CoordinationSpec, TypedGraph
 from confflow.science.data import get_atomic_number
 
 __all__ = (
-    "CHECKS REFERENCE_TARGET AuditRecord RelaxOutcome SearchCancelled SearchError SearchRecord "
+    "CHECKS AuditRecord RelaxOutcome SearchCancelled SearchError SearchRecord "
     "SearchRun SearchSettings SearchStart SearchStarts SearchTarget audit_structure "
-    "distance_restraints generate_starts plan_targets run_search"
+    "distance_restraints generate_starts plan_targets"
 ).split()
 
 CHECKS = tuple(
@@ -39,8 +37,9 @@ CHECKS = tuple(
 )
 _SKIPPED_FREE = ("coordination_class", "metal_donor_distance", "donor_orientation")
 _R_TOL, _MD_TOL, _C_SCALE, _D_TOL = 0.02, 0.03, 0.70, 30.0
-#: Start label of the input structure relaxed under the same restraints; not a planned target.
-REFERENCE_TARGET = "ref"
+#: Topology hysteresis (x covalent-radius sum): a reference bond breaks only beyond _BREAK,
+#: a new bond forms only below _FORM; ordinary stretching during relaxation is not a change.
+_BREAK, _FORM = 1.45, 1.10
 
 
 def _signed_volume(coords: np.ndarray, center: int, neighbors: Sequence[int]) -> float:
@@ -155,9 +154,13 @@ class SearchRun:
     passing: tuple[SearchRecord, ...] = ()
     fragment_charges: tuple[tuple[int, int], ...] = ()
     totals: dict[str, int] | None = None
+    #: Strategy statistics of an iterative search (budget use, failures); ``None`` otherwise.
+    stats: dict[str, Any] | None = None
 
     def summary(self) -> dict[str, Any]:
+        extra = {} if self.stats is None else {"search": dict(self.stats)}
         return {
+            **extra,
             "targets": [t.to_dict() for t in self.targets],
             "structures": [r.to_dict() for r in self.records],
             "fragment_charges": [
@@ -298,6 +301,48 @@ def _perceive_bonds(
     return bonds
 
 
+def _reference_bonds(
+    ref: np.ndarray,
+    elements: Sequence[str],
+    metal: int | None,
+    pairs: Sequence[tuple[int, int]],
+    scale: float,
+    donors: Sequence[int],
+) -> set[tuple[int, int]]:
+    """Bonds of the reference; two donors of the metal bond only at real bonding distance."""
+    bonds = _perceive_bonds(ref, elements, metal, pairs, scale)
+    dd = {(min(a, b), max(a, b)) for a in donors for b in donors if a != b}
+    radii = [_radius(e) for e in elements]
+    return {
+        p for p in bonds if p not in dd or _dist(ref, *p) <= _FORM * (radii[p[0]] + radii[p[1]])
+    }
+
+
+def _topology_changed(
+    new: np.ndarray,
+    elements: Sequence[str],
+    metal: int | None,
+    pairs: Sequence[tuple[int, int]],
+    ref_bonds: set[tuple[int, int]],
+    donors: Sequence[int],
+) -> bool:
+    """Return whether a reference bond broke or a new bond formed (with hysteresis)."""
+    try:
+        radii = np.array([_radius(e) for e in elements])
+    except ValueError:
+        return True
+    ratio = np.linalg.norm(new[:, None] - new[None], axis=-1) / (radii[:, None] + radii[None])
+    if any(ratio[i, j] > _BREAK for i, j in ref_bonds):
+        return True
+    skip = {(min(a, b), max(a, b)) for a, b in pairs}
+    skip |= {(min(a, b), max(a, b)) for a in donors for b in donors if a != b}
+    for i, j in np.argwhere(np.triu(ratio < _FORM, 1)):
+        p = (int(i), int(j))
+        if metal not in p and p not in skip and p not in ref_bonds:
+            return True
+    return False
+
+
 def _adjacency(n: int, bonds: set[tuple[int, int]], metal: int | None) -> list[list[int]]:
     adj: list[list[int]] = [[] for _ in range(n)]
     for i, j in bonds:
@@ -342,20 +387,14 @@ def audit_structure(
     metal = graph.metal_center
     pairs = [(int(a), int(b)) for a, b in graph.reaction_pairs]
     failed = [] if converged else ["converged"]
-    ref_bonds = _perceive_bonds(ref, elements, metal, pairs, bond_scale)
-    try:
-        new_bonds = _perceive_bonds(new, elements, metal, pairs, bond_scale)
-    except ValueError:
-        new_bonds = set()
+    donors = list(spec.donor_indices) if spec is not None and metal is not None else []
+    ref_bonds = _reference_bonds(ref, elements, metal, pairs, bond_scale, donors)
+    if _topology_changed(new, elements, metal, pairs, ref_bonds, donors):
         failed.append("topology")
-    if "topology" not in failed and new_bonds != ref_bonds:
-        failed.append("topology")
-    donors: list[int] = []
     actual: tuple[int, ...] | None = None
     if metal is not None:
         if spec is None or shape is None:
             raise SearchError("metal-bearing audit needs a coordination spec and shape")
-        donors = list(spec.donor_indices)
         sites = [site.id for site in spec.binding_sites]
         group = shapes.proper_rotation_group(shape)
         wanted = {tuple(commanded)} if allowed is None else {tuple(c) for c in allowed}
@@ -419,113 +458,3 @@ def audit_structure(
         failed.append("contacts")
     skipped = () if metal is not None else _SKIPPED_FREE
     return AuditRecord(tuple(n for n in CHECKS if n in failed), tuple(skipped), actual)
-
-
-def _energy_key(record: SearchRecord) -> tuple[float, str, int]:
-    return (float(record.energy_eh or 0.0), record.target, record.start)
-
-
-def run_search(
-    graph: TypedGraph,
-    spec: CoordinationSpec | None,
-    reference: np.ndarray,
-    shape: str | None,
-    settings: SearchSettings,
-    calculator: Calculator,
-    should_cancel: Callable[[], bool] | None = None,
-) -> SearchRun:
-    targets = plan_targets(graph, spec, shape)
-    _poll(should_cancel)
-    found = generate_starts(graph, spec, reference, shape, targets, settings)
-    _poll(should_cancel)
-    ref_start = SearchStart(REFERENCE_TARGET, 0, np.asarray(reference, dtype=float), False)
-    starts = (*found.starts, ref_start)
-    restraints = distance_restraints(graph, spec, reference)
-    if restraints and not calculator.info.supports(CAP_RESTRAINED_RELAX):
-        raise SearchError(f"calculator {calculator.info.program!r} cannot honour restraints")
-    requests = [RelaxRequest(f"{s.target}_s{s.index:02d}", s.coords, restraints) for s in starts]
-    outcomes = calculator.relax_many(requests)
-    if len(outcomes) != len(starts):
-        raise SearchError(f"relax returned {len(outcomes)} outcomes for {len(starts)} starts")
-    _poll(should_cancel)
-    commanded = {t.id: t.command for t in targets}
-    planned = {t.command for t in targets}
-    class_target = {t.command: t.id for t in targets}
-    centers, scale = found.stereo_centers, settings.bond_scale
-    skipped = () if graph.metal_center is not None else _SKIPPED_FREE
-    failures = dict(found.failures)
-    tallies = {t.id: [0, 0, 0] for t in targets}
-    realized = {t.id: 0 for t in targets}
-    records: list[SearchRecord] = []
-    for start, outcome in zip(starts, outcomes):
-        new = outcome.coords
-        is_ref = start.target == REFERENCE_TARGET
-        if not is_ref:
-            tallies[start.target][0] += 1
-        actual: tuple[int, ...] | None = None
-        if new is None:
-            bad: tuple[str, ...] = ("converged",)
-        else:
-            if not is_ref:
-                tallies[start.target][1] += 1
-            cmd = () if is_ref else commanded.get(start.target, ())
-            audit = audit_structure(
-                new,
-                graph,
-                spec,
-                reference,
-                shape,
-                cmd,
-                centers,
-                outcome.converged,
-                scale,
-                allowed=planned,
-            )
-            bad, actual = audit.failed_checks, audit.actual_class
-        ok = not bad
-        if ok and not is_ref:
-            tallies[start.target][2] += 1
-        actual_target = class_target.get(actual) if actual is not None else None
-        if ok and actual_target is not None:
-            realized[actual_target] += 1
-        target, index, flag = start.target, start.index, start.small_ring_torsions
-        energy, wall = outcome.energy_eh, float(outcome.wall_s)
-        records.append(
-            SearchRecord(
-                target,
-                index,
-                flag,
-                energy,
-                ok,
-                bad,
-                skipped,
-                wall,
-                new if ok else None,
-                actual_target,
-            )
-        )
-    _poll(should_cancel)
-    done = []
-    for t in targets:
-        g, r, p = tallies[t.id]
-        done.append(
-            replace(
-                t,
-                generated=g,
-                relaxed=r,
-                passed=p,
-                error=failures.get(t.id),
-                realized=realized[t.id],
-            )
-        )
-    passing = tuple(sorted((r for r in records if r.passed), key=_energy_key))
-    relaxed = sum(t.relaxed for t in done)
-    reference_passed = sum(1 for r in records if r.target == REFERENCE_TARGET and r.passed)
-    totals = dict(
-        targets=len(done),
-        generated=len(found.starts),
-        passed=len(passing),
-        relaxed=relaxed,
-        reference_passed=reference_passed,
-    )
-    return SearchRun(tuple(done), tuple(records), passing, tuple(settings.fragment_charges), totals)

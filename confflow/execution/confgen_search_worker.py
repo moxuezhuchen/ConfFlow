@@ -9,7 +9,10 @@ Exit 0 passing / 2 none pass / 3 bad job; SIGTERM stops launches, exits non-zero
 
 from __future__ import annotations
 
+import concurrent.futures as futures
+import contextlib
 import json
+import multiprocessing
 import signal
 import sys
 import threading
@@ -26,6 +29,7 @@ from confflow.execution.confgen_xtb import (
     write_xyz_frames,
     xtb_version,
 )
+from confflow.science.confgen.explore import ExploreSettings, ParallelMap, explore
 from confflow.science.confgen.graph import TypedGraph
 from confflow.science.confgen.search_spec import resolve_search_coordination
 
@@ -118,13 +122,32 @@ def _load_job(path: str) -> dict[str, Any]:
         if atom >= len(els):
             raise _JobError(f"job fragment charge atom {atom!r} is out of range")
         frag.append((atom, _int(entry[1], "settings.fragment_charges charge")))
-    settings = search.SearchSettings(
-        _int(section.get("starts"), "settings.starts", 1),
-        _int(section.get("seed"), "settings.seed"),
-        typed_mode,
-        _int(section.get("embed_timeout_seconds"), "settings.embed_timeout_seconds", 0),
-        tuple(frag),
-        float(scale),
+    starts = section.get("starts")
+    window = section.get("window_kcal")
+    if isinstance(window, bool) or not isinstance(window, (int, float)) or not window > 0:
+        raise _JobError(f"job field 'settings.window_kcal' must be positive, got {window!r}")
+    arrangement = section.get("arrangement")
+    if arrangement not in ("keep", "enumerate"):
+        raise _JobError(f"job field 'settings.arrangement' is invalid: {arrangement!r}")
+    typed_arr: Literal["keep", "enumerate"] = arrangement
+    release = section.get("release")
+    if not isinstance(release, bool):
+        raise _JobError(f"job field 'settings.release' must be a boolean, got {release!r}")
+    cores = _int(raw.get("cores"), "cores", 1)
+    settings = ExploreSettings(
+        budget=_int(section.get("budget"), "settings.budget", 1),
+        window_kcal=float(window),
+        seed=_int(section.get("seed"), "settings.seed"),
+        starts=None if starts is None else _int(starts, "settings.starts", 1),
+        arrangement=typed_arr,
+        batch=8 * cores,
+        release=release,
+        small_ring_torsions=typed_mode,
+        embed_timeout=_int(
+            section.get("embed_timeout_seconds"), "settings.embed_timeout_seconds", 0
+        ),
+        fragment_charges=tuple(frag),
+        bond_scale=float(scale),
     )
     job = dict(raw)
     job["reference"] = ref
@@ -135,7 +158,7 @@ def _load_job(path: str) -> dict[str, Any]:
     job["charge"] = _int(raw.get("charge"), "charge")
     job["uhf"] = _int(raw.get("uhf"), "uhf")
     job["max_cycles"] = _int(raw.get("max_cycles"), "max_cycles", 1)
-    job["cores"] = _int(raw.get("cores"), "cores", 1)
+    job["cores"] = cores
     for key in ("xtb", "workdir", "structures_file", "summary_file"):
         job[key] = _text(raw.get(key), key)
     return job
@@ -157,7 +180,7 @@ def _run(job_path: str) -> int:
     version = xtb_version(exe)
     work = Path(job["workdir"])
     work.mkdir(parents=True, exist_ok=True)
-    settings: search.SearchSettings = job["settings"]
+    settings: ExploreSettings = job["settings"]
     calc = XtbCalculator(
         exe, work, els, job["charge"], job["uhf"], job["max_cycles"], job["cores"], version
     )
@@ -166,15 +189,29 @@ def _run(job_path: str) -> int:
         calc.cancel()
 
     try:
-        run = search.run_search(
-            job["graph"],
-            job["spec"],
-            ref,
-            job["shape"],
-            settings,
-            calc,
-            should_cancel=_STOP.is_set,
-        )
+        # spawn, not fork: the xTB calculator runs threads, and forking a threaded process can
+        # deadlock the children; one core needs no pool at all
+        ctx = multiprocessing.get_context("spawn")
+        with contextlib.ExitStack() as stack:
+            pmap: ParallelMap = map  # type: ignore[assignment]
+            if job["cores"] > 1:
+                pool = stack.enter_context(
+                    futures.ProcessPoolExecutor(max_workers=job["cores"], mp_context=ctx)
+                )
+
+                def pmap(fn: Any, items: Any) -> Any:
+                    return pool.map(fn, items, chunksize=2)
+
+            run = explore(
+                job["graph"],
+                job["spec"],
+                ref,
+                job["shape"],
+                settings,
+                calc,
+                pmap,
+                should_cancel=_STOP.is_set,
+            )
     except Cancelled as exc:
         raise search.SearchCancelled(str(exc)) from exc
     except search.SearchCancelled:
@@ -185,7 +222,7 @@ def _run(job_path: str) -> int:
     summary = {"settings": settings_doc, **run.summary()}
     summary["xtb"] = {"executable": exe, "version": version}
     Path(job["summary_file"]).write_text(json.dumps(summary, sort_keys=True, indent=2) + "\n")
-    if not any(r.target != search.REFERENCE_TARGET for r in run.passing):
+    if not run.passing:
         sys.stderr.write("error: no structure passed all audit checks\n")
         return 2
     low = float(run.passing[0].energy_eh or 0.0)

@@ -292,10 +292,15 @@ def test_resolve_coordination_rejects_malformed_section(section: Any, match: str
 
 @pytest.mark.parametrize(
     ("search", "has_coordination", "expected"),
-    [(None, True, 8), (None, False, 400), ({"starts": None}, False, 400), ({"starts": 3}, True, 3)],
+    [
+        (None, True, None),
+        (None, False, 60),
+        ({"starts": None}, True, None),
+        ({"starts": 3}, True, 3),
+    ],
 )
 def test_resolve_starts_defaults_and_declared(
-    search: dict[str, Any] | None, has_coordination: bool, expected: int
+    search: dict[str, Any] | None, has_coordination: bool, expected: int | None
 ) -> None:
     assert resolve_search_starts(search, has_coordination=has_coordination) == expected
 

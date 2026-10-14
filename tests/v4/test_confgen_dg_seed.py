@@ -365,9 +365,10 @@ def test_carbonyl_fragments_stay_neutral_in_commanded_class() -> None:
 def test_strained_placement_timeout_returns_promptly() -> None:
     graph, spec, ref = _load_ts1()
     tick = time.monotonic()
-    settings = DGSeedSettings(count=3, random_seed=5, timeout_seconds=5)
+    settings = DGSeedSettings(count=3, random_seed=5, timeout_seconds=2)
     result = generate_dg_seeds(graph, spec, ref, [0, 2, 3, 5, 4, 1], "octahedral", settings)
-    assert time.monotonic() - tick < 30.0
+    # a timed-out start is retried once without basic knowledge, so each start may take two calls
+    assert time.monotonic() - tick < 2 * 3 * settings.timeout_seconds + 10.0
     assert len(result.coords) <= 3
 
 
@@ -410,25 +411,53 @@ def test_spec_none_metal_free_embedding() -> None:
 
 
 def test_per_start_embed_skips_failed_calls(monkeypatch) -> None:
-    """One conformer per RDKit call: failed calls are skipped, the rest are kept."""
+    """One conformer per RDKit call: failed starts are skipped, the rest are kept."""
     from rdkit.Chem import rdDistGeom
 
     real = rdDistGeom.EmbedMolecule
     seeds: list[int] = []
+    order: dict[int, int] = {}
 
     def _flaky(mol, params):
-        seeds.append(int(params.randomSeed))
-        if len(seeds) % 2 == 0:
+        # a failing start fails its basic-knowledge call and the fallback retry alike,
+        # so the failure is keyed on the start's seed, not on the call count
+        seed = int(params.randomSeed)
+        seeds.append(seed)
+        if order.setdefault(seed, len(order)) % 2 == 1:
             return -1
         return real(mol, params)
 
     chiral, crel = _organic_graph()
     monkeypatch.setattr(rdDistGeom, "EmbedMolecule", _flaky)
     result = generate_dg_seeds(chiral, None, crel, [], "x", DGSeedSettings(4, 7))
-    assert len(seeds) == 4 and len(set(seeds)) == 4
+    assert len(order) == 4
+    assert len(seeds) == 4 + 2  # the two failed starts were each retried once
     assert len(result.coords) == 2 and result.requested == 4
     assert result.stereo_centers == (2,)
     assert not np.allclose(result.coords[0], result.coords[1])
+
+
+def test_per_start_embed_falls_back_without_basic_knowledge(monkeypatch) -> None:
+    """-1 with basic knowledge is retried once without it; the flag is restored afterwards."""
+    from rdkit.Chem import rdDistGeom
+
+    real = rdDistGeom.EmbedMolecule
+    flags: list[bool] = []
+    params_seen: list[object] = []
+
+    def _fallback(mol, params):
+        params_seen.append(params)
+        flags.append(bool(params.useBasicKnowledge))
+        if params.useBasicKnowledge:
+            return -1
+        return real(mol, params)
+
+    chiral, crel = _organic_graph()
+    monkeypatch.setattr(rdDistGeom, "EmbedMolecule", _fallback)
+    result = generate_dg_seeds(chiral, None, crel, [], "x", DGSeedSettings(1, 7))
+    assert flags == [True, False]
+    assert len(result.coords) == 1
+    assert params_seen[0].useBasicKnowledge is True
 
 
 def test_per_start_embed_all_unembeddable_is_empty(monkeypatch) -> None:

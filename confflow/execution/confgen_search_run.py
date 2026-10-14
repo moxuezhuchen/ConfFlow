@@ -22,6 +22,8 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from confflow.science.confgen.search_spec import (
+    DEFAULT_SEARCH_BUDGET,
+    DEFAULT_SEARCH_WINDOW_KCAL,
     build_search_context,
     resolve_search_starts,
 )
@@ -46,18 +48,24 @@ from .xyz_import import import_xyz
 __all__ = ["run_search_item"]
 
 _HARTREE_TO_KCAL = 627.5094740631
-#: Reference-start label; equals ``search.REFERENCE_TARGET`` (pinned by a test).
-_REFERENCE_TARGET = "ref"
 
 
 class _ImportError(DomainError):
     pass
 
 
-def _histogram(rows: Any) -> dict[str, int]:
+def _histogram(payload: Any) -> dict[str, int]:
+    """Return the failure-reason counts of a summary (iterative search: ``search.failures``)."""
     counts: dict[str, int] = {}
+    section = payload.get("search") if isinstance(payload, Mapping) else None
+    failures = section.get("failures") if isinstance(section, Mapping) else None
+    if isinstance(failures, Mapping):
+        for name, value in failures.items():
+            if isinstance(value, int) and not isinstance(value, bool):
+                counts[str(name)] = counts.get(str(name), 0) + value
+    rows = payload.get("structures") if isinstance(payload, Mapping) else None
     for row in rows if isinstance(rows, list) else []:
-        if not isinstance(row, Mapping) or row.get("target") == _REFERENCE_TARGET:
+        if not isinstance(row, Mapping):
             continue
         for check in row.get("failed_checks", []) or []:
             counts[str(check)] = counts.get(str(check), 0) + 1
@@ -66,7 +74,7 @@ def _histogram(rows: Any) -> dict[str, int]:
 
 def _read_validated(
     driving: StructureRecord, rundir: str | os.PathLike[str]
-) -> tuple[dict[str, Any], list[Any], list[Any], StructureSet]:
+) -> tuple[dict[str, Any], dict[str, Any], list[Any], StructureSet]:
     try:
         payload = json.loads(open(os.path.join(rundir, "summary.json"), encoding="utf-8").read())
     except (OSError, ValueError) as exc:
@@ -118,7 +126,7 @@ def _read_validated(
         if round(energy, 6) != round(want, 6):
             raise _ImportError("confgen search frame energies disagree with passing records")
         ordered.append(record)
-    return totals, rows, ordered, frames
+    return totals, payload, ordered, frames
 
 
 def run_search_item(
@@ -227,6 +235,12 @@ def _run(
     rundir = os.path.join(attempt, "search_run")
     os.makedirs(rundir, exist_ok=True)
     settings_doc = dict(section) if isinstance(section, Mapping) else {}
+    settings_doc.setdefault("budget", DEFAULT_SEARCH_BUDGET)
+    if settings_doc["budget"] is None:
+        settings_doc["budget"] = DEFAULT_SEARCH_BUDGET
+    settings_doc.setdefault("window_kcal", DEFAULT_SEARCH_WINDOW_KCAL)
+    settings_doc.setdefault("arrangement", "keep")
+    settings_doc.setdefault("release", True)
     settings_doc.setdefault("small_ring_torsions", "both")
     settings_doc.setdefault("embed_timeout_seconds", 120)
     settings_doc.setdefault("max_cycles", 1000)
@@ -347,7 +361,7 @@ def _run(
 
     def _completed(artifacts: ArtifactSet, charge: int, multiplicity: int) -> WorkItemResult:
         try:
-            totals, rows, ordered, frames = _read_validated(driving, rundir)
+            totals, payload, ordered, frames = _read_validated(driving, rundir)
         except _ImportError as exc:
             return _failed(str(exc), "confgen_search_failed", artifacts)
         parent_ids, lineage_root, group_key = endpoint_lineage(driving)
@@ -391,11 +405,11 @@ def _run(
                     inherit_graph,
                 )
             )
-        counts = _histogram(rows)
+        counts = _histogram(payload)
         diagnostic = Diagnostic(
             "confgen_completed",
             f"confgen search published {len(members)} conformers "
-            f"({totals.get('generated')} generated, {totals.get('relaxed')} relaxed, "
+            f"({totals.get('generated')} relaxations, {totals.get('relaxed')} converged, "
             f"{totals.get('passed')} passed across {totals.get('targets')} targets; "
             f"failed checks: {', '.join(f'{k}={v}' for k, v in counts.items()) or 'none'})",
             DiagnosticSeverity.INFO,
@@ -442,12 +456,22 @@ def _run(
     if code == 0:
         return _completed(artifacts, int(charge), int(multiplicity))
     if code == 2:
-        payload = json.loads(open(os.path.join(rundir, "summary.json"), encoding="utf-8").read())
-        rows, totals = payload.get("structures", []), payload.get("totals", {})
-        counts = _histogram(rows)
+        try:
+            with open(os.path.join(rundir, "summary.json"), encoding="utf-8") as handle:
+                payload = json.loads(handle.read())
+        except (OSError, ValueError) as exc:
+            return _failed(
+                f"confgen search published nothing and its summary is unreadable: {exc}",
+                "confgen_search_failed",
+                artifacts,
+            )
+        if not isinstance(payload, dict):
+            payload = {}
+        totals = payload.get("totals", {})
+        counts = _histogram(payload)
         generated = totals.get("generated", "?") if isinstance(totals, dict) else "?"
         return _failed(
-            f"confgen search relaxed {generated} starts but none passed all audit checks "
+            f"confgen search ran {generated} relaxations but none passed all audit checks "
             f"(failed checks: {', '.join(f'{k}={v}' for k, v in counts.items()) or 'none'})",
             "confgen_no_passing_structures",
             artifacts,

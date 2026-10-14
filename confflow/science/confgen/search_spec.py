@@ -31,6 +31,8 @@ __all__ = [
     "DEFAULT_BOND_SCALE",
     "DEFAULT_SEARCH_STARTS_WITH_METAL",
     "DEFAULT_SEARCH_STARTS_WITHOUT_METAL",
+    "DEFAULT_SEARCH_BUDGET",
+    "DEFAULT_SEARCH_WINDOW_KCAL",
     "REMOVED_ENGINES_MESSAGE",
     "SearchContext",
     "build_search_context",
@@ -52,11 +54,18 @@ REMOVED_ENGINES_MESSAGE = (
 #: Default perception scale (bond_scale) for covalent bond perception.
 DEFAULT_BOND_SCALE: float = 1.15
 
-#: ``starts`` default per coordination class when ``coordination`` is declared.
-DEFAULT_SEARCH_STARTS_WITH_METAL: int = 8
+#: ``starts`` default with ``coordination``: ``None`` = 60 first-round DG starts spread over the
+#: coordination classes in scope (at least 2 each), decided by the search at run time.
+DEFAULT_SEARCH_STARTS_WITH_METAL: int | None = None
 
-#: ``starts`` default in total without a metal center.
-DEFAULT_SEARCH_STARTS_WITHOUT_METAL: int = 400
+#: ``starts`` default without a metal center: first-round DG starts.
+DEFAULT_SEARCH_STARTS_WITHOUT_METAL: int = 60
+
+#: Relaxation budget of the iterative search (Hessian evaluations are not counted).
+DEFAULT_SEARCH_BUDGET: int = 1500
+
+#: Energy window (kcal/mol) for parent selection and for the published conformers.
+DEFAULT_SEARCH_WINDOW_KCAL: float = 6.0
 
 _TOP_LEVEL_KEYS = frozenset(
     {
@@ -358,11 +367,13 @@ def resolve_search_coordination(section: Mapping[str, Any]) -> CoordinationSpec:
         raise ValueError(str(exc)) from exc
 
 
-def resolve_search_starts(search: Mapping[str, Any] | None, *, has_coordination: bool) -> int:
-    """Resolve the DG-start count (``None`` means the run-time default).
+def resolve_search_starts(
+    search: Mapping[str, Any] | None, *, has_coordination: bool
+) -> int | None:
+    """Resolve the first-round DG-start count.
 
-    ``None`` resolves to 8 per coordination class when ``coordination`` is
-    declared, else 400.
+    Unset resolves to ``None`` with ``coordination`` (the search spreads 60 starts over the
+    classes in scope, at least 2 each), else to 60.
     """
     raw = search.get("starts") if isinstance(search, Mapping) else None
     if raw is None:

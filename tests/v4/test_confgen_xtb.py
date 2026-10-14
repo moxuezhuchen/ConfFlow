@@ -99,7 +99,22 @@ def test_info_identity_and_capabilities(tmp_path: Path) -> None:
     assert info.program == "xtb"
     assert info.method == "GFN2-xTB"
     assert info.supports(CAP_RESTRAINED_RELAX)
-    assert not info.supports(CAP_HESSIAN)
+    assert info.supports(CAP_HESSIAN)
+
+
+def test_hessian_without_output_file_is_none(
+    tmp_path: Path, fake_xtb: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The fake xtb never writes the ``hessian`` file, so the parse fails and the result is None.
+    monkeypatch.setenv("FAKE_XTB_MODE", "ok")
+    assert _calc(fake_xtb, tmp_path).hessian(RelaxRequest("h", _COORDS)) is None
+
+
+def test_hessian_after_cancel_raises(tmp_path: Path, fake_xtb: Path) -> None:
+    calc = _calc(fake_xtb, tmp_path)
+    calc.cancel()
+    with pytest.raises(Cancelled):
+        calc.hessian(RelaxRequest("h", _COORDS))
 
 
 def test_cancelled_batch_raises(tmp_path: Path) -> None:

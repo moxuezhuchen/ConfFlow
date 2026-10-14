@@ -94,3 +94,11 @@ class Calculator(Protocol):
     def relax_many(self, requests: Sequence[RelaxRequest]) -> list[RelaxOutcome]:
         """Relax every request and return the outcomes in request order."""
         ...
+
+    def hessian(self, request: RelaxRequest) -> np.ndarray | None:
+        """Return the Cartesian Hessian (3N x 3N, Eh/bohr^2) at ``request.coords``.
+
+        The request's restraints act as during relaxation.  Called only when the engine
+        declares ``CAP_HESSIAN``; ``None`` reports a failed evaluation.
+        """
+        ...

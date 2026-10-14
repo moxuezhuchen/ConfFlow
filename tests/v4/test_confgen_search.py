@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 
 from confflow.science.confgen import search
-from confflow.science.confgen.calculator import CalculatorInfo
 from confflow.science.confgen.coordination import enumeration, perception, shapes
 from tests.v4._dg_search_helpers import _SHAPE, _embed, _toy, build_topology
 
@@ -19,22 +18,6 @@ def _topo(els, ref, forbid=(), shape=_SHAPE):
     sel = (0, [1, 2, 3, 4], [(1, 3)], list(forbid), 1.25)
     graph, spec, _ = build_topology(els, ref, sel, shape)
     return graph, spec
-
-
-class _Calc:
-    """Fake engine: ``fn(requests)`` returns the outcomes; every batch it receives is kept."""
-
-    def __init__(self, fn, info: CalculatorInfo | None = None) -> None:
-        self._fn = fn
-        self.info = info or CalculatorInfo("fake", "fake")
-        self.batches: list[list[Any]] = []
-
-    def relax_many(self, requests):
-        self.batches.append(list(requests))
-        return self._fn(requests)
-
-
-_WANT_SKIPPED = ("coordination_class", "metal_donor_distance", "donor_orientation")
 
 
 def _cmd(ref, spec):
@@ -207,89 +190,6 @@ def test_stereo_metal_free() -> None:
     assert flipped.failed_checks == ("stereo",)
 
 
-def test_run_search_metal(monkeypatch: pytest.MonkeyPatch) -> None:
-    els, ref = _toy()
-    graph, spec = _topo(els, ref)
-
-    def _echo(*args, **kwargs):
-        return SimpleNamespace(coords=(np.asarray(ref),), stereo_centers=())
-
-    monkeypatch.setattr(search, "generate_dg_seeds", _echo)
-    settings = search.SearchSettings(count=1, seed=7, fragment_charges=((1, -1),))
-
-    def _relax(requests):
-        for q in requests:
-            assert [(r.i, r.j) for r in q.restraints] == [(0, 1), (0, 2), (0, 3), (0, 4), (1, 3)]
-        outs = []
-        for q in requests:
-            outs.append(search.RelaxOutcome(np.asarray(q.coords), -100.0, True, 0.2))
-        return outs
-
-    run = search.run_search(graph, spec, ref, _SHAPE, settings, _Calc(_relax))
-    assert run.totals == {
-        "targets": 3,
-        "generated": 3,
-        "passed": 4,
-        "relaxed": 3,
-        "reference_passed": 1,
-    }
-    assert [t.passed for t in run.targets] == [1, 1, 1]
-    assert sorted(t.realized for t in run.targets) == [0, 0, 4]
-    assert all((t.generated, t.relaxed) == (1, 1) for t in run.targets)
-    assert all("coordination_class" in r.failed_checks for r in run.records if not r.passed)
-    assert all(r.small_ring_torsions for r in run.records if r.target != "ref")
-    assert [r.small_ring_torsions for r in run.records if r.target == "ref"] == [False]
-    assert run.summary()["fragment_charges"] == [{"atom": 2, "charge": -1}]
-
-
-def test_run_search_free(monkeypatch: pytest.MonkeyPatch) -> None:
-    mol, els, ref = _embed("C[C@H]1CC[C@@H](O)C1")
-    topo, spec, _ = build_topology(els, ref, (None, [], [(0, 1)], [], 1.25), None)
-    assert spec is None
-
-    def _echo(*args, **kwargs):
-        return SimpleNamespace(coords=(np.asarray(ref),) * args[-1].count, stereo_centers=())
-
-    monkeypatch.setattr(search, "generate_dg_seeds", _echo)
-    broken = np.array(ref, copy=True)
-    broken[0] += (3.0, 0.0, 0.0)
-    energies = [-100.0, -99.0, -99.0, None, -96.0, None, -98.0]
-    walls = [0.2, 0.2, 0.25, 0.5, 0.2, 0.1, 0.2]
-
-    def _relax(requests):
-        for q in requests:
-            assert [(r.i, r.j) for r in q.restraints] == [(0, 1)]
-        outs = []
-        for pos, req in enumerate(requests):
-            coords = None if pos == 3 else (broken if pos == 2 else np.asarray(req.coords))
-            outs.append(search.RelaxOutcome(coords, energies[pos], pos != 3, walls[pos]))
-        return outs
-
-    run = search.run_search(topo, None, ref, None, search.SearchSettings(count=6), _Calc(_relax))
-    assert run.totals == {
-        "targets": 1,
-        "generated": 6,
-        "passed": 5,
-        "relaxed": 5,
-        "reference_passed": 1,
-    }
-    assert [(r.target, r.start) for r in run.passing] == [
-        ("t00", 0),
-        ("t00", 1),
-        ("ref", 0),
-        ("t00", 4),
-        ("t00", 5),
-    ]
-    assert [t.passed for t in run.targets] == [4]
-    assert all(r.actual_target is None for r in run.records)
-    assert all(r.skipped_checks == _WANT_SKIPPED for r in run.records)
-    assert "topology" in run.records[2].failed_checks
-    assert run.records[3].failed_checks == ("converged",)
-    assert run.records[5].passed and run.records[5].energy_eh is None
-    assert run.records[2].coords is None and run.passing[0].coords is not None
-    assert run.summary()["fragment_charges"] == []
-
-
 def test_settings_errors() -> None:
     els, ref = _toy()
     graph, spec = _topo(els, ref)
@@ -305,29 +205,6 @@ def test_settings_errors() -> None:
     for bad in cases:
         with pytest.raises(search.SearchError):
             search.generate_starts(graph, spec, ref, _SHAPE, (), bad)
-
-
-def test_cancel_and_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
-    els, ref = _toy()
-    graph, spec = _topo(els, ref)
-    settings = search.SearchSettings(count=1)
-    calls: list[int] = []
-
-    def _echo(*args, **kwargs):
-        calls.append(1)
-        return SimpleNamespace(coords=(np.asarray(ref),), stereo_centers=())
-
-    monkeypatch.setattr(search, "generate_dg_seeds", _echo)
-    assert issubclass(search.SearchCancelled, search.SearchError)
-    assert issubclass(search.SearchError, ValueError)
-    with pytest.raises(search.SearchCancelled):
-        search.run_search(graph, spec, ref, _SHAPE, settings, _Calc(lambda q: []), lambda: True)
-    assert calls == []
-    with pytest.raises(search.SearchError, match="relax returned"):
-        search.run_search(graph, spec, ref, _SHAPE, settings, _Calc(lambda q: []), None)
-    assert search.SearchRun().summary() == (
-        {"targets": [], "structures": [], "fragment_charges": [], "totals": {}}
-    )
 
 
 def test_radius_refuses_element_without_covalent_radius() -> None:
@@ -348,59 +225,6 @@ def _cl4() -> tuple[Any, Any, np.ndarray]:
     return topo, spec, ref
 
 
-def _swap_13(ref: np.ndarray) -> np.ndarray:
-    """Swap two donor positions: the trans partition changes, the class does not match."""
-    moved = np.array(ref, copy=True)
-    moved[[1, 3]] = ref[[3, 1]]
-    return moved
-
-
-def _echo_dg(monkeypatch: pytest.MonkeyPatch, ref: np.ndarray) -> None:
-    def _echo(*args: Any, **kwargs: Any) -> SimpleNamespace:
-        return SimpleNamespace(coords=(np.asarray(ref),) * args[-1].count, stereo_centers=())
-
-    monkeypatch.setattr(search, "generate_dg_seeds", _echo)
-
-
-def test_relaxed_structure_publishes_under_actual_class(monkeypatch: pytest.MonkeyPatch) -> None:
-    topo, spec, ref = _cl4()
-    _echo_dg(monkeypatch, ref)
-    moved = _swap_13(ref)
-
-    def _relax(requests):
-        return [
-            search.RelaxOutcome(
-                np.asarray(q.coords) if q.key.startswith("ref_") else moved, -100.0, True, 0.1
-            )
-            for q in requests
-        ]
-
-    run = search.run_search(topo, spec, ref, _SHAPE, search.SearchSettings(count=1), _Calc(_relax))
-    planned = {t.command for t in run.targets}
-    ref_cls = _cmd(ref, spec)
-    moved_cls = search.audit_structure(
-        moved, topo, spec, ref, _SHAPE, (), (), True, 1.25, allowed=planned
-    ).actual_class
-    assert moved_cls in planned and moved_cls != ref_cls
-    ids = {t.command: t.id for t in run.targets}
-    moved_id, ref_id = ids[moved_cls], ids[ref_cls]
-    assert run.totals == {
-        "targets": 3,
-        "generated": 3,
-        "passed": 4,
-        "relaxed": 3,
-        "reference_passed": 1,
-    }
-    assert [t.passed for t in run.targets] == [1, 1, 1]
-    realized = {t.id: t.realized for t in run.targets}
-    assert realized[moved_id] == 3 and realized[ref_id] == 1
-    dg = [r for r in run.records if r.target != "ref"]
-    assert all(r.passed and r.actual_target == moved_id for r in dg)
-    assert [r.actual_target for r in run.records if r.target == "ref"] == [ref_id]
-    assert run.summary()["structures"][0]["actual_target"] == moved_id
-    assert run.summary()["targets"][0]["realized"] == realized["t00"]
-
-
 def test_ambiguous_perception_still_fails_coordination_class() -> None:
     topo, spec, ref = _cl4()
     planned = {t.command for t in search.plan_targets(topo, spec, _SHAPE)}
@@ -411,38 +235,6 @@ def test_ambiguous_perception_still_fails_coordination_class() -> None:
     )
     assert "coordination_class" in audit.failed_checks
     assert audit.actual_class is None
-
-
-def test_class_outside_planned_set_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    els = ["Pt", "Cl", "Cl", "Cl", "Cl"]
-    ref = np.array(
-        [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [-2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, -2.0, 0.0]]
-    )
-    topo, spec, _ = build_topology(els, ref, (0, [1, 2, 3, 4], [], [(1, 2)], 1.25), _SHAPE)
-    planned = {t.command for t in search.plan_targets(topo, spec, _SHAPE)}
-    ref_cls = _cmd(ref, spec)
-    assert ref_cls not in planned
-    audit = search.audit_structure(
-        ref, topo, spec, ref, _SHAPE, (), (), True, 1.25, allowed=planned
-    )
-    assert "coordination_class" in audit.failed_checks
-    assert audit.actual_class == ref_cls
-    _echo_dg(monkeypatch, ref)
-    run = search.run_search(
-        topo,
-        spec,
-        ref,
-        _SHAPE,
-        search.SearchSettings(count=1),
-        _Calc(
-            lambda requests: [
-                search.RelaxOutcome(np.asarray(q.coords), -100.0, True, 0.1) for q in requests
-            ]
-        ),
-    )
-    assert run.totals["reference_passed"] == 0 and run.totals["passed"] == 0
-    (ref_rec,) = [r for r in run.records if r.target == "ref"]
-    assert "coordination_class" in ref_rec.failed_checks and ref_rec.actual_target is None
 
 
 def test_audit_without_allowed_keeps_commanded_rule() -> None:
@@ -456,63 +248,97 @@ def test_audit_without_allowed_keeps_commanded_rule() -> None:
     assert "coordination_class" in off.failed_checks and off.actual_class == cmd
 
 
-def test_reference_start_is_an_extra_relaxed_start(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_class_outside_planned_set_is_refused() -> None:
+    els = ["Pt", "Cl", "Cl", "Cl", "Cl"]
+    ref = np.array(
+        [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [-2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, -2.0, 0.0]]
+    )
+    topo, spec, _ = build_topology(els, ref, (0, [1, 2, 3, 4], [], [(1, 2)], 1.25), _SHAPE)
+    planned = {t.command for t in search.plan_targets(topo, spec, _SHAPE)}
+    ref_cls = _cmd(ref, spec)
+    assert ref_cls not in planned
+    audit = search.audit_structure(
+        ref, topo, spec, ref, _SHAPE, (), (), True, 1.25, allowed=planned
+    )
+    assert "coordination_class" in audit.failed_checks
+    assert audit.actual_class == ref_cls
+
+
+def _swap_13(ref: np.ndarray) -> np.ndarray:
+    """Swap two donor positions: the trans partition changes, the class does not match."""
+    moved = np.array(ref, copy=True)
+    moved[[1, 3]] = ref[[3, 1]]
+    return moved
+
+
+def test_actual_class_in_planned_set_is_accepted() -> None:
+    topo, spec, ref = _cl4()
+    planned = {t.command for t in search.plan_targets(topo, spec, _SHAPE)}
+    moved = _swap_13(ref)
+    audit = search.audit_structure(
+        moved, topo, spec, ref, _SHAPE, (), (), True, 1.25, allowed=planned
+    )
+    assert "coordination_class" not in audit.failed_checks
+    assert audit.actual_class in planned and audit.actual_class != _cmd(ref, spec)
+    commanded = search.audit_structure(moved, topo, spec, ref, _SHAPE, _cmd(ref, spec))
+    assert "coordination_class" in commanded.failed_checks
+
+
+def _place(xyz: np.ndarray, i: int, j: int, ratio: float, els, direction=None) -> np.ndarray:
+    """Copy of ``xyz`` with atom ``j`` at ``ratio`` x the covalent radii sum from atom ``i``."""
+    moved = np.array(xyz, copy=True)
+    unit = np.asarray(xyz[j] - xyz[i] if direction is None else direction, dtype=float)
+    unit = unit / np.linalg.norm(unit)
+    reach = ratio * (search._radius(els[i]) + search._radius(els[j]))
+    moved[j] = xyz[i] + reach * unit
+    return moved
+
+
+def test_reference_bond_stretch_is_tolerated_until_it_breaks() -> None:
     els, ref = _toy()
     graph, spec = _topo(els, ref)
-    _echo_dg(monkeypatch, ref)
-    calc = _Calc(
-        lambda requests: [
-            search.RelaxOutcome(np.asarray(q.coords), -100.0, True, 0.1) for q in requests
-        ]
+    cmd = _cmd(ref, spec)
+    assert (
+        "topology" not in search.audit_structure(ref, graph, spec, ref, _SHAPE, cmd).failed_checks
     )
-    run = search.run_search(graph, spec, ref, _SHAPE, search.SearchSettings(count=2), calc)
-    (requests,) = calc.batches
-    assert len(requests) == 3 * 2 + 1
-    assert requests[-1].key == "ref_s00"
-    assert [r.small_ring_torsions for r in run.records if r.target == "ref"] == [False]
-    assert [t.id for t in run.targets] == ["t00", "t01", "t02"]
-    assert [t.generated for t in run.targets] == [2, 2, 2]
-    assert run.totals["generated"] == 6 and run.totals["reference_passed"] == 1
-    assert run.passing[0].target == "ref"  # equal energies tie-break on target id
-    assert run.summary()["structures"][-1]["target"] == "ref"
+    # atom 5 is a hydrogen bonded to atom 1 (N) in the reference
+    stretched = _place(ref, 1, 5, 1.40, els)
+    got = search.audit_structure(stretched, graph, spec, ref, _SHAPE, cmd)
+    assert "topology" not in got.failed_checks
+    broken = _place(ref, 1, 5, 1.50, els)
+    got = search.audit_structure(broken, graph, spec, ref, _SHAPE, cmd)
+    assert "topology" in got.failed_checks
 
 
-def test_relax_requests_carry_keys_and_restraints(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_new_bond_forms_only_below_bonding_distance() -> None:
     els, ref = _toy()
+    els = [*els, "C"]
+    ref = np.vstack([ref, [[10.0, 0.0, 0.0]]])  # free carbon, unbonded in the reference
     graph, spec = _topo(els, ref)
-    _echo_dg(monkeypatch, ref)
-    calc = _Calc(
-        lambda requests: [
-            search.RelaxOutcome(np.asarray(q.coords), -100.0, True, 0.1) for q in requests
-        ]
+    cmd = _cmd(ref, spec)
+    assert (
+        "topology" not in search.audit_structure(ref, graph, spec, ref, _SHAPE, cmd).failed_checks
     )
-    search.run_search(graph, spec, ref, _SHAPE, search.SearchSettings(count=2), calc)
-    (requests,) = calc.batches
-    targets = [t.id for t in search.plan_targets(graph, spec, _SHAPE)]
-    want_keys = [f"{t}_s{k:02d}" for t in targets for k in range(2)] + ["ref_s00"]
-    assert [q.key for q in requests] == want_keys
-    restraints = search.distance_restraints(graph, spec, ref)
-    assert all(q.restraints == restraints for q in requests)
+    # the carbon sits next to hydrogen 5 (bonded to N1), pointing away from the complex
+    away = np.array([0.5, -0.866, 0.0])
+    close = _place(ref, 5, 11, 1.05, els, direction=away)
+    got = search.audit_structure(close, graph, spec, ref, _SHAPE, cmd)
+    assert "topology" in got.failed_checks
+    apart = _place(ref, 5, 11, 1.15, els, direction=away)
+    got = search.audit_structure(apart, graph, spec, ref, _SHAPE, cmd)
+    assert "topology" not in got.failed_checks
 
 
-def test_calculator_without_restrained_relax_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_donor_pair_counts_as_bond_only_at_bonding_distance() -> None:
     els, ref = _toy()
-    graph, spec = _topo(els, ref)
-    _echo_dg(monkeypatch, ref)
-    bare = CalculatorInfo("fake", "fake", capabilities=frozenset())
-    settings = search.SearchSettings(count=1)
-    with pytest.raises(search.SearchError):
-        search.run_search(graph, spec, ref, _SHAPE, settings, _Calc(lambda q: [], bare))
-    # Metal-free graph without reaction pairs: no restraints, so the engine is accepted.
-    mol, els, ref = _embed("C[C@H]1CC[C@@H](O)C1")
-    topo, free_spec, _ = build_topology(els, ref, (None, [], [], [], 1.25), None)
-    assert free_spec is None and search.distance_restraints(topo, None, ref) == ()
-    _echo_dg(monkeypatch, ref)
-    calc = _Calc(
-        lambda requests: [
-            search.RelaxOutcome(np.asarray(q.coords), -100.0, True, 0.1) for q in requests
-        ],
-        bare,
+    # donors 1 (N) and 3 (Cl) sit 1.20 x radii sum apart: too far to be a bond
+    loose = _place(ref, 1, 3, 1.20, els)
+    topo, spec, _ = build_topology(els, loose, (0, [1, 2, 3, 4], [], [], 1.25), _SHAPE)
+    cmd = _cmd(loose, spec)
+    assert (
+        "topology"
+        not in search.audit_structure(loose, topo, spec, loose, _SHAPE, cmd).failed_checks
     )
-    run = search.run_search(topo, None, ref, None, search.SearchSettings(count=1), calc)
-    assert len(run.records) == 2  # one planned start plus the reference start
+    apart = _place(loose, 1, 3, 1.50, els)
+    got = search.audit_structure(apart, topo, spec, loose, _SHAPE, cmd)
+    assert "topology" not in got.failed_checks
