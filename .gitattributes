@@ -1,0 +1,6 @@
+# Store text with LF line endings, whatever the editor or OS (Windows editors reach this
+# checkout through \\wsl.localhost and save CRLF).  Binary files are auto-detected.
+* text=auto eol=lf
+
+# Fixture kept byte-for-byte as recorded (CRLF): never normalise it.
+tests/fixtures/confgen/coordination/ts1/topology/atom_index_roles.csv -text
