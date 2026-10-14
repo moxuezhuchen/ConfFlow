@@ -4,8 +4,9 @@ Owns the search strategy validated in the 2026-10 prototype study:
 
 1. global starts: DG embeddings for every coordination class kept in scope (by default only the
    input structure's arrangement), then more for the classes that produced minima;
-2. well probe: each rotor's grid moves are replaced by the torsion offsets it actually relaxes
-   to on the lowest minima of up to ``probes`` ring/class cells;
+2. well probe: each rotor's moves become the torsion offsets it actually relaxes to on the
+   lowest minima of up to ``probes`` ring/class cells, plus the grid moves no measured well
+   covers (a well absent on the probed parents stays reachable);
 3. feedback rounds with fixed budget shares: more DG starts, single-rotor moves from the lowest
    unexpanded minima (plus the lowest of each cell), local DG re-embedding of a small region,
    and - once single-rotor moves stop finding new minima - displacements along the softest
@@ -70,6 +71,8 @@ class ExploreSettings:
     arrangement: Literal["keep", "enumerate"] = "keep"
     batch: int = 64
     probes: int = 3
+    #: keep the grid moves that no measured well covers (within 30 degrees)
+    wells_keep_grid: bool = True
     share_dg: float = 0.30
     share_single: float = 0.55
     share_reembed: float = 0.15
@@ -525,9 +528,17 @@ class _Explorer:
 
             if circ(off, 0.0) > 30 and all(circ(off, k) > 30 for k in keep[ri]):
                 keep[ri].append(off)
-        self.rotors = [
-            r.with_moves(tuple(keep[ri])) if keep[ri] else r for ri, r in enumerate(self.rotors)
-        ]
+        out = []
+        for ri, r in enumerate(self.rotors):
+            moves = list(keep[ri])
+            if (
+                moves and self.st.wells_keep_grid
+            ):  # a well not seen on the probed parents stays reachable
+                per = r.period
+                moves += [g for g in r.moves
+                          if all(min((g - k) % per, (k - g) % per) > 30 for k in keep[ri])]  # fmt: skip
+            out.append(r.with_moves(tuple(moves)) if moves else r)
+        self.rotors = out
 
     def _relax_into(self, items: list[tuple[str, np.ndarray, str]], scratch: MinimaPool) -> None:
         """Relax probe items: charged to the budget, accepted minima go to both pools."""
