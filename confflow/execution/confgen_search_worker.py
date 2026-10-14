@@ -1,39 +1,38 @@
 #!/usr/bin/env python3
 
-"""ConfGen DG-search worker (<job.json> runner): DG starts, restrained xTB, audit.
+"""ConfGen DG-search worker (<job.json> runner): DG starts, restrained relaxation, audit.
 
-Takes over the retired script's xTB handling unchanged; graph from the job.
+Builds the energy engine for the job (GFN2-xTB, ``confgen_xtb``) and hands it to the search
+as a backend-neutral ``Calculator``; graph from the job.
 Exit 0 passing / 2 none pass / 3 bad job; SIGTERM stops launches, exits non-zero.
 """
 
 from __future__ import annotations
 
-import concurrent.futures as futures
-import hashlib
 import json
-import os
-import re
-import shutil
 import signal
-import subprocess
 import sys
 import threading
-import time
 from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
 
 import confflow.science.confgen.search as search
+from confflow.execution.confgen_xtb import (
+    Cancelled,
+    XtbCalculator,
+    resolve_xtb,
+    write_xyz_frames,
+    xtb_version,
+)
 from confflow.science.confgen.graph import TypedGraph
 from confflow.science.confgen.search_spec import resolve_search_coordination
 
 HARTREE_TO_KCAL = 627.5094740631
-_CONV = "GEOMETRY OPTIMIZATION CONVERGED"
 
 _STOP = threading.Event()
-_LIVE: set[subprocess.Popen[str]] = set()
-_LIVE_LOCK = threading.Lock()
+_ACTIVE: list[XtbCalculator] = []
 
 
 class _JobError(ValueError):
@@ -42,37 +41,8 @@ class _JobError(ValueError):
 
 def _handle_sigterm(signum: int, frame: Any) -> None:
     _STOP.set()
-    with _LIVE_LOCK:
-        running = list(_LIVE)
-    for proc in running:
-        if proc.poll() is None:
-            proc.terminate()
-
-
-def _resolve_xtb(path: str) -> str | None:
-    if os.path.dirname(path):
-        return path if Path(path).is_file() and os.access(path, os.X_OK) else None
-    return shutil.which(path)
-
-
-def _write_xyz(path: Path, els: list[str], frames: list[tuple[np.ndarray, str]]) -> None:
-    with open(path, "w", encoding="utf-8") as handle:
-        for xyz, comment in frames:
-            handle.write(f"{len(els)}\n{comment}\n")
-            for sym, (x, y, z) in zip(els, xyz):
-                handle.write(f"{sym} {x:.6f} {y:.6f} {z:.6f}\n")
-
-
-def _first_frame(path: Path, n: int) -> np.ndarray | None:
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-        if int(lines[0].strip()) != n:
-            return None
-        vals = [[float(v) for v in row.split()[1:4]] for row in lines[2 : 2 + n]]
-        xyz = np.asarray(vals, dtype=float)
-    except (OSError, IndexError, ValueError):
-        return None
-    return xyz if xyz.shape == (n, 3) and bool(np.all(np.isfinite(xyz))) else None
+    for calc in list(_ACTIVE):
+        calc.cancel()
 
 
 def _int(value: Any, name: str, minimum: int | None = None) -> int:
@@ -171,80 +141,10 @@ def _load_job(path: str) -> dict[str, Any]:
     return job
 
 
-def _xtb_version(exe: str) -> str:
-    try:
-        proc = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=60)
-        out = proc.stdout + proc.stderr
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return next((line.strip() for line in out.splitlines() if line.strip()), "")
-
-
 def _comment(r: search.SearchRecord, low: float) -> str:
     energy = float(r.energy_eh or 0.0)
     text = f"target={r.target} start={r.start} energy_eh={energy:.6f} rel_kcal={(energy - low) * HARTREE_TO_KCAL:.3f}"
     return text if r.actual_target is None else f"{text} actual={r.actual_target}"
-
-
-def _relax_one(exe: str, here: Path, xyz: np.ndarray, cfg: tuple[Any, ...]) -> search.RelaxOutcome:
-    els, cinp, chrg, uhf, cyc = cfg
-    here.mkdir(parents=True, exist_ok=True)
-    _write_xyz(here / "in.xyz", els, [(xyz, "frame")])
-    if cinp is not None:
-        (here / "c.inp").write_text(cinp, encoding="utf-8")
-    digest = hashlib.sha256((here / "in.xyz").read_bytes()).hexdigest()
-    done = here / "done.json"
-    if done.is_file():
-        try:
-            prev = json.loads(done.read_text(encoding="utf-8"))
-            if prev.get("in_sha256") == digest:
-                converged = bool(prev["converged"])
-                opt = _first_frame(here / "xtbopt.xyz", len(els)) if converged else None
-                return search.RelaxOutcome(opt, prev["energy_eh"], converged, float(prev["wall_s"]))
-        except (OSError, ValueError, KeyError, TypeError):
-            pass
-    env = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1")
-    env.update(MKL_NUM_THREADS="1", OMP_STACKSIZE="2G")
-    argv = [exe, "in.xyz", "--gfn", "2", "--opt"]
-    argv += ["--input", "c.inp"] if cinp is not None else []
-    argv += ["--chrg", str(chrg), "--uhf", str(uhf), "--cycles", str(cyc)]
-    tick, proc, out = time.monotonic(), None, ""
-    try:
-        with open(here / "xtb.out", "w", encoding="utf-8") as log:
-            proc = subprocess.Popen(
-                argv, cwd=here, stdout=log, stderr=subprocess.STDOUT, env=env, text=True
-            )
-    except OSError as exc:
-        out = f"xTB launch failed: {exc}"
-        (here / "xtb.out").write_text(out, encoding="utf-8")
-    if proc is not None:
-        with _LIVE_LOCK:
-            _LIVE.add(proc)
-        try:
-            while proc.poll() is None:
-                if _STOP.is_set():
-                    proc.terminate()
-                    break
-                time.sleep(0.02)
-            proc.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-        finally:
-            with _LIVE_LOCK:
-                _LIVE.discard(proc)
-        try:
-            out = (here / "xtb.out").read_text(encoding="utf-8")
-        except OSError:
-            out = ""
-    wall = time.monotonic() - tick
-    found = re.findall(r"TOTAL ENERGY\s+([+-]?\d+(?:\.\d+)?)\s*Eh", out)
-    ok = proc is not None and proc.returncode == 0 and _CONV in out
-    conv = bool(ok) and (here / "xtbopt.xyz").is_file()
-    energy = float(found[-1]) if found else None
-    payload = {"in_sha256": digest, "energy_eh": energy, "converged": conv, "wall_s": wall}
-    done.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
-    opt = _first_frame(here / "xtbopt.xyz", len(els)) if conv else None
-    return search.RelaxOutcome(opt, energy, conv, wall)
 
 
 def _run(job_path: str) -> int:
@@ -252,33 +152,18 @@ def _run(job_path: str) -> int:
     job = _load_job(job_path)
     els: list[str] = job["atoms"]
     ref: np.ndarray = job["reference"]
-    if (exe := _resolve_xtb(job["xtb"])) is None:
+    if (exe := resolve_xtb(job["xtb"])) is None:
         raise _JobError(f"xTB executable not found: {job['xtb']!r}")
-    version = _xtb_version(exe)
+    version = xtb_version(exe)
     work = Path(job["workdir"])
     work.mkdir(parents=True, exist_ok=True)
     settings: search.SearchSettings = job["settings"]
-    cores: int = job["cores"]
-
-    def _relax_many(
-        starts: tuple[search.SearchStart, ...], restraints: tuple[tuple[int, int, float], ...]
-    ) -> list[search.RelaxOutcome]:
-        lines = ["$constrain", "  force constant=1.0"]
-        for i, j, d in restraints:
-            lines.append(f"  distance: {i + 1}, {j + 1}, {d:.5f}")
-        cinp = "\n".join(lines + ["$end"]) + "\n" if restraints else None
-        cfg = (els, cinp, job["charge"], job["uhf"], job["max_cycles"])
-
-        def _one(s: search.SearchStart) -> search.RelaxOutcome:
-            if _STOP.is_set():
-                raise search.SearchCancelled("search cancelled")
-            return _relax_one(exe, work / f"{s.target}_s{s.index:02d}", s.coords, cfg)
-
-        with futures.ThreadPoolExecutor(max_workers=cores) as pool:
-            outcomes = list(pool.map(_one, starts))
-        if _STOP.is_set():
-            raise search.SearchCancelled("search cancelled")
-        return outcomes
+    calc = XtbCalculator(
+        exe, work, els, job["charge"], job["uhf"], job["max_cycles"], job["cores"], version
+    )
+    _ACTIVE[:] = [calc]
+    if _STOP.is_set():
+        calc.cancel()
 
     try:
         run = search.run_search(
@@ -287,9 +172,11 @@ def _run(job_path: str) -> int:
             ref,
             job["shape"],
             settings,
-            _relax_many,
+            calc,
             should_cancel=_STOP.is_set,
         )
+    except Cancelled as exc:
+        raise search.SearchCancelled(str(exc)) from exc
     except search.SearchCancelled:
         raise
     except search.SearchError as exc:
@@ -303,7 +190,7 @@ def _run(job_path: str) -> int:
         return 2
     low = float(run.passing[0].energy_eh or 0.0)
     frames = [(r.coords, _comment(r, low)) for r in run.passing]
-    _write_xyz(Path(job["structures_file"]), els, frames)
+    write_xyz_frames(Path(job["structures_file"]), els, frames)
     return 0
 
 
@@ -314,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write("usage: confgen_search_worker <job.json>\n")
         return 3
     _STOP.clear()
+    _ACTIVE.clear()
     prev = signal.signal(signal.SIGTERM, _handle_sigterm)
     try:
         return _run(args[0])
@@ -323,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     except search.SearchCancelled:
         return 143
     finally:
+        _ACTIVE.clear()
         signal.signal(signal.SIGTERM, prev)
 
 

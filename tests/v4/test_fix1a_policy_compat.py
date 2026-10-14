@@ -117,6 +117,9 @@ def test_fifteen_patterns_byte_identical() -> None:
             "confflow.science.confgen.search_spec",
             "confflow.science.topology",
         ],
+        "confflow/execution/confgen_xtb.py": [
+            "confflow.science.confgen.calculator",
+        ],
     }
 
 

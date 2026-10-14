@@ -22,6 +22,7 @@ import pytest
 from confflow.domain.structure import StructureRecord
 from confflow.execution import confgen_search_run as search_run
 from confflow.execution import confgen_search_worker as worker
+from confflow.execution import confgen_xtb as xtbmod
 from confflow.science.confgen import search
 from tests.v4._dg_search_helpers import _SHAPE, _embed, _toy, _write_fake, build_topology
 
@@ -302,21 +303,17 @@ def test_exit_three(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_small_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _write_fake(tmp_path)
-    assert worker._resolve_xtb(str(fake)) == str(fake)
-    assert worker._resolve_xtb("/nonexistent/xtb") is None
-    monkeypatch.setattr(worker.shutil, "which", lambda name: "/usr/bin/xtb")
-    assert worker._resolve_xtb("xtb") == "/usr/bin/xtb"
+    monkeypatch.setattr(xtbmod.shutil, "which", lambda name: "/usr/bin/xtb")
+    assert xtbmod.resolve_xtb("xtb") == "/usr/bin/xtb"
     els, ref = _toy()
     xyz = tmp_path / "r.xyz"
-    worker._write_xyz(xyz, els, [(ref, "frame")])
-    assert worker._first_frame(xyz, len(els)) is not None
-    assert worker._first_frame(xyz, len(els) + 1) is None
+    xtbmod.write_xyz_frames(xyz, els, [(ref, "frame")])
     xyz.write_text("garbage", encoding="utf-8")
-    assert worker._first_frame(xyz, len(els)) is None
+    assert xtbmod.read_first_frame(xyz, len(els)) is None
     monkeypatch.setattr(
-        worker.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(OSError("nope"))
+        xtbmod.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(OSError("nope"))
     )
-    assert worker._xtb_version(str(fake)) == ""
+    assert xtbmod.xtb_version(str(fake)) == ""
 
 
 def test_launch_failure_is_exit_two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -324,7 +321,7 @@ def test_launch_failure_is_exit_two(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     _stub(monkeypatch, ref)
     job, _, out, summary_path = _job(tmp_path, *_metal_parts(tmp_path))
     monkeypatch.setattr(
-        worker.subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(OSError("nope"))
+        xtbmod.subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(OSError("nope"))
     )
     assert worker.main([job]) == 2
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -354,11 +351,13 @@ def test_request_stop_exits_nonzero(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     for line in (tmp_path / "pids.txt").read_text().splitlines():
         with pytest.raises(ProcessLookupError):
             os.kill(int(line.strip()), 0)
-    probe = subprocess.Popen(["true"])
-    probe.wait()
-    worker._LIVE.add(probe)
-    worker._handle_sigterm(signal.SIGTERM, None)
-    worker._LIVE.discard(probe)
+    cancelled: list[bool] = []
+    worker._ACTIVE.append(SimpleNamespace(cancel=lambda: cancelled.append(True)))  # type: ignore[arg-type]
+    try:
+        worker._handle_sigterm(signal.SIGTERM, None)
+    finally:
+        worker._ACTIVE.clear()
+    assert cancelled == [True]
 
 
 def test_sigterm_subprocess(tmp_path: Path) -> None:

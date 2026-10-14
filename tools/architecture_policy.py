@@ -1039,6 +1039,10 @@ R.append(
                 "confflow.science.confgen.search_spec",
                 "confflow.science.topology",
             ],
+            # GFN2-xTB engine behind the backend-neutral calculator protocol.
+            "confflow/execution/confgen_xtb.py": [
+                "confflow.science.confgen.calculator",
+            ],
         },
     }
 )
