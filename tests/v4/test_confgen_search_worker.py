@@ -487,3 +487,22 @@ def test_equal_energy_keeps_frame_metadata(tmp_path: Path) -> None:
     (rundir / "structures.xyz").write_text(xyz, encoding="utf-8")
     with pytest.raises(search_run._ImportError):
         search_run._read_validated(driving, rundir)
+
+
+def test_failed_release_is_warned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    els, ref = _toy()
+    _stub(monkeypatch, ref)
+    real = worker.explore
+
+    def _failed(*args: Any, **kwargs: Any) -> Any:
+        run = real(*args, **kwargs)
+        run.stats["release"] = "failed"
+        return run
+
+    monkeypatch.setattr(worker, "explore", _failed)
+    job, _, _, summary_path = _job(tmp_path, *_metal_parts(tmp_path))
+    assert worker.main([job]) == 0
+    assert json.loads(summary_path.read_text(encoding="utf-8"))["search"]["release"] == "failed"
+    assert "warning: every release relaxation failed" in capsys.readouterr().err

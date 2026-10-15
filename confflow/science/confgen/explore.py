@@ -201,6 +201,8 @@ class _Explorer:
         self.history: list[tuple[int, int, float]] = []  # (relaxations, new <3 kcal, lowest)
         self.hessians = 0
         self.released = 0
+        self.stop = "budget"  # why the search loop ended: budget | saturated | no_moves | no_minima
+        self.release_status = "off"  # off | not_needed | done | failed
         self.dg_round = 0
 
     # -- setup -----------------------------------------------------------------------------
@@ -370,7 +372,14 @@ class _Explorer:
         return new
 
     def _take(self, arm: str, k: int, cells: bool = False) -> list[Minimum]:
-        """Lowest unused parents of ``arm`` inside the window; optionally cell-lowest extras."""
+        """Lowest unused parents of ``arm`` inside the window.
+
+        With ``cells`` (single-rotor moves), the lowest minimum of each other ring-state cell is
+        barred from the arm instead of expanded: those ring states are left to re-embedding.
+        Expanding them with single-rotor moves measured worse (oseltamivir 3 seeds, Boltzmann
+        weight 74.5 % vs 77.8 %; TS1 re 87 % vs 100 %).  Once no unused parent is left inside
+        the window, unused cell minima outside it are handed out instead.
+        """
         used = self.marks.setdefault(arm, set())
         lo = self.pool.lowest()
         cand = [m for m in self.pool.ordered() if m.id not in used]
@@ -382,7 +391,10 @@ class _Explorer:
                 if c not in best or m.energy < best[c].energy:
                     best[c] = m
             extra = [m for m in cand if best.get(self.cells.get(m.id, "")) is m and m not in pick]
-            pick += extra[: max(1, k // 6) if pick else k]
+            if pick:
+                used.update(m.id for m in extra[: max(1, k // 6)])
+            else:
+                pick = extra[:k]
         used.update(m.id for m in pick)
         return pick
 
@@ -442,11 +454,12 @@ class _Explorer:
             ps = self._take(arm, 1, cells=arm == "single")
             if not ps:
                 break
-            for tag, x in kids(ps[0]):
-                if self.topo.clashes(x):
-                    self.fail["move_clash"] += 1
-                else:
-                    items.append((f"{arm}/m{ps[0].id:05d}_{tag}", x, f"{arm}:{ps[0].id}"))
+            for p in ps:
+                for tag, x in kids(p):
+                    if self.topo.clashes(x):
+                        self.fail["move_clash"] += 1
+                    else:
+                        items.append((f"{arm}/m{p.id:05d}_{tag}", x, f"{arm}:{p.id}"))
         return items
 
     def _free_sets(self, n: int = 12) -> list[set[int]]:
@@ -619,14 +632,23 @@ class _Explorer:
 
     def _release(self) -> MinimaPool:
         """Re-relax the minima near the lowest with only reaction-pair restraints."""
-        if not self.st.release or self.free_restraints == self.restraints:
+        if not self.st.release:
+            self.release_status = "off"
+            return self.pool
+        if self.free_restraints == self.restraints:
+            self.release_status = "not_needed"
             return self.pool
         near = self.pool.within(self.st.window_kcal + 2.0)
         out = MinimaPool(self.id)
         items = [(f"release/m{m.id:05d}", m.coords, f"release:{m.id}") for m in near]
         self._relax(items, out, self.free_restraints, free=True)
         self.released = len(items)
-        return out if len(out) else self.pool
+        if len(out):
+            self.release_status = "done"
+            return out
+        # every release failed: publish the restrained minima, flagged in the summary
+        self.release_status = "failed"
+        return self.pool
 
     def run(self) -> tuple[MinimaPool, dict[str, Any]]:
         st = self.st
@@ -645,12 +667,18 @@ class _Explorer:
             plan = [(t, max(first, 8) * 2**tries) for t in self.targets]
             self._relax(self._dg(plan, f"dgr{tries}"), self.pool, self.restraints)
         if not len(self.pool):
+            self.stop = "no_minima"
             return self.pool, self._stats()
         if self.rotors and st.probes > 0:
             self._probe_wells()
+        self.stop = "budget"
         while self._left() > 0:
             self._poll()
-            if not self._round() or self._saturated():
+            if not self._round():
+                self.stop = "no_moves"
+                break
+            if self._saturated():
+                self.stop = "saturated"
                 break
         return self._release(), self._stats()
 
@@ -658,6 +686,8 @@ class _Explorer:
         return {
             "relaxations": self.nopt,
             "adaptive": self.st.adaptive,
+            "stop": self.stop,
+            "release": self.release_status,
             "release_relaxations": self.released,
             "hessians": self.hessians,
             "rotors": len(self.rotors),

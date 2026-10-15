@@ -229,6 +229,10 @@ def _run(job_path: str) -> int:
     summary = {"settings": settings_doc, **run.summary()}
     summary["xtb"] = {"executable": exe, "version": version}
     Path(job["summary_file"]).write_text(json.dumps(summary, sort_keys=True, indent=2) + "\n")
+    if (run.stats or {}).get("release") == "failed":
+        sys.stderr.write(
+            "warning: every release relaxation failed; the published structures keep all search restraints\n"
+        )
     if not run.passing:
         sys.stderr.write("error: no structure passed all audit checks\n")
         return 2

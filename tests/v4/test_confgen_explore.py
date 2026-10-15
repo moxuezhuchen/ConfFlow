@@ -207,3 +207,64 @@ def test_adaptive_budget_never_stops_before_its_minimum() -> None:
     kw = {"budget": 600, "min_budget": 200, "saturation_window": 16, "batch": 16}
     run = explore.explore(graph, None, ref, None, _settings(adaptive=True, **kw), _FakeCalc(), map)
     assert run.stats["relaxations"] >= 200
+
+
+def test_single_moves_bar_other_ring_state_cells(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+    real = explore._Explorer._release
+
+    def _spy(self: Any) -> Any:
+        seen["ex"] = self
+        return real(self)
+
+    monkeypatch.setattr(explore._Explorer, "_release", _spy)
+    graph, ref = _butane()
+    explore.explore(graph, None, ref, None, _settings(budget=60), _FakeCalc(), map)
+    ex = seen["ex"]
+    low, other = ex.pool.ordered()[:2]
+    ex.marks.clear()
+    ex.cells = {m.id: "a" for m in ex.pool.minima}
+    ex.cells[other.id] = "b"  # the only minimum of a second ring-state cell
+    items = ex._moves("single", 1)
+    assert {it[2] for it in items} == {f"single:{low.id}"}  # the lowest is expanded ...
+    assert other.id in ex.marks["single"]  # ... and the other cell's best is barred, not expanded
+    ex.marks["single"] = {m.id for m in ex.pool.minima}
+    assert ex._take("single", 1, cells=True) == []
+
+
+def test_stop_reason_and_release_status_are_reported() -> None:
+    graph, ref = _butane()
+    run = explore.explore(graph, None, ref, None, _settings(budget=40), _FakeCalc(), map)
+    assert run.stats["stop"] in {"budget", "no_moves"}
+    assert run.stats["release"] == "not_needed"  # no reaction pair: nothing to release
+    kw = {"budget": 600, "min_budget": 64, "saturation_window": 64, "batch": 16}
+    sat = explore.explore(graph, None, ref, None, _settings(adaptive=True, **kw), _FakeCalc(), map)
+    assert sat.stats["stop"] == "saturated"
+    graph, spec, ref = _pt_toy()
+    off = explore.explore(graph, spec, ref, _SHAPE, _settings(release=False), _FakeCalc(), map)
+    on = explore.explore(graph, spec, ref, _SHAPE, _settings(), _FakeCalc(), map)
+    assert off.stats["release"] == "off"
+    assert on.stats["release"] == "done"
+
+
+class _FailingReleaseCalc(_FakeCalc):
+    """Every release relaxation fails to converge."""
+
+    def relax_many(self, requests):
+        out = super().relax_many(requests)
+        return [
+            (
+                RelaxOutcome(coords=o.coords, energy_eh=o.energy_eh, converged=False)
+                if q.key.startswith("release/")
+                else o
+            )
+            for q, o in zip(requests, out)
+        ]
+
+
+def test_failed_release_keeps_restrained_minima_and_says_so() -> None:
+    graph, spec, ref = _pt_toy()
+    run = explore.explore(graph, spec, ref, _SHAPE, _settings(), _FailingReleaseCalc(), map)
+    assert run.stats["release"] == "failed"
+    assert run.stats["release_relaxations"] > 0
+    assert run.passing
