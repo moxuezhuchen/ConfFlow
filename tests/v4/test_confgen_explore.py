@@ -8,6 +8,8 @@ real optimisation.  Budgets are tiny because DG embedding runs real RDKit.
 from __future__ import annotations
 
 import math
+from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -20,7 +22,8 @@ from confflow.science.confgen.calculator import (
     RelaxOutcome,
     RelaxRequest,
 )
-from confflow.science.confgen.identity import HARTREE_TO_KCAL
+from confflow.science.confgen.graph import EdgeType, TypedEdge
+from confflow.science.confgen.identity import HARTREE_TO_KCAL, Identity
 from confflow.science.confgen.rotors import dihedral
 from tests.v4._dg_search_helpers import _SHAPE, _embed, _toy, build_topology
 
@@ -221,10 +224,10 @@ def test_single_moves_bar_other_ring_state_cells(monkeypatch: pytest.MonkeyPatch
     graph, ref = _butane()
     explore.explore(graph, None, ref, None, _settings(budget=60), _FakeCalc(), map)
     ex = seen["ex"]
+    ex.pool.minima = [replace(m, cell="a") for m in ex.pool.minima]
     low, other = ex.pool.ordered()[:2]
+    ex.pool.minima[other.id] = replace(other, cell="b")  # the only minimum of a second cell
     ex.marks.clear()
-    ex.cells = {m.id: "a" for m in ex.pool.minima}
-    ex.cells[other.id] = "b"  # the only minimum of a second ring-state cell
     items = ex._moves("single", 1)
     assert {it[2] for it in items} == {f"single:{low.id}"}  # the lowest is expanded ...
     assert other.id in ex.marks["single"]  # ... and the other cell's best is barred, not expanded
@@ -268,3 +271,13 @@ def test_failed_release_keeps_restrained_minima_and_says_so() -> None:
     assert run.stats["release"] == "failed"
     assert run.stats["release_relaxations"] > 0
     assert run.passing
+
+
+def test_donor_permutations_keep_edge_kinds() -> None:
+    # N1-Cl3 is a forming pair and N2-Cl4 a covalent edge: a plain graph swaps (N1 Cl3)<->(N2 Cl4),
+    # the typed graph must not, or two distinct coordination classes collapse into one
+    graph, spec, ref = _pt_toy()
+    edges = graph.edges + (TypedEdge(a=2, b=4, type=EdgeType.COVALENT),)
+    typed = replace(graph, edges=edges)
+    fake = SimpleNamespace(spec=spec, id=Identity(typed), elements=[a.element for a in typed.atoms])
+    assert explore._Explorer._donor_perms(fake) == [(0, 1, 2, 3)]  # type: ignore[arg-type]

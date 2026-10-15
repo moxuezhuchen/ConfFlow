@@ -374,6 +374,9 @@ def _run(
             tuple(tuple(int(v) for v in row) for row in science.adjacency) if persist else None
         )
         low = min(float(r.get("energy_eh") or 0.0) for r in ordered)
+        search_stats = payload.get("search")
+        search_stats = search_stats if isinstance(search_stats, dict) else {}
+        release = search_stats.get("release")
         members: list[StructureRecord] = []
         for rank, rec in enumerate(ordered):
             energy = rec.get("energy_eh")
@@ -402,6 +405,7 @@ def _run(
                             "search_target": rec.get("target"),
                             "search_start": rec.get("start"),
                             "search_actual_target": rec.get("actual_target"),
+                            "search_release": release,
                         }
                     ),
                     inherit_patch,
@@ -428,11 +432,28 @@ def _run(
                     "passed": totals.get("passed"),
                     "starts": starts,
                     "failed_checks": counts,
+                    "release": release,
+                    "stop": search_stats.get("stop"),
                 }
             ),
         )
+        diagnostics = [diagnostic]
+        if release == "failed":
+            diagnostics.append(
+                Diagnostic(
+                    "confgen_release_failed",
+                    "every release relaxation failed: the published conformers still carry all "
+                    "search restraints (metadata search_release='failed')",
+                    DiagnosticSeverity.WARNING,
+                    context.step_id,
+                    work_item.id,
+                    work_item.logical_key,
+                    None,
+                    FrozenDict({"release_relaxations": search_stats.get("release_relaxations")}),
+                )
+            )
         structures = StructureSet(tuple(members))
-        return _result(WorkItemStatus.COMPLETED, structures, (diagnostic,), artifacts)
+        return _result(WorkItemStatus.COMPLETED, structures, tuple(diagnostics), artifacts)
 
     if launched is None:
         if should_cancel is not None and should_cancel():

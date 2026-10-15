@@ -174,3 +174,52 @@ def test_automorphisms_keep_edge_kinds() -> None:
     for row in autos:
         image = {kept[k]: kept[int(v)] for k, v in enumerate(row)}
         assert {image[0], image[3]} == {0, 3}
+
+
+def _hexammine() -> tuple[list[str], np.ndarray]:
+    """Octahedral Co(NH3)6: far more automorphisms than the enumeration cap."""
+    els, xyz = ["Co"], [np.zeros(3)]
+    for d in np.vstack([np.eye(3), -np.eye(3)]):
+        n = 2.0 * d
+        a = np.cross(d, [1.0, 0.0, 0.0] if abs(d[0]) < 0.9 else [0.0, 1.0, 0.0])
+        a /= np.linalg.norm(a)
+        b = np.cross(d, a)
+        els.append("N")
+        xyz.append(n)
+        for k in range(3):
+            t = 2.0 * np.pi * k / 3.0
+            els.append("H")
+            xyz.append(n + 0.35 * d + 0.95 * (np.cos(t) * a + np.sin(t) * b))
+    return els, np.array(xyz)
+
+
+def test_fallback_rmsd_is_rotation_invariant() -> None:
+    els, ref = _hexammine()
+    donors = [i for i, e in enumerate(els) if e == "N"]
+    graph, _, _ = build_topology(els, ref, (0, donors, [], [], 1.25), "octahedral")
+    idn = Identity(graph)
+    assert idn.automorphisms() is None  # past the cap: the assignment fallback is used
+    moved = ref @ _proper_rotation(5) + np.array([0.5, -1.0, 2.0])
+    assert idn.rmsd(ref, moved, mirror=False) == pytest.approx(0.0, abs=1e-5)
+    twisted = ref.copy()  # one ammine turned by 60 degrees is a different structure
+    axis = np.array([1.0, 0.0, 0.0])
+    c, s = np.cos(np.pi / 3.0), np.sin(np.pi / 3.0)
+    rot = np.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]])
+    for h in (2, 3, 4):
+        twisted[h] = (ref[h] - 2.0 * axis) @ rot.T + 2.0 * axis
+    assert idn.rmsd(ref, twisted, mirror=False) >= R_TOL
+
+
+def test_fallback_rmsd_only_uses_legal_graph_mappings() -> None:
+    # two opposite ring carbons trade places: an atom assignment that ignores bonds maps them back
+    # (0 A), but every graph automorphism keeps them apart, so the fallback must not go below
+    # the exact enumeration (that would merge distinct structures)
+    _, els, ref = _embed("C1CCCCCCCCCCC1")
+    graph, _, _ = build_topology(els, ref, (None, [], [], [], 1.25), None)
+    idn = Identity(graph)
+    moved = ref.copy()
+    moved[[0, 6]] = ref[[6, 0]]
+    p, q = ref[idn.kept], moved[idn.kept]
+    exact = idn.rmsd(ref, moved, mirror=False)
+    assert exact >= R_TOL
+    assert idn._rmsd_assigned(p - p.mean(0), q - q.mean(0)) >= exact - 1e-9
