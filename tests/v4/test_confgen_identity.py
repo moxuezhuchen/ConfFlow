@@ -158,3 +158,19 @@ def test_identity_classes_group_symmetric_carbons(butane) -> None:
     assert idn.classes[0] == idn.classes[3]
     assert idn.classes[1] == idn.classes[2]
     assert idn.classes[0] != idn.classes[1]
+
+
+def test_automorphisms_keep_edge_kinds() -> None:
+    # cyclobutane whose 0-3 ring bond is a forming reaction pair: of the eight ring symmetries
+    # only the identity and the reflection through that edge keep every edge kind
+    _, els, ref = _embed("C1CCC1")
+    graph, _, _ = build_topology(els, ref, (None, [], [(0, 3)], [], 1.25), None)
+    idn = Identity(graph)
+    kinds = {frozenset((e.a, e.b)): e.type.value for e in graph.edges}
+    assert kinds[frozenset((0, 3))] == "FORMING"
+    autos = idn.automorphisms()
+    assert len(autos) == 2
+    kept = [int(a) for a in idn.kept]
+    for row in autos:
+        image = {kept[k]: kept[int(v)] for k, v in enumerate(row)}
+        assert {image[0], image[3]} == {0, 3}

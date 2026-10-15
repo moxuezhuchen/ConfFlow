@@ -172,7 +172,10 @@ worker 记录 xTB 的 `--version` 行到 `summary.json`。
   - `structures`：只列发布的极小，每个唯一极小一条。`target` 为实际类 id（无金属为 `t00`，
     无法归入任何理想多面体的为 `unclassified`），`start` 为极小 id，`passed` 为 `true`；
   - `totals`：`generated` 为全部优化次数（含收尾），`relaxed` 为收敛数，`passed` 为发布数；
-  - `search`：`relaxations`（搜索阶段的优化次数）、`release_relaxations`（收尾次数）、`hessians`、
+  - `search`：`relaxations`（搜索阶段的优化次数）、`stop`（搜索结束原因：`budget` 用完预算、`saturated`
+    自适应判定低能区不再增长、`no_moves` 没有可用的父构象或移动、`no_minima` 没有任何构象被接受）、
+    `release`（去约束收尾状态：`done`；`off` 未开启；`not_needed` 没有可去掉的约束；`failed` 收尾全部失败，
+    此时发布的是仍带全部搜索约束的构象，worker 在 stderr 给出 warning）、`release_relaxations`（收尾次数）、`hessians`、
     `rotors`（转子数）、`targets_searched`、`unique_minima`、`spent`（各移动的花费）、
     `found_in_window`（各移动在窗口内的产出）、`failures`（失败原因计数）。
   逐起点的失败记录不再列出（几千条），失败原因统一计入 `search.failures`。

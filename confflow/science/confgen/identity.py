@@ -40,6 +40,13 @@ R_TOL = 0.2
 _D_PRE = 1.5  # Angstrom: distance-list pre-filter, far looser than R_TOL
 _MOMENT_TOL = 0.05
 _AUTO_CAP = 60000
+#: distinct RDKit bond types per edge kind, so automorphisms never swap edges of different kinds
+_EDGE_BOND = {
+    "COVALENT": "SINGLE",
+    "COORDINATION": "DOUBLE",
+    "FORMING": "TRIPLE",
+    "BREAKING": "QUADRUPLE",
+}
 _MASS = {
     "H": 1.008, "B": 10.81, "C": 12.011, "N": 14.007, "O": 15.999, "F": 18.998, "Si": 28.086,
     "P": 30.974, "S": 32.06, "Cl": 35.45, "Br": 79.904, "I": 126.904,
@@ -141,8 +148,9 @@ class Identity:
                 rw.AddAtom(atom)
             for a in self.kept:
                 for b in self.full[int(a)]:
-                    if b in where and int(a) < b:
-                        rw.AddBond(where[int(a)], where[b], Chem.BondType.SINGLE)
+                    if b in where and int(a) < b:  # the bond type carries the edge kind
+                        kind = _EDGE_BOND[self.full[int(a)][b]]
+                        rw.AddBond(where[int(a)], where[b], getattr(Chem.BondType, kind))
             mol = rw.GetMol()
             found = mol.GetSubstructMatches(
                 mol, uniquify=False, useChirality=False, maxMatches=_AUTO_CAP + 1
