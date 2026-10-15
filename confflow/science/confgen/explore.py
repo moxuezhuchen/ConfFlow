@@ -40,7 +40,13 @@ from confflow.science.confgen.calculator import (
 )
 from confflow.science.confgen.coordination import enumeration, shapes
 from confflow.science.confgen.graph import CoordinationSpec, TypedGraph
-from confflow.science.confgen.identity import HARTREE_TO_KCAL, Identity, MinimaPool, Minimum
+from confflow.science.confgen.identity import (
+    HARTREE_TO_KCAL,
+    Identity,
+    MinimaPool,
+    Minimum,
+    typed_mol,
+)
 from confflow.science.confgen.rotors import Rotor, Topology, perceive_mol, rotate
 
 __all__ = ["ExploreSettings", "ParallelMap", "explore"]
@@ -190,7 +196,6 @@ class _Explorer:
                                   if k != m and k not in self.donors]  # fmt: skip
         self.centers: tuple[int, ...] = ()
         self.pool = MinimaPool(self.id)
-        self.cells: dict[int, str] = {}
         self.marks: dict[str, set[int]] = {}
         self.nopt = 0
         self.fail: Counter[str] = Counter()
@@ -208,23 +213,14 @@ class _Explorer:
     # -- setup -----------------------------------------------------------------------------
     def _donor_perms(self) -> list[tuple[int, ...]]:
         """Permutations of the binding sites induced by automorphisms of the typed graph."""
-        from rdkit import Chem
-
         assert self.spec is not None
         full, els = self.id.full, self.elements
         heavy = [i for i, e in enumerate(els) if e != "H"]
         pos = {a: k for k, a in enumerate(heavy)}
-        rw = Chem.RWMol()
-        for a in heavy:
-            atom = Chem.Atom(els[a])
-            atom.SetIsotope(1 + sum(els[k] == "H" for k in full[a]))
-            atom.SetNoImplicit(True)
-            rw.AddAtom(atom)
-        for a in heavy:
-            for b in full[a]:
-                if b in pos and a < b:
-                    rw.AddBond(pos[a], pos[b], Chem.BondType.SINGLE)
-        mol = rw.GetMol()
+        hcount = [1 + sum(els[k] == "H" for k in full[a]) for a in heavy]
+        mol = typed_mol(
+            els, full, heavy, hcount
+        )  # edge kinds kept: donors of different roles never swap
         sites = [s.atoms[0] for s in self.spec.binding_sites]
         if any(a not in pos for a in sites):
             return [tuple(range(len(sites)))]
@@ -368,7 +364,6 @@ class _Explorer:
             mid = pool.add(float(out.energy_eh), out.coords, label, origin, cell)
             if mid is not None:
                 new.append(mid)
-                self.cells[mid] = cell
         return new
 
     def _take(self, arm: str, k: int, cells: bool = False) -> list[Minimum]:
@@ -387,10 +382,10 @@ class _Explorer:
         if cells:
             best: dict[str, Minimum] = {}
             for m in self.pool.minima:
-                c = self.cells.get(m.id, "")
+                c = m.cell
                 if c not in best or m.energy < best[c].energy:
                     best[c] = m
-            extra = [m for m in cand if best.get(self.cells.get(m.id, "")) is m and m not in pick]
+            extra = [m for m in cand if best.get(m.cell) is m and m not in pick]
             if pick:
                 used.update(m.id for m in extra[: max(1, k // 6)])
             else:
@@ -514,7 +509,7 @@ class _Explorer:
     def _probe_wells(self) -> None:
         best: dict[str, Minimum] = {}
         for m in self.pool.minima:
-            c = self.cells.get(m.id, "")
+            c = m.cell
             if c not in best or m.energy < best[c].energy:
                 best[c] = m
         refs = sorted(best.values(), key=lambda m: m.energy)[: self.st.probes]
@@ -566,9 +561,7 @@ class _Explorer:
         new = self._relax(items, scratch, self.restraints)
         for mid in new:
             m = scratch.minima[mid]
-            gid = self.pool.add(m.energy, m.coords, m.label, m.origin, m.cell)
-            if gid is not None:
-                self.cells[gid] = m.cell
+            self.pool.add(m.energy, m.coords, m.label, m.origin, m.cell)
 
     def _round(self) -> bool:
         st = self.st

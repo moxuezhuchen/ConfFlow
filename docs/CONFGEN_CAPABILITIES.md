@@ -40,7 +40,9 @@
 3. 势阱探测：在至多 3 个“环状态×类别”格子的最低构象上，测出每个转子实际弛豫到的扭转偏移，
    作为转子移动，并保留与任何实测偏移都相差 30° 以上的网格移动（探测父结构上不存在的阱仍可到达）。
 4. 反馈轮次，搜索阶段的预算按固定份额分配：全局 DG 30 %、单键转动 55 %、局部重嵌入 15 %。
-   单键转动从最低的未展开极小出发，并包括每个格子的最低点。单键命中率（指数平均）低于 10 % 时，
+   单键转动从最低的未展开极小出发；其他“环状态×类别”格子的最低点不交给单键转动（标记为已用），
+   留给局部重嵌入处理（实测展开它们更差：奥司他韦 3 个种子 Boltzmann 74.5 % 对 77.8 %）；
+   窗口内已无未用极小时，才取窗口外各格子的最低点。单键命中率（指数平均）低于 10 % 时，
    从单键份额中让出 10 % 给低频模式位移，且仅当引擎声明 Hessian 能力时进行。
 5. 去约束收尾（release，`release: true` 时）：对最低能量以上 `window_kcal + 2` 内的极小，只保留
    反应对约束重新优化、审计、去重；发布 `window_kcal` 内的构象。
@@ -182,12 +184,14 @@ worker 记录 xTB 的 `--version` 行到 `summary.json`。
 - worker 的 `stdout.log`、`stderr.log`（均为制品）。
 - 成员的 `role` 为 `conformer`，`ordinal` 为能量名次（0-based），id 按 `conformer_output_id`；
   metadata 含 `seed`、`starts`、`energy_eh`、`rel_kcal`、`search_target`、`search_start`、
-  `search_actual_target`。`search_target` 是发布的类目标，`search_start` 是极小 id，
-  `search_actual_target` 是实际类。
+  `search_actual_target`、`search_release`。`search_target` 是发布的类目标，`search_start` 是极小 id，
+  `search_actual_target` 是实际类，`search_release` 与 summary 的 `search.release` 相同（`failed` 表示
+  构象仍带全部搜索约束）。
   搜索成员是普通结构，下游按导入结构消费，不带额外状态。
 
 退出：至少一个构象通过审计并发布为 `COMPLETED`，附 INFO `confgen_completed`（生成、松弛、发布的数量，
-失败审计项直方图）；没有任何构象通过审计为 `FAILED`，错误码 `confgen_no_passing_structures`，
+失败审计项直方图、`release` 与 `stop`）；去约束收尾全部失败时仍为 `COMPLETED`，另附 WARNING
+`confgen_release_failed`；没有任何构象通过审计为 `FAILED`，错误码 `confgen_no_passing_structures`，
 错误信息为 `confgen search ran N relaxations but none passed all audit checks`，并附失败审计项直方图。
 此时 worker 以退出码 2 结束、不写 `structures.xyz`。
 worker 异常（包括 job 非法或 xTB 缺失）为 `FAILED`，附 stderr 尾部。

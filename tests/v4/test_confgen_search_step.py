@@ -300,6 +300,8 @@ def test_metal_search_completed(tmp_path: Path) -> None:
     assert {r.role for r in out.artifacts} >= {"search_summary", "search_structures"}
     info = [d for d in out.diagnostics if d.code == "confgen_completed"]
     assert len(info) == 1 and "passed" in info[0].message
+    assert {dict(r.metadata)["search_release"] for r in out.structures} == {"done"}
+    assert not [d for d in out.diagnostics if d.code == "confgen_release_failed"]
 
 
 def test_metal_free_search_completed(tmp_path: Path) -> None:
@@ -312,6 +314,24 @@ def test_metal_free_search_completed(tmp_path: Path) -> None:
     assert all(tuple(r.atoms) == tuple(driving.atoms) for r in out.structures)
     assert all(dict(r.metadata)["search_target"] == "t00" for r in out.structures)
     assert all(dict(r.metadata)["search_actual_target"] == "t00" for r in out.structures)
+
+
+def test_release_status_reaches_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    real = search_run._read_validated
+
+    def _failed_release(*args: Any) -> Any:
+        totals, payload, ordered, frames = real(*args)
+        payload["search"]["release"] = "failed"
+        return totals, payload, ordered, frames
+
+    monkeypatch.setattr(search_run, "_read_validated", _failed_release)
+    out, _ = _run(_native(), _driving_metal(), _write_fake(tmp_path), tmp_path)
+    assert out.status.value == "completed"
+    assert {dict(r.metadata)["search_release"] for r in out.structures} == {"failed"}
+    warn = [d for d in out.diagnostics if d.code == "confgen_release_failed"]
+    assert len(warn) == 1 and warn[0].severity.value == "warning"
+    info = next(d for d in out.diagnostics if d.code == "confgen_completed")
+    assert dict(info.details)["release"] == "failed" and dict(info.details)["stop"] is not None
 
 
 def test_zero_passing_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
