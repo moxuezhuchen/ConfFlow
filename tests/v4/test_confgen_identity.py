@@ -208,3 +208,18 @@ def test_fallback_rmsd_is_rotation_invariant() -> None:
     for h in (2, 3, 4):
         twisted[h] = (ref[h] - 2.0 * axis) @ rot.T + 2.0 * axis
     assert idn.rmsd(ref, twisted, mirror=False) >= R_TOL
+
+
+def test_fallback_rmsd_only_uses_legal_graph_mappings() -> None:
+    # two opposite ring carbons trade places: an atom assignment that ignores bonds maps them back
+    # (0 A), but every graph automorphism keeps them apart, so the fallback must not go below
+    # the exact enumeration (that would merge distinct structures)
+    _, els, ref = _embed("C1CCCCCCCCCCC1")
+    graph, _, _ = build_topology(els, ref, (None, [], [], [], 1.25), None)
+    idn = Identity(graph)
+    moved = ref.copy()
+    moved[[0, 6]] = ref[[6, 0]]
+    p, q = ref[idn.kept], moved[idn.kept]
+    exact = idn.rmsd(ref, moved, mirror=False)
+    assert exact >= R_TOL
+    assert idn._rmsd_assigned(p - p.mean(0), q - q.mean(0)) >= exact - 1e-9

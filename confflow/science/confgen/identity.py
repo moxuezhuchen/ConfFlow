@@ -43,7 +43,7 @@ _D_PRE = 1.5  # Angstrom: distance-list pre-filter, far looser than R_TOL
 _MOMENT_TOL = 0.05
 _AUTO_CAP = 60000
 _ANCHOR_TOL = 0.5  # Angstrom: anchor-triple distance consistency in the fallback RMSD
-_ANCHOR_CAP = 5000  # anchor-triple images tried at most
+_ANCHOR_CAP = 2000  # anchor-triple images tried at most
 #: distinct RDKit bond types per edge kind, so graph matches never swap edges of different kinds
 _EDGE_BOND = {
     "COVALENT": "SINGLE",
@@ -161,6 +161,7 @@ class Identity:
             ]
         )
         self._autos: np.ndarray | None | bool = False  # False = not computed yet
+        self._nbrs: list[dict[int, str]] | None = None
 
     def _refine(self, rounds: int = 12) -> list[int]:
         colour = [hash(e) for e in self.elements]
@@ -207,39 +208,20 @@ class Identity:
         return float(np.sqrt(msd.min()))
 
     def _rmsd_assigned(self, p: np.ndarray, q: np.ndarray) -> float:
-        """Fallback for huge automorphism groups: assignment within symmetry classes.
+        """Fallback for huge automorphism groups: the best of a set of legal graph mappings.
 
-        Rotation-invariant: three anchor atoms from the smallest classes are matched to every
-        distance-consistent image triple in ``q``; each triple fixes a rotation, after which atoms
-        are assigned within their classes and the fit is refined once.
+        Every mapping tried preserves the typed kept-atom graph (classes, adjacency, edge kinds),
+        so the result is never below the true symmetry RMSD (no false merges).  Three anchor atoms
+        from the smallest classes are matched to every distance-consistent image triple; each
+        fixes a rotation, then a breadth-first walk from the first anchor maps neighbours onto
+        neighbours of the same class and edge kind by nearest assignment; the fit is refined once.
         """
-        from scipy.optimize import linear_sum_assignment
-
         cls = [self.classes[int(a)] for a in self.kept]
         groups: dict[int, list[int]] = defaultdict(list)
         for pos, c in enumerate(cls):
             groups[c].append(pos)
-
-        def assigned(pr: np.ndarray) -> tuple[float, np.ndarray]:
-            perm = np.arange(len(pr))
-            for g in groups.values():
-                if len(g) > 1:
-                    ga = np.array(g)
-                    cost = ((pr[ga][:, None, :] - q[ga][None, :, :]) ** 2).sum(-1)
-                    r, c = linear_sum_assignment(cost)
-                    perm[ga[r]] = ga[c]
-            return _kabsch_msd(p, q[perm]), perm
-
-        anchors: list[int] = []
-        for i in sorted(range(len(p)), key=lambda i: (len(groups[cls[i]]), i)):
-            if not anchors or (len(anchors) == 1 and np.linalg.norm(p[i] - p[anchors[0]]) > 0.5):
-                anchors.append(i)
-            elif len(anchors) == 2:
-                u, v = p[anchors[1]] - p[anchors[0]], p[i] - p[anchors[0]]
-                if np.linalg.norm(np.cross(u, v)) > 0.25 * np.linalg.norm(u) * np.linalg.norm(v):
-                    anchors.append(i)
-                    break
-        best = assigned(p)[0]
+        best = _kabsch_msd(p, q)  # the identity mapping is always legal
+        anchors = self._anchors(p, cls, groups)
         if len(anchors) < 3:
             return float(np.sqrt(best))
         a, b, c = anchors
@@ -258,10 +240,73 @@ class Identity:
                     if tried > _ANCHOR_CAP:
                         return float(np.sqrt(best))
                     rot = _kabsch_rotation(p[[a, b, c]], q[[ia, ib, ic]])
-                    msd, perm = assigned(p @ rot)
-                    rot = _kabsch_rotation(p, q[perm])
-                    best = min(best, msd, assigned(p @ rot)[0])
+                    for _ in range(2):
+                        perm = self._walk(p @ rot, q, a, ia, cls)
+                        if perm is None:
+                            break
+                        best = min(best, _kabsch_msd(p, q[perm]))
+                        rot = _kabsch_rotation(p, q[perm])
         return float(np.sqrt(best))
+
+    def _anchors(self, p: np.ndarray, cls: list[int], groups: dict[int, list[int]]) -> list[int]:
+        """Three non-collinear kept positions from the smallest symmetry classes."""
+        anchors: list[int] = []
+        for i in sorted(range(len(p)), key=lambda i: (len(groups[cls[i]]), i)):
+            if not anchors or (len(anchors) == 1 and np.linalg.norm(p[i] - p[anchors[0]]) > 0.5):
+                anchors.append(i)
+            elif len(anchors) == 2:
+                u, v = p[anchors[1]] - p[anchors[0]], p[i] - p[anchors[0]]
+                if np.linalg.norm(np.cross(u, v)) > 0.25 * np.linalg.norm(u) * np.linalg.norm(v):
+                    anchors.append(i)
+                    break
+        return anchors
+
+    def _walk(
+        self, pr: np.ndarray, q: np.ndarray, root: int, image: int, cls: list[int]
+    ) -> np.ndarray | None:
+        """Legal kept-graph mapping grown from ``root -> image`` by nearest neighbour assignment."""
+        from scipy.optimize import linear_sum_assignment
+
+        nbr = self._kept_nbrs()
+        mapped, used, queue = {root: image}, {image}, [root]
+        while queue:
+            u = queue.pop(0)
+            src: dict[tuple[int, str], list[int]] = defaultdict(list)
+            dst: dict[tuple[int, str], list[int]] = defaultdict(list)
+            for v, kind in nbr[u].items():
+                if v not in mapped:
+                    src[(cls[v], kind)].append(v)
+            for w, kind in nbr[mapped[u]].items():
+                if w not in used:
+                    dst[(cls[w], kind)].append(w)
+            for key, vs in src.items():
+                ws = dst.get(key, [])
+                if len(ws) < len(vs):
+                    return None
+                cost = ((pr[vs][:, None, :] - q[ws][None, :, :]) ** 2).sum(-1)
+                r, c = linear_sum_assignment(cost)
+                for k, m in zip(r, c):
+                    mapped[vs[k]] = ws[m]
+                    used.add(ws[m])
+                    queue.append(vs[k])
+        if len(mapped) != len(pr):
+            return None  # disconnected kept graph: no single walk covers it
+        perm = np.array([mapped[k] for k in range(len(pr))])
+        for u, row in enumerate(nbr):
+            for v, kind in row.items():
+                if nbr[int(perm[u])].get(int(perm[v])) != kind:
+                    return None  # a ring closure broke an edge: not a graph mapping
+        return perm
+
+    def _kept_nbrs(self) -> list[dict[int, str]]:
+        """Typed adjacency among kept atoms, by kept position (cached)."""
+        if self._nbrs is None:
+            where = {int(a): k for k, a in enumerate(self.kept)}
+            self._nbrs = [
+                {where[b]: kind for b, kind in self.full[int(a)].items() if b in where}
+                for a in self.kept
+            ]
+        return self._nbrs
 
     # -- cheap invariants
     def fingerprint(self, x: np.ndarray) -> np.ndarray:
