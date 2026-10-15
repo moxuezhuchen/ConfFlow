@@ -79,6 +79,13 @@ class ExploreSettings:
     share_lowmode: float = 0.10
     lowmode_gate: float = 0.10
     release: bool = True
+    #: keep searching past ``min_budget`` while the low-energy region still grows, up to
+    #: ``budget``; stop once a trailing stretch found new minima within 3 kcal/mol of the
+    #: lowest at no more than ``saturation_rate`` per relaxation and did not lower the minimum
+    adaptive: bool = False
+    min_budget: int = 1500
+    saturation_window: int = 500
+    saturation_rate: float = 1.0 / 250.0
     small_ring_torsions: Literal["both", "on", "off"] = "both"
     embed_timeout: int = 20
     fragment_charges: tuple[tuple[int, int], ...] = ()
@@ -191,6 +198,7 @@ class _Explorer:
         self.spent: Counter[str] = Counter()
         self.found: Counter[str] = Counter()
         self.rate = {"single": 0.5}
+        self.history: list[tuple[int, int, float]] = []  # (relaxations, new <3 kcal, lowest)
         self.hessians = 0
         self.released = 0
         self.dg_round = 0
@@ -584,6 +592,8 @@ class _Explorer:
             for m in self.pool.minima[before:]
             if (m.energy - lo) * HARTREE_TO_KCAL <= st.window_kcal
         ]
+        low = sum((m.energy - lo) * HARTREE_TO_KCAL <= 3.0 for m in self.pool.minima[before:])
+        self.history.append((self.nopt, int(low), lo))
         for arm in share:
             n = sum(it[2].split(":")[0] == arm for it in items)
             f = sum(m.origin.split(":")[0] == arm for m in new)
@@ -592,6 +602,20 @@ class _Explorer:
             if arm == "single" and n:
                 self.rate["single"] = 0.5 * self.rate["single"] + 0.5 * f / n
         return True
+
+    def _saturated(self) -> bool:
+        """Return whether an adaptive search has stopped finding low-energy minima."""
+        st = self.st
+        if not st.adaptive or self.nopt < st.min_budget or not self.history:
+            return False
+        span = max(st.saturation_window, int(0.25 * self.nopt))
+        start = self.nopt - span
+        before = [h for h in self.history if h[0] <= start]
+        if not before:
+            return False
+        found = sum(h[1] for h in self.history if h[0] > start)
+        gain = (before[-1][2] - self.pool.lowest()) * HARTREE_TO_KCAL
+        return found <= st.saturation_rate * span and gain < 0.1
 
     def _release(self) -> MinimaPool:
         """Re-relax the minima near the lowest with only reaction-pair restraints."""
@@ -626,13 +650,14 @@ class _Explorer:
             self._probe_wells()
         while self._left() > 0:
             self._poll()
-            if not self._round():
+            if not self._round() or self._saturated():
                 break
         return self._release(), self._stats()
 
     def _stats(self) -> dict[str, Any]:
         return {
             "relaxations": self.nopt,
+            "adaptive": self.st.adaptive,
             "release_relaxations": self.released,
             "hessians": self.hessians,
             "rotors": len(self.rotors),
