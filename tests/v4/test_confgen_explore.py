@@ -187,3 +187,23 @@ def test_empty_first_rounds_retry_global_starts(monkeypatch: pytest.MonkeyPatch)
     run = explore.explore(graph, spec, ref, _SHAPE, _settings(budget=40), _FakeCalc(), map)
     assert len(calls) >= 3
     assert run.passing
+
+
+def test_adaptive_budget_stops_once_saturated() -> None:
+    graph, ref = _butane()  # one rotor: a handful of minima, found early
+    kw = {"budget": 600, "min_budget": 64, "saturation_window": 64, "batch": 16}
+    run = explore.explore(graph, None, ref, None, _settings(adaptive=True, **kw), _FakeCalc(), map)
+    assert run.stats["adaptive"] is True
+    assert 64 <= run.stats["relaxations"] < 600
+    fixed = explore.explore(graph, None, ref, None, _settings(**kw), _FakeCalc(), map)
+    assert fixed.stats["adaptive"] is False and fixed.stats["relaxations"] == 600
+    assert {round(r.energy_eh, 6) for r in fixed.passing} == {
+        round(r.energy_eh, 6) for r in run.passing
+    }
+
+
+def test_adaptive_budget_never_stops_before_its_minimum() -> None:
+    graph, ref = _butane()
+    kw = {"budget": 600, "min_budget": 200, "saturation_window": 16, "batch": 16}
+    run = explore.explore(graph, None, ref, None, _settings(adaptive=True, **kw), _FakeCalc(), map)
+    assert run.stats["relaxations"] >= 200

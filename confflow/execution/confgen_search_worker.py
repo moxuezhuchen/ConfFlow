@@ -134,8 +134,15 @@ def _load_job(path: str) -> dict[str, Any]:
     if not isinstance(release, bool):
         raise _JobError(f"job field 'settings.release' must be a boolean, got {release!r}")
     cores = _int(raw.get("cores"), "cores", 1)
+    adaptive = section.get("adaptive", False)
+    if not isinstance(adaptive, bool):
+        raise _JobError(f"job field 'settings.adaptive' must be a boolean, got {adaptive!r}")
+    budget = _int(section.get("budget"), "settings.budget", 1)
+    cap = _int(section.get("budget_cap", budget), "settings.budget_cap", 1) if adaptive else budget
     settings = ExploreSettings(
-        budget=_int(section.get("budget"), "settings.budget", 1),
+        budget=max(cap, budget),
+        adaptive=adaptive,
+        min_budget=budget,
         window_kcal=float(window),
         seed=_int(section.get("seed"), "settings.seed"),
         starts=None if starts is None else _int(starts, "settings.starts", 1),

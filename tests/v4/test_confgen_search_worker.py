@@ -432,6 +432,7 @@ def test_broken_starts_publish_nothing(tmp_path: Path, monkeypatch: pytest.Monke
         ("window_kcal", 0.0),
         ("arrangement", "x"),
         ("release", "yes"),
+        ("adaptive", "yes"),
     ],
 )
 def test_new_search_settings_exit_three(

@@ -23,6 +23,7 @@ from typing import Any
 
 from confflow.science.confgen.search_spec import (
     DEFAULT_SEARCH_BUDGET,
+    DEFAULT_SEARCH_BUDGET_CAP,
     DEFAULT_SEARCH_WINDOW_KCAL,
     build_search_context,
     resolve_search_starts,
@@ -235,9 +236,11 @@ def _run(
     rundir = os.path.join(attempt, "search_run")
     os.makedirs(rundir, exist_ok=True)
     settings_doc = dict(section) if isinstance(section, Mapping) else {}
-    settings_doc.setdefault("budget", DEFAULT_SEARCH_BUDGET)
-    if settings_doc["budget"] is None:
+    # unset budget: spend at least the default, continue while the low-energy region grows
+    settings_doc["adaptive"] = settings_doc.get("budget") is None
+    if settings_doc["adaptive"]:
         settings_doc["budget"] = DEFAULT_SEARCH_BUDGET
+        settings_doc["budget_cap"] = DEFAULT_SEARCH_BUDGET_CAP
     settings_doc.setdefault("window_kcal", DEFAULT_SEARCH_WINDOW_KCAL)
     settings_doc.setdefault("arrangement", "keep")
     settings_doc.setdefault("release", True)
