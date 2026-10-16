@@ -281,3 +281,27 @@ def test_donor_permutations_keep_edge_kinds() -> None:
     typed = replace(graph, edges=edges)
     fake = SimpleNamespace(spec=spec, id=Identity(typed), elements=[a.element for a in typed.atoms])
     assert explore._Explorer._donor_perms(fake) == [(0, 1, 2, 3)]  # type: ignore[arg-type]
+
+
+def test_dg_starts_go_out_in_parallel_slices(monkeypatch: pytest.MonkeyPatch) -> None:
+    graph, spec, ref = _pt_toy()
+    calls: list[tuple[int, Any]] = []
+    real = search.generate_starts
+
+    def _spy(*args: Any, **kwargs: Any) -> search.SearchStarts:
+        calls.append((args[-1].count, args[-1].window))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(search, "generate_starts", _spy)
+    explore.explore(graph, spec, ref, _SHAPE, _settings(starts=10), _FakeCalc(), map)
+    # one kept target, ten first-round starts: three slices of the same request
+    assert calls[:3] == [(10, (0, 4)), (10, (4, 8)), (10, (8, 10))]
+
+
+def test_starts_lost_to_timeouts_are_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    graph, spec, ref = _pt_toy()
+    monkeypatch.setattr(search, "generate_starts", lambda *a, **k: search.SearchStarts())
+    run = explore.explore(graph, spec, ref, _SHAPE, _settings(budget=40), _FakeCalc(), map)
+    assert not run.passing
+    assert run.stats["stop"] == "no_minima"
+    assert run.stats["failures"]["dg_no_start"] > 0
