@@ -119,7 +119,7 @@ ConfFlow 不给出 DFT 能量。
 | `arrangement` | `keep` | `keep`：保持输入的配位排布（输入不可归类时搜索全部类别）；`enumerate`：枚举所有配位类 |
 | `release` | `true` | 是否做去约束收尾 |
 | `small_ring_torsions` | `both` | 小环扭转开关：`both` 时每批 DG 出发约一半开、一半关；`on`/`off` 全局开或关 |
-| `embed_timeout_seconds` | `120` | 逐起点的 DG 嵌入超时（秒）：每个出发单独一次 RDKit 调用；超时的出发被跳过，其余出发保留 |
+| `embed_timeout_seconds` | `120` | 逐起点的 DG 嵌入超时（秒）：每个出发单独一次 RDKit 调用；超时或无法嵌入的出发被跳过（计入 `search.failures.dg_no_start`），其余出发保留。同一类别的出发按原请求切成每 4 个一片并行嵌入（种子与整次请求相同，结果不变） |
 | `max_cycles` | `1000` | xTB 松弛最大循环数 |
 | `bond_scale` | `1.25` | 审计阶段重新感知键时的尺度（与 `tolerances.bond_scale` 独立） |
 | `fragment_charges` | `[]` | DG 片段电荷覆盖：`{atom, charge}`，`atom` 使用本步骤的 `index_base` |

@@ -342,3 +342,26 @@ def test_donor_pair_counts_as_bond_only_at_bonding_distance() -> None:
     apart = _place(loose, 1, 3, 1.50, els)
     got = search.audit_structure(apart, topo, spec, loose, _SHAPE, cmd)
     assert "topology" not in got.failed_checks
+
+
+def test_windows_reproduce_the_full_request() -> None:
+    els, ref = _toy()
+    graph, spec = _topo(els, ref)
+    tgts = search.plan_targets(graph, spec, _SHAPE)
+    full = search.generate_starts(
+        graph, spec, ref, _SHAPE, tgts[:1], search.SearchSettings(count=5)
+    )
+    parts = [
+        search.generate_starts(
+            graph, spec, ref, _SHAPE, tgts[:1], search.SearchSettings(count=5, window=w)
+        )
+        for w in ((0, 2), (2, 3), (3, 5))
+    ]
+    got = [s.coords for p in parts for s in p.starts]
+    assert len(got) == len(full.starts) == 5
+    for a, b in zip(got, (s.coords for s in full.starts)):
+        np.testing.assert_allclose(a, b)
+    with pytest.raises(search.SearchError, match="window"):
+        search.generate_starts(
+            graph, spec, ref, _SHAPE, tgts[:1], search.SearchSettings(count=5, window=(3, 9))
+        )

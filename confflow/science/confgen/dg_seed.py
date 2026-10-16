@@ -69,6 +69,9 @@ class DGSeedSettings:
         Maximum time in seconds per start (one conformer per RDKit call;
         0 means no limit). A timed-out start is skipped and the other starts
         are kept; a timeout never raises.
+    first_start : int
+        Index of the first start.  Start ``k`` always gets the seed derived for ``k``, so
+        consecutive slices of one request reproduce that request exactly.
     """
 
     count: int = 20
@@ -81,6 +84,7 @@ class DGSeedSettings:
     donor_neighbor_tolerance: float = 0.25
     fragment_charges: tuple[tuple[int, int], ...] = ()
     timeout_seconds: int = 0
+    first_start: int = 0
 
 
 #: Shared default settings (frozen, safe to share across calls).
@@ -305,7 +309,9 @@ def _perceive_fragment(
     return orders, charges, picked_charge
 
 
-def _embed_per_start(mol: Any, requested: int, params: Any) -> tuple[np.ndarray, ...]:
+def _embed_per_start(
+    mol: Any, requested: int, params: Any, first: int = 0
+) -> tuple[np.ndarray, ...]:
     """Embed the starts one conformer per RDKit call, each with its own seed.
 
     ``params.timeout`` bounds a single call, so a timed-out, unembeddable, or
@@ -318,7 +324,7 @@ def _embed_per_start(mol: Any, requested: int, params: Any) -> tuple[np.ndarray,
     base = int(params.randomSeed)
     found: list[np.ndarray] = []
     raised: list[Exception] = []
-    for offset in range(requested):
+    for offset in range(first, first + requested):
         params.randomSeed = (base * (offset + 1) + offset) % (2**31 - 1)
         tick = time.monotonic()
         try:
@@ -513,7 +519,7 @@ def generate_dg_seeds(
     params.SetBoundsMat(bounds)
     if core:
         params.SetCoordMap({i: Point3D(*targets[i]) for i in core})
-    starts = _embed_per_start(mol, requested, params)
+    starts = _embed_per_start(mol, requested, params, int(settings.first_start))
     return DGSeedResult(
         coords=starts,
         requested=requested,

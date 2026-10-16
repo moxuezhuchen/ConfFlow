@@ -70,6 +70,8 @@ class SearchSettings:
     embed_timeout: int = 120
     fragment_charges: tuple[tuple[int, int], ...] = ()
     bond_scale: float = 1.25
+    #: embed only starts ``lo <= k < hi`` of the ``count`` (same seeds as the full request)
+    window: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +186,9 @@ def _check_settings(settings: SearchSettings) -> None:
     scale = settings.bond_scale
     if isinstance(scale, bool) or not np.isfinite(scale) or scale <= 0:
         raise SearchError(f"bond_scale must be positive, got {scale!r}")
+    win = settings.window
+    if win is not None and not (len(win) == 2 and 0 <= win[0] < win[1] <= count):
+        raise SearchError(f"window must satisfy 0 <= lo < hi <= count, got {win!r}")
 
 
 def _poll(should_cancel: Callable[[], bool] | None) -> None:
@@ -236,9 +241,20 @@ def generate_starts(
         calls += [(count - n_on, seed * 1000 + 2 * pos + 2, False)] if count - n_on else []
         acc: list[tuple[np.ndarray, bool]] = []
         err: str | None = None
+        lo, hi = settings.window or (0, count)
+        first = 0  # index of the call's first start in the full request
         for need, rseed, on in calls:
+            a, b = max(lo, first) - first, min(hi, first + need) - first
+            first += need
+            if a >= b:
+                continue
             setting = DGSeedSettings(
-                need, rseed, on, timeout_seconds=settings.embed_timeout, fragment_charges=frag
+                b - a,
+                rseed,
+                on,
+                timeout_seconds=settings.embed_timeout,
+                fragment_charges=frag,
+                first_start=a,
             )
             try:
                 made = generate_dg_seeds(
