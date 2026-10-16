@@ -352,7 +352,7 @@ class _Explorer:
         outs = self.calc.relax_many(reqs)
         if not free:
             self.nopt += len(items)
-        new = []
+        rows = []
         for (_, _, origin), out in zip(items, outs):
             if out.coords is None or out.energy_eh is None:
                 self.fail["not_converged"] += 1
@@ -362,10 +362,8 @@ class _Explorer:
                 self.fail.update(bad)
                 continue
             cell = label + "#" + self.topo.ring_signature(out.coords)
-            mid = pool.add(float(out.energy_eh), out.coords, label, origin, cell)
-            if mid is not None:
-                new.append(mid)
-        return new
+            rows.append((float(out.energy_eh), out.coords, label, origin, cell))
+        return [mid for mid in pool.add_many(rows, self.pmap) if mid is not None]
 
     def _take(self, arm: str, k: int, cells: bool = False) -> list[Minimum]:
         """Lowest unused parents of ``arm`` inside the window.
@@ -566,10 +564,9 @@ class _Explorer:
 
     def _relax_into(self, items: list[tuple[str, np.ndarray, str]], scratch: MinimaPool) -> None:
         """Relax probe items: charged to the budget, accepted minima go to both pools."""
-        new = self._relax(items, scratch, self.restraints)
-        for mid in new:
-            m = scratch.minima[mid]
-            self.pool.add(m.energy, m.coords, m.label, m.origin, m.cell)
+        new = [scratch.minima[k] for k in self._relax(items, scratch, self.restraints)]
+        rows = [(m.energy, m.coords, m.label, m.origin, m.cell) for m in new]
+        self.pool.add_many(rows, self.pmap)
 
     def _round(self) -> bool:
         st = self.st

@@ -15,8 +15,10 @@ assignment fallback when the automorphism group is too large.
 
 from __future__ import annotations
 
+import hashlib
+import pickle
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -138,6 +140,7 @@ class Identity:
     """Graph symmetry and same-minimum test for one molecule."""
 
     def __init__(self, graph: TypedGraph) -> None:
+        self.graph = graph
         self.elements = [atom.element for atom in graph.atoms]
         self.n = len(self.elements)
         self.metal = graph.metal_center
@@ -164,6 +167,8 @@ class Identity:
             np.flatnonzero(np.array([self.classes[int(a)] for a in self.kept]) == c)
             for c in sorted({self.classes[int(a)] for a in self.kept})
         ]
+        self._single = np.array([g[0] for g in self._kept_groups if len(g) == 1], dtype=int)
+        self._multi = [g for g in self._kept_groups if len(g) > 1]
         self._split = 3 + sum(len(i) for i, _ in self._pairs)
         self._autos: np.ndarray | None | bool = False  # False = not computed yet
         self._nbrs: list[dict[int, str]] | None = None
@@ -345,8 +350,8 @@ class Identity:
         n = len(self.kept)
         a = f1[self._split :].reshape(n, -1)
         b = f2[self._split :].reshape(n, -1)
-        total = 0.0
-        for g in self._kept_groups:
+        total = float(((a[self._single] - b[self._single]) ** 2).sum())
+        for g in self._multi:
             cost = ((a[g][:, None] - b[g][None]) ** 2).sum(2)
             r, c = linear_sum_assignment(cost)
             total += float(cost[r, c].sum())
@@ -354,9 +359,12 @@ class Identity:
 
     def same(self, e1: float, x1: np.ndarray, f1: np.ndarray, m: Minimum) -> bool:
         """Return whether (energy, coords, fingerprint) is the minimum ``m``."""
-        if abs(e1 - m.energy) * HARTREE_TO_KCAL > E_TOL:
+        return self.close(e1, f1, m.energy, m.fingerprint) and self.rmsd(x1, m.coords) < R_TOL
+
+    def close(self, e1: float, f1: np.ndarray, e2: float, f2: np.ndarray) -> bool:
+        """Return whether the cheap tests leave the RMSD to decide (``same`` without it)."""
+        if abs(e1 - e2) * HARTREE_TO_KCAL > E_TOL:
             return False
-        f2 = m.fingerprint
         if np.max(np.abs(f1[:3] - f2[:3]) / np.maximum(f2[:3], 1e-9)) > _MOMENT_TOL:
             return False
         d = np.abs(f1[3 : self._split] - f2[3 : self._split])
@@ -364,9 +372,20 @@ class Identity:
             k = min(len(d), max(8, len(d) // 100))
             if float(np.partition(d, -k)[-k:].mean()) > _D_PRE:
                 return False
-        if self._bound(f1, f2) >= R_TOL:
-            return False
-        return self.rmsd(x1, m.coords) < R_TOL
+        return self._bound(f1, f2) < R_TOL
+
+
+_WORKER_IDENTITY: dict[str, Identity] = {}
+
+
+def _rmsd_task(args: tuple[str, TypedGraph, list[tuple[np.ndarray, np.ndarray]]]) -> list[bool]:
+    """Worker: ``rmsd < R_TOL`` for each pair, with the Identity built once per process."""
+    key, graph, pairs = args
+    idn = _WORKER_IDENTITY.get(key)
+    if idn is None:
+        _WORKER_IDENTITY.clear()
+        idn = _WORKER_IDENTITY[key] = Identity(graph)
+    return [idn.rmsd(x, y) < R_TOL for x, y in pairs]
 
 
 class MinimaPool:
@@ -385,16 +404,87 @@ class MinimaPool:
     ) -> int | None:
         """Add a minimum; return its new id, or ``None`` if it rediscovers a known one."""
         fp = self.identity.fingerprint(coords)
-        for k, m in enumerate(self.minima):
-            if self.identity.same(energy, coords, fp, m):
-                self.hits[k] += 1
-                if energy < m.energy:
-                    self.minima[k] = Minimum(m.id, energy, coords, m.label, m.origin, m.cell, fp)
-                return None
+        hit = next(
+            (k for k, m in enumerate(self.minima) if self.identity.same(energy, coords, fp, m)),
+            None,
+        )
+        return self._commit(hit, energy, coords, label, origin, cell, fp)
+
+    def _commit(
+        self, hit: int | None, energy: float, coords: np.ndarray, label: str, origin: str,
+        cell: str, fp: np.ndarray,
+    ) -> int | None:  # fmt: skip
+        if hit is not None:
+            m = self.minima[hit]
+            self.hits[hit] += 1
+            if energy < m.energy:
+                self.minima[hit] = Minimum(m.id, energy, coords, m.label, m.origin, m.cell, fp)
+            return None
         rec = Minimum(len(self.minima), energy, coords, label, origin, cell, fp)
         self.minima.append(rec)
         self.hits.append(1)
         return rec.id
+
+    def add_many(
+        self, rows: Sequence[tuple[float, np.ndarray, str, str, str]],
+        pmap: Callable[[Callable[[Any], Any], Sequence[Any]], Iterable[Any]] | None = None,
+        chunks: int = 64,
+    ) -> list[int | None]:  # fmt: skip
+        """``add`` each (energy, coords, label, origin, cell) row in order, with the same result.
+
+        The RMSDs the cheap tests leave are computed up front (in parallel through ``pmap`` when
+        there are enough) against every earlier pool member or row as it stands now; a member
+        replaced by a lower-energy rediscovery during the batch is then re-tested serially.
+        """
+        idn = self.identity
+        fps = [idn.fingerprint(r[1]) for r in rows]
+        base = len(self.minima)
+        states = [(m.energy, m.coords, m.fingerprint) for m in self.minima]
+        states += [(r[0], r[1], fp) for r, fp in zip(rows, fps)]
+        energy = np.array([st[0] for st in states])
+        need = [
+            (i, s)
+            for i, (r, fp) in enumerate(zip(rows, fps))
+            for s in np.flatnonzero(np.abs(energy[: base + i] - r[0]) * HARTREE_TO_KCAL <= E_TOL)
+            if idn.close(r[0], fp, states[s][0], states[s][2])
+        ]
+        pairs = [(rows[i][1], states[s][1]) for i, s in need]
+        if pmap is None or len(need) < 4 * chunks:
+            flat = [idn.rmsd(x, y) < R_TOL for x, y in pairs]
+        else:
+            key = hashlib.sha256(pickle.dumps(idn.graph)).hexdigest()
+            size = -(-len(pairs) // chunks)
+            tasks = [(key, idn.graph, pairs[k : k + size]) for k in range(0, len(pairs), size)]
+            flat = [v for out in pmap(_rmsd_task, tasks) for v in out]
+        verdict = dict(zip(need, flat))
+        trues: dict[int, set[int]] = defaultdict(set)
+        for (i, s), v in verdict.items():
+            if v:
+                trues[i].add(s)
+        index_of = {k: k for k in range(base)}  # precomputed state -> pool index
+        stale: set[int] = set()  # pool indices replaced during the batch
+        out: list[int | None] = []
+        for i, (r, fp) in enumerate(zip(rows, fps)):
+            known = {index_of[s] for s in trues[i] if s in index_of} - stale
+            hit = self._first(r, fp, known, stale)
+            mid = self._commit(hit, *r, fp)
+            if mid is not None:
+                index_of[base + i] = mid
+            elif hit is not None and self.minima[hit].coords is r[1]:
+                stale.add(hit)
+            out.append(mid)
+        return out
+
+    def _first(
+        self, row: tuple[float, np.ndarray, str, str, str], fp: np.ndarray,
+        known: set[int], stale: set[int],
+    ) -> int | None:  # fmt: skip
+        """First pool index matching ``row``: ``known`` (precomputed) or a re-tested stale one."""
+        first = min(known, default=len(self.minima))
+        for k in sorted(stale):
+            if k < first and self.identity.same(row[0], row[1], fp, self.minima[k]):
+                return k
+        return first if first < len(self.minima) else None
 
     def lowest(self) -> float:
         """Return the lowest energy (Eh); the pool must not be empty."""
