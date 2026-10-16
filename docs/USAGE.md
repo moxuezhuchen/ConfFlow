@@ -72,7 +72,7 @@ steps:
       structure: {source: {step: s_gen, port: structures}}
     transform:
       kind: refine
-      native: {rmsd_threshold_angstrom: 0.25}
+      native: {rmsd_threshold_angstrom: 0.2}
 
   - id: s_opt
     executor: calculation
@@ -117,6 +117,41 @@ ConfGen 只有一个生成引擎（迭代 DG 搜索：全局 DG 出发、势阱�
   不写时，拓扑来自结构记录自带的工作拓扑，再不然由几何感知得到。
   ConfGen spec 声明的 `topology`/`coordination`/`add_bond`/`del_bond` **不会**写入输出记录；反应边/配位边体系的 refine 需要手写 `topology_bonds`，否则按几何感知建图（`bond_scale` 1.15，与 ConfGen 默认一致）。
 - `max_structures`：按 id 顺序截断。
+
+
+### 用 UMA 重排构象（Gaussian External）
+
+UMA 是机器学习势能，ConfFlow 不附带也不安装 UMA 或它的 Gaussian 包装脚本。前提是：Gaussian 支持 External 接口，
+并且包装脚本（例如 `uma_s`）在 `PATH` 上，运行后在日志里输出 `Recovered energy=`。
+
+路线写在计算步骤的 `native.keyword` 里：
+
+- 单点：`# external="uma_s"`，即 `native: {keyword: 'external="uma_s"'}`
+- 优化：`# opt=(modredundant,nomicro) external="uma_s"`，即 `native: {keyword: 'opt=(modredundant,nomicro) external="uma_s"'}`
+
+路线里含双引号，所以 YAML 值要整体用单引号包住。
+
+对 External 计算，ConfFlow 把日志中最后一个 `Recovered energy=` 作为电子能。该能量只在日志同时包含 "External calculation of energy"、
+且不含 "SCF Done" 与 ONIOM 时才被采用；ONIOM 与 External 同时出现会被拒绝。
+
+推荐流程：ConfGen（引擎本身用 GFN2-xTB 优化，无需另外设置）→ 对**全部**已发布构象做 UMA-s 单点 → 用 `filter` 配合 `energy_window_kcal` 筛选（`results` 绑定到同一个 UMA 步骤）→ DFT。
+完整可校验的例子见 `docs/examples/uma_rescoring.yaml`。
+
+基准：5 个体系，各取 GFN2 能量最低的 40 个构象（均在 GFN2 6 kcal/mol 窗口内），以 r2SCAN-3c 单点为参照。每格为相对能量的平均绝对偏差（kcal/mol）/ DFT 最低构象在该方法下的名次。
+
+| 体系 | GFN2 | g-xTB | UMA-s | UMA-m |
+|---|---|---|---|---|
+| axurer | 1.59 / 9 | 0.71 / 1 | 0.58 / 1 | 0.28 / 1 |
+| cnetpa | 3.78 / 17 | 1.06 / 1 | 0.42 / 1 | 0.25 / 1 |
+| 奥司他韦 | 0.85 / 11 | 0.53 / 4 | 0.13 / 1 | 0.12 / 1 |
+| akugod | 3.33 / 27 | 1.09 / 1 | 0.63 / 1 | 0.30 / 1 |
+| ts1_re | 5.72 / 5 | 1.30 / 1 | 0.48 / 1 | 0.37 / 1 |
+
+- 48 核服务器上单点的平均耗时：UMA-s 0.2–0.5 s，UMA-m 1.0–3.2 s，g-xTB 2.9–10 s，r2SCAN-3c 9–50 s。
+- DFT 能量在 2 kcal/mol 以内的构象，按 UMA-s 排序时距 UMA-s 最低点最多 +1.8 kcal/mol（按 GFN2 排序时最多 +2.3），所以 3 kcal/mol 的 UMA 窗口能把它们都留下。
+- 局限：只测试了每个体系 GFN2 最低的 40 个构象，窗口之外没有验证。因此应对全部已发布构象做 UMA 重打分（单点很便宜），
+  DFT 之前用约 3 kcal/mol 的 `energy_window_kcal`，而不是先用窄的 GFN2 窗口截断。
+- UMA-m 略更准确，但慢 5–7 倍。
 
 
 ## 3. 校验与运行

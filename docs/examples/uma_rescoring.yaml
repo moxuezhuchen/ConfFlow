@@ -1,0 +1,59 @@
+# UMA rescoring of ConfGen conformers through Gaussian External.
+#
+# What it does: generates conformers with ConfGen (from `inputs.structures`), publishes the UMA-s single-point electronic energy of
+# EVERY conformer (Gaussian `# external="uma_s"`), keeps the conformers within
+# 3.0 kcal/mol of the UMA minimum (`filter`, bound to the same UMA step's results),
+# and optimises the survivors with DFT (ORCA r2SCAN-3c).
+#
+# Prerequisites (not shipped or installed by ConfFlow):
+#   - Gaussian with the External interface, and a wrapper script `uma_s` on PATH
+#     that runs UMA and prints `Recovered energy=` in the log.
+#   - ORCA with r2SCAN-3c available to the calculation executor.
+#   - Validate first: confflow v4 validate --workflow docs/examples/uma_rescoring.yaml --json
+schema: confflow.workflow.v4
+
+inputs:
+  structures: {kind: structure, cardinality: many}
+
+global:
+  scientific_defaults: {charge: 0, multiplicity: 1}
+  resources: {cores_per_item: 4, memory_per_item: 8GiB}
+
+steps:
+  - id: s_gen
+    executor: confgen
+    bindings:
+      structure: {source: {run: structures}}
+    confgen:
+      schema_version: 4
+      index_base: 1
+      seed: 11
+
+  - id: s_uma
+    executor: calculation
+    bindings:
+      structure: {source: {step: s_gen, port: structures}}
+    calculation:
+      program: gaussian
+      role: sp
+      native: {keyword: 'external="uma_s"'}
+      checks: [normal_termination]
+
+  - id: s_window
+    executor: structure_transform
+    bindings:
+      structure: {source: {step: s_uma, port: structures}}
+      results: {source: {step: s_uma, port: results}}
+    transform:
+      kind: filter
+      native: {energy_key: electronic, energy_window_kcal: 3.0}
+
+  - id: s_dft
+    executor: calculation
+    bindings:
+      structure: {source: {step: s_window, port: structures}}
+    calculation:
+      program: orca
+      role: opt
+      native: {keyword: "r2SCAN-3c Opt"}
+      checks: [normal_termination, geometry_required]
