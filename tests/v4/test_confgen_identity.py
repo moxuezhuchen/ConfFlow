@@ -223,3 +223,22 @@ def test_fallback_rmsd_only_uses_legal_graph_mappings() -> None:
     exact = idn.rmsd(ref, moved, mirror=False)
     assert exact >= R_TOL
     assert idn._rmsd_assigned(p - p.mean(0), q - q.mean(0)) >= exact - 1e-9
+
+
+def test_profile_bound_never_exceeds_rmsd() -> None:
+    els, ref, _, idn = _graph("OC(=O)c1ccc(cc1)C(C)(C)CO")
+    rng = np.random.default_rng(7)
+    fr = idn.fingerprint(ref)
+    for k in range(40):
+        y = ref + rng.normal(0.0, 0.05 * (1 + k % 8), ref.shape)
+        if k % 3 == 0:
+            y = y * np.array([-1.0, 1.0, 1.0])
+        y = y @ _proper_rotation(k)
+        assert idn._bound(fr, idn.fingerprint(y)) <= idn.rmsd(ref, y) + 1e-9
+    assert idn._bound(fr, fr) == pytest.approx(0.0, abs=1e-9)
+    # Relabel the kept atoms by every automorphism: tiny RMSD, so the bound must stay tiny too.
+    for perm in idn.automorphisms():
+        y = ref.copy()
+        y[idn.kept] = ref[idn.kept][perm]
+        y = y + rng.normal(0.0, 0.01, ref.shape)
+        assert idn._bound(fr, idn.fingerprint(y)) <= idn.rmsd(ref, y) + 1e-9 < R_TOL
