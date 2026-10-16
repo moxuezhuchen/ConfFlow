@@ -5,7 +5,7 @@
 Presets select the ``native`` vocabulary of an explicit structure-transform
 step.  They never invent execution semantics: keys are the documented
 transform-native vocabulary of :mod:`confflow.execution.transform_executor`
-(``rmsd_threshold_angstrom``, ``bond_scale``, ``heavy_only``,
+(``rmsd_threshold_angstrom``, ``bond_scale``, ``mirror``,
 ``max_structures`` for ``refine``; nothing for ``deduplicate``).  There is
 no ``energy_window`` preset member — the V4 transform carries only structure
 inputs, so that field is omitted rather than emitted as a backend-invalid
@@ -28,26 +28,26 @@ __all__ = [
 ]
 
 #: Version of the preset table.
-PRESET_VERSION: str = "v1"
+PRESET_VERSION: str = "v2"
 
 _PRESET_TABLE: dict[str, dict[str, Any]] = {
     "refine_default": {
         "card": "refine",
         "native": {
-            "rmsd_threshold_angstrom": 0.25,
+            "rmsd_threshold_angstrom": 0.2,
             "bond_scale": 1.2,
-            "heavy_only": False,
+            "mirror": True,
         },
-        "description": "Pinned RMSD 0.25 A, bond scale 1.2, all atoms.",
+        "description": "Pinned RMSD 0.2 A, bond scale 1.2, mirror images count as the same conformer.",
     },
     "refine_strict": {
         "card": "refine",
         "native": {
             "rmsd_threshold_angstrom": 0.1,
             "bond_scale": 1.2,
-            "heavy_only": False,
+            "mirror": True,
         },
-        "description": "Pinned tighter RMSD witness (0.10 A); otherwise default.",
+        "description": "Pinned tighter RMSD witness (0.10 A); bond scale 1.2, mirror images count as the same conformer.",
     },
     "dedup_default": {
         "card": "deduplicate",

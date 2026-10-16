@@ -666,8 +666,7 @@ def _validate_filter_energy_binding(
                 )
             )
             return diagnostics
-    by_target = {binding.target_port: binding for binding in step.bindings}
-    results_binding = by_target.get("results")
+    results_binding = {binding.target_port: binding for binding in step.bindings}.get("results")
     if results_binding is None:
         if uses_energy_params(native):
             diagnostics.append(
@@ -684,6 +683,57 @@ def _validate_filter_energy_binding(
                 )
             )
         return diagnostics
+    return _results_source_diagnostics(
+        step,
+        all_steps=all_steps,
+        registry=registry,
+        kind="filter",
+        reason=DiagnosticReason.FILTER_RESULTS_SOURCE_MISMATCH,
+    )
+
+
+def _validate_refine_results_binding(
+    step: StepDefinition,
+    *,
+    all_steps: tuple[StepDefinition, ...],
+    registry: ExecutionRegistry,
+) -> list[Diagnostic]:
+    """Apply the shared results source rule to refine steps that bind 'results'.
+
+    Refine never requires 'results' (geometry-only refine is valid), so only a
+    binding that is present is checked, against the same rule as filter.
+    """
+    scientific = step.scientific
+    if scientific is None or scientific.transform != "refine" or not step.enabled:
+        return []
+    return _results_source_diagnostics(
+        step,
+        all_steps=all_steps,
+        registry=registry,
+        kind="refine",
+        reason=DiagnosticReason.REFINE_RESULTS_SOURCE_MISMATCH,
+    )
+
+
+def _results_source_diagnostics(
+    step: StepDefinition,
+    *,
+    all_steps: tuple[StepDefinition, ...],
+    registry: ExecutionRegistry,
+    kind: str,
+    reason: DiagnosticReason,
+) -> list[Diagnostic]:
+    """Shared N3 source rule for a bound 'results' port of a transform step.
+
+    The 'results' input must come from a calculation step's ``results`` output
+    and that calculation must be the producer of the ``structure`` input.
+    Returns no diagnostics when the step has no 'results' binding.
+    """
+    field_path = f"steps.{step.id}"
+    by_target = {binding.target_port: binding for binding in step.bindings}
+    results_binding = by_target.get("results")
+    if results_binding is None:
+        return []
     source = results_binding.source
     producer: StepDefinition | None = None
     if source.kind is SourceKind.STEP_OUTPUT and source.step_id is not None:
@@ -695,28 +745,28 @@ def _validate_filter_energy_binding(
     structure_binding = by_target.get("structure")
     if structure_binding is not None and structure_binding.source.kind is (SourceKind.STEP_OUTPUT):
         structure_source_id = structure_binding.source.step_id
-    if not (
+    if (
         source.kind is SourceKind.STEP_OUTPUT
         and producer_capability is ExecutorCapability.CALCULATION
         and source.port == "results"
         and structure_source_id == source.step_id
     ):
-        diagnostics.append(
-            error(
-                DiagnosticCode.BINDING_ERROR,
-                DiagnosticReason.FILTER_RESULTS_SOURCE_MISMATCH,
-                "filter 'results' must bind the same calculation step's results "
-                "port the 'structure' input comes from",
-                step_id=step.id,
-                field_path=f"{field_path}.bindings.results",
-                details={
-                    "results_source_step": source.step_id,
-                    "results_source_port": source.port,
-                    "structure_source_step": structure_source_id,
-                },
-            )
+        return []
+    return [
+        error(
+            DiagnosticCode.BINDING_ERROR,
+            reason,
+            f"{kind} 'results' must bind the same calculation step's results "
+            "port the 'structure' input comes from",
+            step_id=step.id,
+            field_path=f"{field_path}.bindings.results",
+            details={
+                "results_source_step": source.step_id,
+                "results_source_port": source.port,
+                "structure_source_step": structure_source_id,
+            },
         )
-    return diagnostics
+    ]
 
 
 def _validate_step(
@@ -1048,6 +1098,9 @@ def _validate_step(
     bound_ports = {binding.target_port for binding in step.bindings}
     diagnostics.extend(
         _validate_filter_energy_binding(step, all_steps=all_steps or (), registry=registry)
+    )
+    diagnostics.extend(
+        _validate_refine_results_binding(step, all_steps=all_steps or (), registry=registry)
     )
     diagnostics.extend(
         _validate_script_output_bindings(step, all_steps=all_steps or (), registry=registry)

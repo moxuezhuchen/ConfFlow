@@ -185,7 +185,7 @@ def test_plain_cards_do_not_require_explicit_bindings(card_type: str) -> None:
         "refine_default@",
         "@v1",
         "nope@v1",
-        "refine_default@v2",
+        "refine_default@v3",
     ],
     ids=[
         "None",
@@ -196,7 +196,7 @@ def test_plain_cards_do_not_require_explicit_bindings(card_type: str) -> None:
         "refine_default@",
         "@v1",
         "nope@v1",
-        "refine_default@v2",
+        "refine_default@v3",
     ],
 )
 def test_parse_preset_ref_malformed_fails_closed(ref: Any) -> None:
@@ -213,7 +213,7 @@ def test_parse_preset_ref_malformed_fails_closed(ref: Any) -> None:
         {"name": "", "version": "v1"},
         {"name": "refine_default", "version": ""},
         {"name": "refine_default", "version": "v1", "bogus": 1},
-        {"type": "refine_default", "version": "v2"},
+        {"type": "refine_default", "version": "v3"},
     ],
     ids=["ref0", "ref1", "ref2", "ref3", "ref5"],
 )
@@ -233,10 +233,10 @@ def test_get_preset_unknown_version_and_isolation() -> None:
     with pytest.raises(ValueError):
         get_preset("nope")
     with pytest.raises(ValueError):
-        get_preset("refine_default", "v2")
+        get_preset("refine_default", "v3")
     first = get_preset("refine_default")
     first["native"]["rmsd_threshold_angstrom"] = 99.0
-    assert get_preset("refine_default")["native"]["rmsd_threshold_angstrom"] == 0.25
+    assert get_preset("refine_default")["native"]["rmsd_threshold_angstrom"] == 0.2
 
 
 def test_preset_table_card_linkage() -> None:
@@ -597,7 +597,7 @@ def test_compile_intent_bad_scheduler_refused(scheduler: Any) -> None:
         },
         {
             "card": "confgen@v1",
-            "preset": "refine_default@v1",
+            "preset": "refine_default@v2",
             "native": copy.deepcopy(SEARCH_NATIVE),
         },
         {
@@ -630,7 +630,7 @@ def test_compile_intent_calc_cannot_consume_preset() -> None:
                         "card": "opt@v1",
                         "program": "orca",
                         "native": dict(OPT_NATIVE),
-                        "preset": "refine_default@v1",
+                        "preset": "refine_default@v2",
                     }
                 ]
             )
@@ -639,7 +639,7 @@ def test_compile_intent_calc_cannot_consume_preset() -> None:
 
 def test_compile_intent_preset_mismatch_and_unknown_keys() -> None:
     with pytest.raises(IntentCompilationError):
-        compile_intent(_intent([{"card": "deduplicate@v1", "preset": "refine_strict@v1"}]))
+        compile_intent(_intent([{"card": "deduplicate@v1", "preset": "refine_strict@v2"}]))
     with pytest.raises(IntentCompilationError):
         compile_intent(
             _intent(
@@ -2235,7 +2235,7 @@ def test_r2_refine_preset_mismatch_refused() -> None:
             _intent(
                 [
                     {"card": "opt@v1", "program": "orca", "native": dict(OPT_NATIVE)},
-                    {"card": "refine@v1", "preset": "dedup_default@v1"},
+                    {"card": "refine@v1", "preset": "dedup_default@v2"},
                 ]
             )
         )

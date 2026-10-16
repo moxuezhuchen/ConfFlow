@@ -315,7 +315,7 @@ def test_preset_allowed_per_existing_transform() -> None:
                 {
                     "id": "d1",
                     "card": f"{DUMMY_KEY}@v1",
-                    "preset": "refine_default@v1",
+                    "preset": "refine_default@v2",
                     "native": {"dummy_bond_scale": 1.15},
                 }
             ]
@@ -326,7 +326,7 @@ def test_preset_allowed_per_existing_transform() -> None:
     assert compile_workflow(copy.deepcopy(wire)).ok
     assert wire["steps"][0]["transform"]["native"]["bond_scale"] == 1.15
     builtin = compile_intent(
-        _intent([{"id": "r1", "card": "refine@v1", "preset": "refine_default@v1"}]),
+        _intent([{"id": "r1", "card": "refine@v1", "preset": "refine_default@v2"}]),
         registry=exec_reg,
     )
     assert compile_workflow(copy.deepcopy(builtin)).ok

@@ -5,12 +5,10 @@
 Extracted from the pure subset of ``confflow.blocks.refine`` with no
 import of the legacy processor, pools, XYZ I/O, or CLI:
 
-- :func:`kabsch_rmsd` is the reflection-free Kabsch formulation of
-  ``rmsd_engine.kabsch_rmsd`` / ``rmsd_engine.fast_rmsd``;
-- the comparison rule enforced by callers follows
-  ``rmsd_engine.compare_frames``: RMSD is only evaluated under a legal
-  element/edge-preserving mapping.  This module evaluates the identity
-  mapping; pairs whose atom order differs are reported, never collapsed.
+- :func:`kabsch_rmsd` is the reflection-free Kabsch RMSD for one fixed atom order.  The
+  permutation-aware identity (legal relabellings, mirror images, energies) used by
+  ``refine`` lives in ``confflow.science.confgen.identity``; this module evaluates the
+  identity mapping only.
 
 Dependencies: NumPy only.
 """

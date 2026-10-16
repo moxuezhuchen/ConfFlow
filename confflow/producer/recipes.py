@@ -194,7 +194,7 @@ def _ensemble_refine_recipe() -> dict[str, Any]:
         "label": "RMSD refinement",
         "executor": "structure_transform",
         "bindings": {"structure": {"source": {"step": "opt", "port": "structures"}}},
-        "transform": {"kind": "refine", "native": {"rmsd_threshold_angstrom": 0.25}},
+        "transform": {"kind": "refine", "native": {"rmsd_threshold_angstrom": 0.2}},
     }
     freq = _calc_step(
         "freq",

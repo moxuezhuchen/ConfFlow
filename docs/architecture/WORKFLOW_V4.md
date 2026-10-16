@@ -876,11 +876,15 @@ remote 见 V4-4 章首横幅，IRC/Analysis 见 R2.2 `383a1f6` / R2.3a `e961d3c`
 
 # structure_transform `refine` 的对称映射与声明拓扑（事实）
 
-- **去重判据：** `refine` 在同一科学分组（电荷、多重度、`group_key`、`role`、元素序列）内逐对比较，
-  只在**合法的元素/边保持映射**下评估 Kabsch RMSD；某个映射下 RMSD **严格小于**阈值即判重复
-  （`rmsd_threshold_angstrom = 0` 因此不合并任何结构）。映射由有预算的精确搜索得到
-  （`mapping_budget`，默认 1000 个搜索节点/每对结构）；预算耗尽的一对为 *unresolved*，两个结构都保留，
-  步骤 notes 注明。所以只是对称等价原子（甲基氢、叔丁基的臂、苯环取代位）标号不同的构象会被合并。
+- **去重判据：** `refine` 与 ConfGen 共用同一套构象身份（`Identity`）：在同一科学分组（电荷、多重度、`group_key`、`role`、元素序列）内，
+  按图自同构下的 RMSD 比较，参与比较的是重原子、杂原子上的 H 以及非共价带类型边上的 H；RMSD **严格小于**阈值（默认 0.2 Å）即判重复，
+  镜像构象默认合并（native `mirror: false` 关闭）。`rmsd_threshold_angstrom = 0` 因此不合并任何结构。
+  同一键图（同构的成键图）的记录只做一次有预算的同构搜索（`mapping_budget`，默认 1000 个搜索节点）以得到原子重标号；
+  预算耗尽时该记录保留并在步骤 notes 注明，只与同一键图的记录比较，不再产生逐对的 *unresolved* 判定。
+  所以只是对称等价原子（甲基氢、叔丁基的臂、苯环取代位）标号不同的构象会被合并。
+- **可选的 `results` 输入（能量）：** 绑定到计算步骤的 `results` 输出，来源规则与 `filter` 相同（共享校验，
+  `refine_results_source_mismatch`）；不绑定时 refine 仅依赖几何。绑定后，两记录都有电子能时二者须在 0.5 kcal/mol 内才合并，
+  记录按能量从低到高处理，每个构象保留能量最低的记录。
 - **声明拓扑 `topology_bonds`（可选 native 参数）：** 形状与 ConfGen v4 的 `topology` 相同——
   `bonds`，或 `add_bond`/`del_bond`；带类型的边（`COVALENT`/`COORDINATION`/`FORMING`/`BREAKING`）；
   `atoms`；`index_base`（0 或 1，默认 1，与 ConfGen 文档一致）——外加 `coordination` 范围与 `bond_scale`

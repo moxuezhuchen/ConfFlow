@@ -76,9 +76,9 @@ def _dummy_wire(user, card, step_id):
         "transform": {
             "kind": "refine",
             "native": {
-                "rmsd_threshold_angstrom": 0.25,
+                "rmsd_threshold_angstrom": 0.2,
                 "bond_scale": DUMMY_SCALE[selector],
-                "heavy_only": False,
+                "mirror": True,
             },
         }
     }
