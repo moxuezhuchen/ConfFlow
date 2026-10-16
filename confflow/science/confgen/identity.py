@@ -2,7 +2,7 @@
 
 Owns the molecule's graph symmetry (colour-refinement classes and, when enumerable, the
 automorphisms of the heavy-atom graph), the permutation-aware RMSD built on it, the cheap
-fingerprint used as a pre-filter, and ``MinimaPool``, the de-duplicating store of minima the
+fingerprint used as a pre-filter (with a rigorous RMSD lower bound that skips most RMSDs), and ``MinimaPool``, the de-duplicating store of minima the
 search grows.  Two structures are one minimum when their energies agree within ``E_TOL``, their
 principal moments within 5 %, and their best RMSD over graph automorphisms (heavy atoms plus
 hydrogens on heteroatoms) is below ``R_TOL``.  Mirror images count as one minimum, as in
@@ -160,6 +160,11 @@ class Identity:
                 if e != "H" or any(self.elements[k] not in ("C", "H") for k in self.full[i])
             ]
         )
+        self._kept_groups = [
+            np.flatnonzero(np.array([self.classes[int(a)] for a in self.kept]) == c)
+            for c in sorted({self.classes[int(a)] for a in self.kept})
+        ]
+        self._split = 3 + sum(len(i) for i, _ in self._pairs)
         self._autos: np.ndarray | None | bool = False  # False = not computed yet
         self._nbrs: list[dict[int, str]] | None = None
 
@@ -310,13 +315,42 @@ class Identity:
 
     # -- cheap invariants
     def fingerprint(self, x: np.ndarray) -> np.ndarray:
-        """Return [3 principal moments | class-sorted interatomic distance lists]."""
+        """Return [3 principal moments | class-sorted distance lists | kept-atom profiles].
+
+        A kept atom's profile is its distances to the kept atoms of each class, sorted within
+        the class; ``_bound`` turns two sets of profiles into a lower bound on the RMSD.
+        """
         m = self._mass
         y = x - (x * m[:, None]).sum(0) / m.sum()
         inertia = (m * (y * y).sum(1)).sum() * np.eye(3) - (y * m[:, None]).T @ y
         parts = [np.sort(np.linalg.eigvalsh(inertia))]
         parts += [np.sort(np.linalg.norm(x[i] - x[j], axis=1)) for i, j in self._pairs]
+        p = x[self.kept]
+        d = np.linalg.norm(p[:, None] - p[None], axis=2)
+        rows = [np.sort(d[:, g], axis=1) for g in self._kept_groups]  # one row per kept atom
+        parts.append(np.concatenate(rows, axis=1).ravel())
         return np.concatenate(parts)
+
+    def _bound(self, f1: np.ndarray, f2: np.ndarray) -> float:
+        """Lower bound on ``rmsd`` (any automorphism, either mirror image) from two fingerprints.
+
+        A class-preserving mapping pi aligned with residuals e_i gives
+        |d_ij - d'_pi(i)pi(j)| <= |e_i - e_j|, and sum_{i<j} |e_i - e_j|^2 <= m^2 RMSD^2 over the
+        m kept atoms.  Atom i's row of that sum is at least the squared distance between the
+        class-sorted profiles of i and pi(i) (rearrangement inequality), so half the cheapest
+        class-preserving assignment of profiles bounds the whole sum from below.
+        """
+        from scipy.optimize import linear_sum_assignment
+
+        n = len(self.kept)
+        a = f1[self._split :].reshape(n, -1)
+        b = f2[self._split :].reshape(n, -1)
+        total = 0.0
+        for g in self._kept_groups:
+            cost = ((a[g][:, None] - b[g][None]) ** 2).sum(2)
+            r, c = linear_sum_assignment(cost)
+            total += float(cost[r, c].sum())
+        return float(np.sqrt(total / 2.0)) / n
 
     def same(self, e1: float, x1: np.ndarray, f1: np.ndarray, m: Minimum) -> bool:
         """Return whether (energy, coords, fingerprint) is the minimum ``m``."""
@@ -325,11 +359,13 @@ class Identity:
         f2 = m.fingerprint
         if np.max(np.abs(f1[:3] - f2[:3]) / np.maximum(f2[:3], 1e-9)) > _MOMENT_TOL:
             return False
-        d = np.abs(f1[3:] - f2[3:])
+        d = np.abs(f1[3 : self._split] - f2[3 : self._split])
         if d.size:
             k = min(len(d), max(8, len(d) // 100))
             if float(np.partition(d, -k)[-k:].mean()) > _D_PRE:
                 return False
+        if self._bound(f1, f2) >= R_TOL:
+            return False
         return self.rmsd(x1, m.coords) < R_TOL
 
 
