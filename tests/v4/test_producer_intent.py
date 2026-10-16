@@ -209,7 +209,7 @@ def test_refine_strict_preset_applies_threshold() -> None:
         _intent(
             [
                 {"card": "opt@v1", "program": "orca", "native": dict(OPT_NATIVE)},
-                {"card": "refine@v1", "preset": "refine_strict@v1"},
+                {"card": "refine@v1", "preset": "refine_strict@v2"},
             ]
         )
     )
@@ -410,7 +410,7 @@ def test_refine_preset_mismatch_rejected() -> None:
             _intent(
                 [
                     {"card": "opt@v1", "program": "orca", "native": dict(OPT_NATIVE)},
-                    {"card": "deduplicate@v1", "preset": "refine_strict@v1"},
+                    {"card": "deduplicate@v1", "preset": "refine_strict@v2"},
                 ]
             )
         )
@@ -450,9 +450,9 @@ def test_refine_default_preset_pins_versioned_fields() -> None:
         )
     )
     assert document["steps"][1]["transform"]["native"] == {
-        "rmsd_threshold_angstrom": 0.25,
+        "rmsd_threshold_angstrom": 0.2,
         "bond_scale": 1.2,
-        "heavy_only": False,
+        "mirror": True,
     }
     assert compile_workflow(document).ok
 

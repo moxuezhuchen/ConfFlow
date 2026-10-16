@@ -101,12 +101,18 @@ ConfGen 只有一个生成引擎（迭代 DG 搜索：全局 DG 出发、势阱�
 
 ### 精修去重（refine）
 
-`refine` 只在合法的元素/边保持映射下比较 RMSD（默认阈值 0.25 Å，严格小于才算重复），所以仅原子标号对称置换的构象
-（甲基氢、叔丁基的三个甲基、环的取代位）会被合并。需要时：
+`refine` 与 ConfGen 共用同一套构象身份判据：在图的自同构下比较 RMSD（重原子，外加杂原子上的 H 与非共价带类型边上的 H），
+低于阈值（默认 0.2 Å，严格小于才算重复）即合并。因此仅原子标号对称置换的构象（甲基氢、叔丁基的三个甲基、环的取代位）会被合并；
+镜像构象默认也算同一构象。需要时：
 
-- `rmsd_threshold_angstrom`：阈值；`0` 表示不合并任何结构。
-- `heavy_only`：只比较重原子。
-- `mapping_budget`：每对结构的映射搜索节点预算（默认 1000）；用尽的一对被保留并在步骤说明里标明。
+- `rmsd_threshold_angstrom`：阈值（默认 0.2）；`0` 表示不合并任何结构。
+- `mirror`：默认 `true`，镜像构象视为同一构象；设为 `false` 则镜像构象各自保留。
+- `mapping_budget`：默认 1000，只限制一次同构搜索的节点数。该搜索把键图与前面某个结构同构、但原子标号不同的记录重新标号；
+  预算用尽时该记录保留，只与同一键图的记录比较，并在步骤说明里注明。不再有逐对的 "unresolved" 判定。
+- `results`（可选输入端口）：绑定计算步骤的 `results` 输出，来源规则与 `filter` 相同：必须与 `structure` 输入来自同一个计算步骤，
+  否则报 `refine_results_source_mismatch`。不绑定时 refine 只看几何，每个构象保留 id 最靠前的记录。绑定后，执行器读取每个记录的电子能，
+  并按能量从低到高处理记录；两个记录都有能量时，二者还必须在 0.5 kcal/mol 之内才会合并，每个构象保留能量最低的记录。
+  `heavy_only` 已删除，写入会被拒绝（未知 native 键）。
 - `topology_bonds`：显式声明带类型的拓扑（形状同 ConfGen 的 `topology`，外加 `index_base`、`coordination`、`bond_scale`）。
   不写时，拓扑来自结构记录自带的工作拓扑，再不然由几何感知得到。
   ConfGen spec 声明的 `topology`/`coordination`/`add_bond`/`del_bond` **不会**写入输出记录；反应边/配位边体系的 refine 需要手写 `topology_bonds`，否则按几何感知建图（`bond_scale` 1.15，与 ConfGen 默认一致）。

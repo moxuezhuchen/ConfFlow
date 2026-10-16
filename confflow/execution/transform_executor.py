@@ -8,10 +8,10 @@ legacy runner code. One WorkItem carries the whole set on the ``structure`` port
 Deduplicate collapses equal ``geometry_digest`` strictly within
 ``(charge, multiplicity, group_key, role)``; differing records are never
 collapsed; lowest canonical id wins so selection is reorder-invariant.
-Refine is topology-grouped RMSD dedup (plus element signature), dropped
-only on a proven witness at/below threshold; budget-exhausted pairs are
-unresolved and both kept with a note; typed non-covalent edges are
-preserved by every mapping. Filter is id-ordered atom-count/energy
+Refine is topology-grouped conformer dedup with the ConfGen identity
+(automorphism RMSD below the threshold, mirror images merged by default,
+energies compared when the optional ``results`` binding supplies them);
+typed non-covalent edges are preserved by every mapping. Filter is id-ordered atom-count/energy
 selection; unknown native keys fail closed. Never raises: every failure
 is a typed ``FAILED`` result.
 """
@@ -51,17 +51,17 @@ __all__ = ["TransformExecutor", "TRANSFORM_KINDS"]
 
 TRANSFORM_KINDS = ("refine", "deduplicate", "filter")
 
-#: Default RMSD dedup threshold (``RefineOptions.threshold``).
-REFINE_DEFAULT_RMSD_THRESHOLD_ANGSTROM = 0.25
+#: Default RMSD dedup threshold: the ConfGen identity's ``R_TOL`` (equality is tested).
+REFINE_DEFAULT_RMSD_THRESHOLD_ANGSTROM = 0.2
 
 #: Default bond-perception scale — the ConfGen perception default
 #: (``tolerances.bond_scale``, ``confgen_schema.ConfgenToleranceModel``).
 #: Explicit scales and persisted working topologies retain their precedence.
 REFINE_DEFAULT_BOND_SCALE = 1.15
 
-#: Default mapping-search node budget per compared pair
-#: (``topology_mapping.DEFAULT_MAPPING_NODE_BUDGET``; equality is tested).  The
-#: science modules are imported lazily inside ``_frame``/``_duplicate_of`` so the
+#: Default mapping-search node budget for relabelling a record whose bonding graph is
+#: isomorphic to an earlier one (``topology_mapping.DEFAULT_MAPPING_NODE_BUDGET``; equality
+#: is tested).  The science modules are imported lazily inside ``_frame``/``_cluster`` so the
 #: worker import closure does not load ``confflow.core`` for non-refine runs.
 REFINE_DEFAULT_MAPPING_BUDGET = 1000
 
@@ -75,7 +75,7 @@ REFINE_NATIVE_KEYS = frozenset(
     {
         "rmsd_threshold_angstrom",
         "bond_scale",
-        "heavy_only",
+        "mirror",
         "max_structures",
         "mapping_budget",
         "topology_bonds",
@@ -215,7 +215,8 @@ class TransformExecutor:
             results = work_item.named_inputs.results.get("results", ResultSet())
             out, notes = self._filter(members, native, results)
         else:
-            out, notes = self._refine(members, native)
+            results = work_item.named_inputs.results.get("results", ResultSet())
+            out, notes = self._refine(members, native, results)
         timing = Timing(
             started_at=wall_start,
             finished_at=max(time.time(), wall_start),
@@ -287,8 +288,16 @@ class TransformExecutor:
         self,
         members: list[StructureRecord],
         native: Mapping[str, Any],
+        results: ResultSet | None = None,
     ) -> tuple[list[StructureRecord], list[str]]:
-        """Topology-grouped RMSD dedup with an explicit threshold."""
+        """Topology-grouped conformer dedup with the ConfGen identity (``confgen.identity``).
+
+        Two structures are one conformer when their RMSD over graph automorphisms (heavy
+        atoms, hydrogens on heteroatoms or on non-covalent edges; mirror images merged unless
+        ``mirror`` is false) is below the threshold and, when the bound ``results`` give both
+        an electronic energy, those agree within 0.5 kcal/mol.  With energies each conformer
+        keeps its lowest-energy record, else its first by id.
+        """
         unknown = sorted(set(native) - REFINE_NATIVE_KEYS)
         if unknown:
             raise DomainError(
@@ -299,7 +308,7 @@ class TransformExecutor:
             native.get("rmsd_threshold_angstrom", REFINE_DEFAULT_RMSD_THRESHOLD_ANGSTROM)
         )
         bond_scale = float(native.get("bond_scale", REFINE_DEFAULT_BOND_SCALE))
-        heavy_only = native.get("heavy_only", False)
+        mirror = native.get("mirror", True)
         mapping_budget = native.get("mapping_budget", REFINE_DEFAULT_MAPPING_BUDGET)
         max_structures = native.get("max_structures")
         if not math.isfinite(threshold) or threshold < 0:
@@ -317,8 +326,8 @@ class TransformExecutor:
             raise DomainError(
                 f"refine mapping_budget must be an integer >= 0, got {mapping_budget!r}"
             )
-        if not isinstance(heavy_only, bool):
-            raise DomainError(f"refine heavy_only must be a boolean, got {heavy_only!r}")
+        if not isinstance(mirror, bool):
+            raise DomainError(f"refine mirror must be a boolean, got {mirror!r}")
         if max_structures is not None and (
             isinstance(max_structures, bool)
             or not isinstance(max_structures, int)
@@ -330,33 +339,18 @@ class TransformExecutor:
         groups: dict[tuple[Any, ...], list[StructureRecord]] = {}
         for record in members:
             groups.setdefault(_scientific_group(record), []).append(record)
+        energies = self._energies(members, results)
         out: list[StructureRecord] = []
         notes: list[str] = []
         for group in groups.values():
             ordered = sorted(group, key=lambda item: item.id)
             frames = {record.id: self._frame(record, bond_scale, declared) for record in ordered}
             notes.extend(_connectivity_notes(ordered, frames))
-            retained: list[StructureRecord] = []
-            for record in ordered:
-                witness = self._duplicate_of(
-                    record,
-                    frames[record.id],
-                    retained,
-                    frames,
-                    threshold,
-                    bool(heavy_only),
-                    int(mapping_budget),
-                    notes,
-                )
-                if witness is not None:
-                    other, rmsd = witness
-                    notes.append(
-                        f"dropped {record.id} as duplicate of {other.id} "
-                        f"(rmsd {rmsd:.4f} A < {threshold:g} A)"
-                    )
-                    continue
-                retained.append(record)
-            out.extend(retained)
+            if energies:
+                ordered.sort(key=lambda r: (energies.get(r.id) is None, energies.get(r.id) or 0.0))
+            out.extend(
+                self._cluster(ordered, frames, energies, threshold, mirror, mapping_budget, notes)
+            )
         out.sort(key=lambda item: item.id)
         if max_structures is not None and len(out) > max_structures:
             dropped = [record.id for record in out[max_structures:]]
@@ -432,11 +426,23 @@ class TransformExecutor:
         bond_scale: float,
         declared: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Return the comparison frame (atoms, coordinates, bonding graph) of one record."""
+        """Return the comparison frame (atoms, coordinates, bonding graph, typed graph)."""
+        from ..science.confgen.graph import AtomRef, EdgeType, TypedEdge, TypedGraph
         from ..science.topology_mapping import graph_from_adjacency, with_typed_edges
 
         if declared is None:
-            graph = graph_from_adjacency(record.atoms, cls._adjacency(record, bond_scale))
+            adjacency = cls._adjacency(record, bond_scale)
+            graph = graph_from_adjacency(record.atoms, adjacency)
+            typed = TypedGraph(
+                atoms=tuple(AtomRef(i, e) for i, e in enumerate(record.atoms)),
+                edges=tuple(
+                    TypedEdge(i, j, EdgeType.COVALENT)
+                    for i, row in enumerate(adjacency)
+                    for j in row
+                    if i < j
+                ),
+                source="refine-perceived",
+            )
         else:
             from ..science.confgen.topology import build_typed_graph
 
@@ -456,37 +462,82 @@ class TransformExecutor:
             "atoms": list(record.atoms),
             "coords": np.asarray(record.coordinates, dtype=np.float64),
             "graph": graph,
+            "typed": typed,
         }
 
     @staticmethod
-    def _duplicate_of(
-        record: StructureRecord,
-        frame: dict[str, Any],
-        retained: Sequence[StructureRecord],
+    def _energies(
+        members: Sequence[StructureRecord], results: ResultSet | None
+    ) -> dict[str, float]:
+        """Electronic energy (Eh) per record id from the bound results; empty when unbound."""
+        if results is None or not len(results):
+            return {}
+        from .energy_filter import ENERGY_KEY_TO_RESULT_KIND, _as_float
+
+        kind = ENERGY_KEY_TO_RESULT_KIND["electronic"]
+        out: dict[str, float] = {}
+        for record in members:
+            match = results.first(kind, record.id)
+            value = _as_float(match.value) if match is not None else None
+            if value is not None:
+                out[record.id] = value
+        return out
+
+    @staticmethod
+    def _cluster(
+        ordered: Sequence[StructureRecord],
         frames: Mapping[str, dict[str, Any]],
+        energies: Mapping[str, float],
         threshold: float,
-        heavy_only: bool,
+        mirror: bool,
         mapping_budget: int,
         notes: list[str],
-    ) -> tuple[StructureRecord, float] | None:
-        """Return the retained duplicate witness for *record*, if proven."""
-        from ..science.frame_compare import compare_frames
+    ) -> list[StructureRecord]:
+        """Keep the first record of each conformer in ``ordered``; note every dropped one.
 
-        for other in retained:
-            verdict = compare_frames(
-                frame,
-                frames[other.id],
-                threshold=threshold,
-                heavy_only=heavy_only,
-                node_budget=mapping_budget,
+        One ``MinimaPool`` per bonding graph; a record whose graph is isomorphic to an earlier
+        one (different atom labels) is relabelled once onto that graph and joins its pool.
+        """
+        from ..science.confgen.identity import Identity, MinimaPool
+        from ..science.topology_mapping import find_isomorphism
+
+        classes: list[tuple[Any, MinimaPool, list[StructureRecord]]] = []
+        kept: list[StructureRecord] = []
+        for record in ordered:
+            frame = frames[record.id]
+            coords = frame["coords"]
+            place = None
+            for graph, pool, owners in classes:
+                found = find_isomorphism(frame["graph"], graph, mapping_budget)
+                if found.status == "isomorphic" and found.mapping is not None:
+                    moved = np.empty_like(coords)
+                    moved[list(found.mapping)] = coords
+                    place, coords = (pool, owners), moved
+                    break
+                if found.status == "unresolved":
+                    notes.append(
+                        f"kept {record.id}: its bonding graph could not be matched within "
+                        f"mapping_budget {mapping_budget}; compared only to same-graph records"
+                    )
+            if place is None:
+                identity = Identity(frame["typed"], r_tol=threshold, mirror=mirror)
+                place = (MinimaPool(identity), [])
+                classes.append((frame["graph"], *place))
+            pool, owners = place
+            energy = energies.get(record.id, math.nan)
+            fp = pool.identity.fingerprint(coords)
+            hit = pool.match(energy, coords, fp)
+            pool.commit(hit, energy, coords, record.id, record.id, "", fp)
+            if hit is None:
+                owners.append(record)
+                kept.append(record)
+                continue
+            rmsd = pool.identity.rmsd(coords, pool.minima[hit].coords)
+            notes.append(
+                f"dropped {record.id} as duplicate of {owners[hit].id} "
+                f"(rmsd {rmsd:.4f} A < {threshold:g} A)"
             )
-            if verdict.status == "duplicate" and verdict.witness_rmsd is not None:
-                return other, float(verdict.witness_rmsd)
-            if verdict.status == "unresolved":
-                notes.append(
-                    f"kept {record.id}: comparison with {other.id} is unresolved ({verdict.reason})"
-                )
-        return None
+        return kept
 
     # -- filter ---------------------------------------------------------------
 

@@ -82,6 +82,7 @@ class DiagnosticReason(str, Enum):
     # N3 energy-filter binding rules.
     FILTER_RESULTS_REQUIRED = "filter_results_required"
     FILTER_RESULTS_SOURCE_MISMATCH = "filter_results_source_mismatch"
+    REFINE_RESULTS_SOURCE_MISMATCH = "refine_results_source_mismatch"
 
     # cardinality
     REQUIRED_INPUT_MISSING = "required_input_missing"

@@ -172,13 +172,15 @@ def test_b1_catalog_bytes_unchanged() -> None:
     ]
     # R2.2 声明重钉：目录与 recipe_cards 描述随收缩更新。
     # N4 声明新增：目录 +1（json_paths_diff 证明相对 main 只新增条目）。
+    # 构象同一性统一：ensemble_refine 阈值 0.25→0.2（目录摘要更新）。
+    # 预设升 v2（refine 预设固定 0.2 Å 与 mirror，删 heavy_only）：intent 目录与 contract 摘要更新，boundary 不变。
     assert (
         recipe_catalog_sha256_v4()
-        == "4e9b7222633f3d5ecca29f3828fca95ff52e1379e4221f26464dc957a59ed16e"
+        == "00ddea339d88ba7400c807a0ba434e407d0eba3e25daa791d21f45bac1b53841"
     )
     cat = intent_catalog()
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(cat)).hexdigest() == (
-        "sha256:d24cc74bafcaaa765ebb92dadb78972d410b36f6a150d6a273a82224091c77e6"
+        "sha256:49787912c6fa1de076eb5e6e603082bcf9414c2097d79d14bfd52601f47a12d9"
     )
 
 
@@ -200,7 +202,7 @@ def test_b1_contract_boundary_bytes_unchanged() -> None:
     # 迭代搜索声明：confgen search 新增 budget/window_kcal/arrangement/release，
     # starts 默认改为 None/60；contract 摘要更新，boundary 不变。
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(env)).hexdigest() == (
-        "sha256:3ac561e0d3cb42e43e5a8c3a4fc33dc5ff3b2def59924c368f9c1e5c67c7425e"
+        "sha256:85f89d39ca3c4d4f4feb3ff580df4ad78a9e5a305d03a083c7e510e4f5766a6e"
     )
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(bdoc)).hexdigest() == (
         "sha256:ff7491007ffd37e4e688e9dd1c73aba5301ccd699f9610d060bd2029cf370f27"

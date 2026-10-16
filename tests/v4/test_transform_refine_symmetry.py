@@ -211,13 +211,18 @@ def test_result_does_not_depend_on_input_order() -> None:
     assert _kept_ids(records) == _kept_ids(list(reversed(records))) == ["a"]
 
 
-def test_exhausted_mapping_budget_keeps_both_and_says_so() -> None:
+@pytest.mark.parametrize("budget", [1, 5])
+def test_tiny_mapping_budget_still_merges_symmetric_relabelling(budget: int) -> None:
+    # The mapping budget bounds only the graph-isomorphism search for records whose
+    # bonding graph carries different labels; a symmetric relabelling of one graph is
+    # resolved by the automorphism group, so no budget can leave it unresolved.
     atoms, coords = _molecule("butane")
     permutation = _symmetric_permutation("butane")
     records = [_record("a", atoms, coords), _record("b", atoms, coords[permutation])]
-    kept, notes = TransformExecutor()._refine(records, {"mapping_budget": 5})
-    assert [record.id for record in kept] == ["a", "b"]
-    assert any("unresolved" in note and "b" in note for note in notes)
+    kept, notes = TransformExecutor()._refine(records, {"mapping_budget": budget})
+    assert [record.id for record in kept] == ["a"]
+    assert not any("unresolved" in note for note in notes)
+    assert any("dropped b as duplicate of a" in note for note in notes)
 
 
 def test_threshold_zero_merges_nothing_because_the_comparison_is_strict() -> None:

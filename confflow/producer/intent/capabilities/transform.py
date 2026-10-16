@@ -67,7 +67,7 @@ def _wire_transform(
         from ....execution.transform_executor import REFINE_NATIVE_KEYS
     except ImportError:
         allowed_keys = frozenset(
-            {"rmsd_threshold_angstrom", "bond_scale", "heavy_only", "max_structures"}
+            {"rmsd_threshold_angstrom", "bond_scale", "mirror", "max_structures"}
         )
     else:
         allowed_keys = REFINE_NATIVE_KEYS

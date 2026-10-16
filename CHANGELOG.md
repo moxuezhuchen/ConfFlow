@@ -67,6 +67,21 @@ published boundary (`confflow.boundary.v4`) byte-identical.
 
 ### Changed
 
+- **`refine` shares the ConfGen conformer identity.** Structures are compared by
+  RMSD over graph automorphisms (heavy atoms, plus hydrogens on heteroatoms and
+  on non-covalent typed edges), and a mirror image counts as the same conformer
+  unless the native `mirror: false` is set. The default `rmsd_threshold_angstrom`
+  is now 0.2 (was 0.25). `heavy_only` is removed. `mapping_budget` now bounds only
+  the single isomorphism search that relabels a record whose bonding graph matches
+  an earlier one; a search that runs out of budget keeps the record and notes it
+  in the step notes, with no per-pair "unresolved" verdicts. `refine` may bind the
+  optional `results` port; when both records of a pair have energies they must
+  agree within 0.5 kcal/mol, and records are processed lowest energy first so each
+  conformer keeps its lowest-energy record. Without `results`, refine is
+  geometry-only and keeps the first record by id. ConfGen deduplication drops the
+  non-rigorous principal-moment and distance-list prefilters and now also compares
+  hydrogens on reactive and coordination edges. Refine and dedup presets move to
+  `@v2` (`refine_default@v2`: 0.2 Å, `mirror: true`).
 - **`refine` merges symmetry-equivalent relabellings** (for example the three
   hydrogens of a methyl group) by comparing structures under element- and
   edge-preserving mappings; the duplicate threshold is a strict `<`. `da047c0`

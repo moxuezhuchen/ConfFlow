@@ -1,13 +1,14 @@
-"""Conformer identity for the ConfGen search: when are two relaxed structures the same minimum.
+"""Conformer identity: when are two structures the same conformer (ConfGen search and refine).
 
 Owns the molecule's graph symmetry (colour-refinement classes and, when enumerable, the
-automorphisms of the heavy-atom graph), the permutation-aware RMSD built on it, the cheap
-fingerprint used as a pre-filter (with a rigorous RMSD lower bound that skips most RMSDs), and ``MinimaPool``, the de-duplicating store of minima the
-search grows.  Two structures are one minimum when their energies agree within ``E_TOL``, their
-principal moments within 5 %, and their best RMSD over graph automorphisms (heavy atoms plus
-hydrogens on heteroatoms) is below ``R_TOL``.  Mirror images count as one minimum, as in
-CREST/GOAT; a mirror image that inverts a declared stereocentre never reaches the pool because
-the audit rejects it.
+automorphisms of the compared-atom graph), the permutation-aware RMSD built on it, a
+fingerprint whose distance profiles give a rigorous RMSD lower bound that skips most RMSDs, and
+``MinimaPool``, the de-duplicating store.  Two structures are one conformer when their best RMSD
+over graph automorphisms is below ``r_tol`` (default ``R_TOL``) and, when both energies are
+known, those agree within ``E_TOL``.  The RMSD covers heavy atoms, hydrogens on heteroatoms and
+hydrogens on a non-covalent (reactive, coordination) edge.  Mirror images count as one conformer
+by default, as in CREST/GOAT; in the search a mirror image that inverts a declared stereocentre
+never reaches the pool because the audit rejects it.
 
 Pure: no I/O, no processes.  Uses RDKit only to enumerate automorphisms and SciPy for the
 assignment fallback when the automorphism group is too large.
@@ -41,8 +42,6 @@ HARTREE_TO_KCAL = 627.5094740631
 E_TOL = 0.5
 #: Angstrom: best automorphism RMSD below this is the same minimum.
 R_TOL = 0.2
-_D_PRE = 1.5  # Angstrom: distance-list pre-filter, far looser than R_TOL
-_MOMENT_TOL = 0.05
 _AUTO_CAP = 60000
 _ANCHOR_TOL = 0.5  # Angstrom: anchor-triple distance consistency in the fallback RMSD
 _ANCHOR_CAP = 2000  # anchor-triple images tried at most
@@ -53,10 +52,6 @@ _EDGE_BOND = {
     "FORMING": "TRIPLE",
     "BREAKING": "QUADRUPLE",
 }
-_MASS = {
-    "H": 1.008, "B": 10.81, "C": 12.011, "N": 14.007, "O": 15.999, "F": 18.998, "Si": 28.086,
-    "P": 30.974, "S": 32.06, "Cl": 35.45, "Br": 79.904, "I": 126.904,
-}  # fmt: skip
 
 
 def typed_mol(
@@ -98,14 +93,6 @@ def full_adjacency(graph: TypedGraph) -> list[dict[int, str]]:
     return full
 
 
-def _mass(symbol: str) -> float:
-    if symbol in _MASS:
-        return _MASS[symbol]
-    from rdkit import Chem
-
-    return float(Chem.GetPeriodicTable().GetAtomicWeight(symbol))
-
-
 def _kabsch_msd(p: np.ndarray, q: np.ndarray) -> float:
     """Mean square deviation of centred ``p`` onto centred ``q`` under the best proper rotation."""
     u, s, vt = np.linalg.svd(p.T @ q)
@@ -139,28 +126,22 @@ class Minimum:
 class Identity:
     """Graph symmetry and same-minimum test for one molecule."""
 
-    def __init__(self, graph: TypedGraph) -> None:
+    def __init__(self, graph: TypedGraph, r_tol: float = R_TOL, mirror: bool = True) -> None:
         self.graph = graph
+        self.r_tol = float(r_tol)
+        self.mirror = mirror
         self.elements = [atom.element for atom in graph.atoms]
         self.n = len(self.elements)
         self.metal = graph.metal_center
         self.full = full_adjacency(graph)
         self.classes = self._refine()
-        self._mass = np.array([_mass(e) for e in self.elements])
-        groups: dict[tuple[int, int], list[tuple[int, int]]] = defaultdict(list)
-        for i in range(self.n):
-            for j in range(i + 1, self.n):
-                ci, cj = sorted((self.classes[i], self.classes[j]))
-                groups[(ci, cj)].append((i, j))
-        self._pairs = [
-            (np.array([p[0] for p in v]), np.array([p[1] for p in v]))
-            for _, v in sorted(groups.items())
-        ]
         self.kept = np.array(
             [
                 i
                 for i, e in enumerate(self.elements)
-                if e != "H" or any(self.elements[k] not in ("C", "H") for k in self.full[i])
+                if e != "H"
+                or any(self.elements[k] not in ("C", "H") for k in self.full[i])
+                or any(kind != "COVALENT" for kind in self.full[i].values())
             ]
         )
         self._kept_groups = [
@@ -169,7 +150,6 @@ class Identity:
         ]
         self._single = np.array([g[0] for g in self._kept_groups if len(g) == 1], dtype=int)
         self._multi = [g for g in self._kept_groups if len(g) > 1]
-        self._split = 3 + sum(len(i) for i, _ in self._pairs)
         self._autos: np.ndarray | None | bool = False  # False = not computed yet
         self._nbrs: list[dict[int, str]] | None = None
 
@@ -196,10 +176,14 @@ class Identity:
             self._autos = None if len(found) > _AUTO_CAP else np.array(found, dtype=int)
         return self._autos  # type: ignore[return-value]
 
-    def rmsd(self, x: np.ndarray, y: np.ndarray, mirror: bool = True) -> float:
-        """Return the best RMSD of ``x`` onto ``y`` over automorphisms (and mirror images)."""
+    def rmsd(self, x: np.ndarray, y: np.ndarray, mirror: bool | None = None) -> float:
+        """Return the best RMSD of ``x`` onto ``y`` over automorphisms (and mirror images).
+
+        ``mirror`` defaults to the Identity's policy; the mirror image is only tried while the
+        direct RMSD is not already below ``r_tol``.
+        """
         best = self._rmsd(x, y)
-        if mirror and best >= R_TOL:
+        if (self.mirror if mirror is None else mirror) and best >= self.r_tol:
             best = min(best, self._rmsd(x * np.array([-1.0, 1.0, 1.0]), y))
         return best
 
@@ -320,21 +304,15 @@ class Identity:
 
     # -- cheap invariants
     def fingerprint(self, x: np.ndarray) -> np.ndarray:
-        """Return [3 principal moments | class-sorted distance lists | kept-atom profiles].
+        """Return the kept-atom distance profiles, flattened (rigid- and mirror-invariant).
 
         A kept atom's profile is its distances to the kept atoms of each class, sorted within
         the class; ``_bound`` turns two sets of profiles into a lower bound on the RMSD.
         """
-        m = self._mass
-        y = x - (x * m[:, None]).sum(0) / m.sum()
-        inertia = (m * (y * y).sum(1)).sum() * np.eye(3) - (y * m[:, None]).T @ y
-        parts = [np.sort(np.linalg.eigvalsh(inertia))]
-        parts += [np.sort(np.linalg.norm(x[i] - x[j], axis=1)) for i, j in self._pairs]
         p = x[self.kept]
         d = np.linalg.norm(p[:, None] - p[None], axis=2)
         rows = [np.sort(d[:, g], axis=1) for g in self._kept_groups]  # one row per kept atom
-        parts.append(np.concatenate(rows, axis=1).ravel())
-        return np.concatenate(parts)
+        return np.concatenate(rows, axis=1).ravel()
 
     def _bound(self, f1: np.ndarray, f2: np.ndarray) -> float:
         """Lower bound on ``rmsd`` (any automorphism, either mirror image) from two fingerprints.
@@ -348,8 +326,8 @@ class Identity:
         from scipy.optimize import linear_sum_assignment
 
         n = len(self.kept)
-        a = f1[self._split :].reshape(n, -1)
-        b = f2[self._split :].reshape(n, -1)
+        a = f1.reshape(n, -1)
+        b = f2.reshape(n, -1)
         total = float(((a[self._single] - b[self._single]) ** 2).sum())
         for g in self._multi:
             cost = ((a[g][:, None] - b[g][None]) ** 2).sum(2)
@@ -359,33 +337,31 @@ class Identity:
 
     def same(self, e1: float, x1: np.ndarray, f1: np.ndarray, m: Minimum) -> bool:
         """Return whether (energy, coords, fingerprint) is the minimum ``m``."""
-        return self.close(e1, f1, m.energy, m.fingerprint) and self.rmsd(x1, m.coords) < R_TOL
+        return self.close(e1, f1, m.energy, m.fingerprint) and self.rmsd(x1, m.coords) < self.r_tol
 
     def close(self, e1: float, f1: np.ndarray, e2: float, f2: np.ndarray) -> bool:
-        """Return whether the cheap tests leave the RMSD to decide (``same`` without it)."""
+        """Return whether the cheap tests leave the RMSD to decide (``same`` without it).
+
+        A NaN energy (unknown) skips the energy test.
+        """
         if abs(e1 - e2) * HARTREE_TO_KCAL > E_TOL:
             return False
-        if np.max(np.abs(f1[:3] - f2[:3]) / np.maximum(f2[:3], 1e-9)) > _MOMENT_TOL:
-            return False
-        d = np.abs(f1[3 : self._split] - f2[3 : self._split])
-        if d.size:
-            k = min(len(d), max(8, len(d) // 100))
-            if float(np.partition(d, -k)[-k:].mean()) > _D_PRE:
-                return False
-        return self._bound(f1, f2) < R_TOL
+        return self._bound(f1, f2) < self.r_tol
 
 
 _WORKER_IDENTITY: dict[str, Identity] = {}
 
 
-def _rmsd_task(args: tuple[str, TypedGraph, list[tuple[np.ndarray, np.ndarray]]]) -> list[bool]:
-    """Worker: ``rmsd < R_TOL`` for each pair, with the Identity built once per process."""
-    key, graph, pairs = args
+def _rmsd_task(
+    args: tuple[str, TypedGraph, float, bool, list[tuple[np.ndarray, np.ndarray]]],
+) -> list[bool]:
+    """Worker: ``rmsd < r_tol`` for each pair, with the Identity built once per process."""
+    key, graph, r_tol, mirror, pairs = args
     idn = _WORKER_IDENTITY.get(key)
     if idn is None:
         _WORKER_IDENTITY.clear()
-        idn = _WORKER_IDENTITY[key] = Identity(graph)
-    return [idn.rmsd(x, y) < R_TOL for x, y in pairs]
+        idn = _WORKER_IDENTITY[key] = Identity(graph, r_tol, mirror)
+    return [idn.rmsd(x, y) < r_tol for x, y in pairs]
 
 
 class MinimaPool:
@@ -404,16 +380,19 @@ class MinimaPool:
     ) -> int | None:
         """Add a minimum; return its new id, or ``None`` if it rediscovers a known one."""
         fp = self.identity.fingerprint(coords)
-        hit = next(
-            (k for k, m in enumerate(self.minima) if self.identity.same(energy, coords, fp, m)),
-            None,
-        )
-        return self._commit(hit, energy, coords, label, origin, cell, fp)
+        return self.commit(self.match(energy, coords, fp), energy, coords, label, origin, cell, fp)
 
-    def _commit(
+    def match(self, energy: float, coords: np.ndarray, fp: np.ndarray | None = None) -> int | None:
+        """Return the index of the first member that (energy, coords) rediscovers, or ``None``."""
+        fp = self.identity.fingerprint(coords) if fp is None else fp
+        same = self.identity.same
+        return next((k for k, m in enumerate(self.minima) if same(energy, coords, fp, m)), None)
+
+    def commit(
         self, hit: int | None, energy: float, coords: np.ndarray, label: str, origin: str,
         cell: str, fp: np.ndarray,
     ) -> int | None:  # fmt: skip
+        """Record a rediscovery of member ``hit`` (``None``: a new minimum); return the new id."""
         if hit is not None:
             m = self.minima[hit]
             self.hits[hit] += 1
@@ -450,11 +429,14 @@ class MinimaPool:
         ]
         pairs = [(rows[i][1], states[s][1]) for i, s in need]
         if pmap is None or len(need) < 4 * chunks:
-            flat = [idn.rmsd(x, y) < R_TOL for x, y in pairs]
+            flat = [idn.rmsd(x, y) < idn.r_tol for x, y in pairs]
         else:
-            key = hashlib.sha256(pickle.dumps(idn.graph)).hexdigest()
+            key = hashlib.sha256(pickle.dumps((idn.graph, idn.r_tol, idn.mirror))).hexdigest()
             size = -(-len(pairs) // chunks)
-            tasks = [(key, idn.graph, pairs[k : k + size]) for k in range(0, len(pairs), size)]
+            tasks = [
+                (key, idn.graph, idn.r_tol, idn.mirror, pairs[k : k + size])
+                for k in range(0, len(pairs), size)
+            ]
             flat = [v for out in pmap(_rmsd_task, tasks) for v in out]
         verdict = dict(zip(need, flat))
         trues: dict[int, set[int]] = defaultdict(set)
@@ -467,7 +449,7 @@ class MinimaPool:
         for i, (r, fp) in enumerate(zip(rows, fps)):
             known = {index_of[s] for s in trues[i] if s in index_of} - stale
             hit = self._first(r, fp, known, stale)
-            mid = self._commit(hit, *r, fp)
+            mid = self.commit(hit, *r, fp)
             if mid is not None:
                 index_of[base + i] = mid
             elif hit is not None and self.minima[hit].coords is r[1]:

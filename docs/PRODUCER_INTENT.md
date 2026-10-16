@@ -137,9 +137,11 @@ steps never derive seeds.)
 
 ## Presets (Phase 7)
 
-`refine_default@v1` pins `{rmsd_threshold_angstrom: 0.25, bond_scale:
-1.2, heavy_only: False}`; `refine_strict@v1` pins `{0.1, 1.2, False}`;
-`dedup_default@v1` pins `{}` (deduplicate takes no native parameters).
+`refine_default@v2` pins `{rmsd_threshold_angstrom: 0.2, bond_scale:
+1.2, mirror: True}`; `refine_strict@v2` pins `{0.1, 1.2, True}`;
+`dedup_default@v2` pins `{}` (deduplicate takes no native parameters).
+The refine identity is the shared ConfGen conformer identity: `mirror`
+(default True) counts mirror images as the same conformer.
 A preset whose card does not exactly match the step card is rejected, as
 are unknown refine native keys.  No `energy_window` member exists (V4
 transforms carry structures only).
