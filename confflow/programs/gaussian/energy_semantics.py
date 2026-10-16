@@ -17,9 +17,14 @@ both halves of the guarantee use this module:
    evaluated while parsing the native output.  The parser reads the last
    ``SCF Done`` line as the electronic energy; this proof accepts that value
    only when the log contains no later method-final-energy marker (``E2(``,
-   ``E(Method)=``, ``MP2=``, ``CCSD=``, composite summaries, ...).  A failure
-   yields an ERROR parser diagnostic, which the executor already treats as
-   authoritative, so the item fails and no scientific result is published.
+   ``E(Method)=``, ``MP2=``, ``CCSD=``, composite summaries, ...).  For a
+   Gaussian ``External`` job (no ``SCF Done`` line) the parser instead reads
+   the last ``Recovered energy=`` value; the proof accepts it only when the log
+   announces ``External calculation of energy``, contains no ``SCF Done`` and
+   no ``ONIOM`` layer (an ONIOM energy is an extrapolation), and has no
+   method-final-energy marker after the last ``Recovered energy=`` line.  A
+   failure yields an ERROR parser diagnostic, which the executor already treats
+   as authoritative, so the item fails and no scientific result is published.
 
 The two halves share one vocabulary.  Gaussian accepting a keyword is not the
 same claim as ConfFlow being able to interpret the keyword's final energy;
@@ -44,6 +49,15 @@ __all__ = [
 
 #: Marker whose final occurrence anchors the published electronic energy.
 SCF_DONE_MARKER: Final[str] = "SCF Done"
+
+#: Per-evaluation energy echo of a Gaussian ``External`` calculation.
+EXTERNAL_RECOVERED_MARKER: Final[str] = "Recovered energy="
+
+#: Log line announcing that Gaussian delegated energy to an external program.
+EXTERNAL_CALCULATION_MARKER: Final[str] = "External calculation of energy"
+
+#: Parser source name for an electronic energy taken from ``Recovered energy=``.
+EXTERNAL_RECOVERED_SOURCE: Final[str] = "external_recovered"
 
 
 class MethodFamily(str, Enum):
@@ -184,15 +198,59 @@ def unsupported_method_finding(keyword: str) -> MethodFamilyFinding | None:
     return None
 
 
-def final_energy_semantics_problem(text: str, sources: Mapping[str, str]) -> str | None:
-    """Prove that the parsed electronic energy is an SCF final energy.
+def _external_recovered_problem(text: str) -> str | None:
+    """Prove that the last ``Recovered energy=`` value is a final External energy.
 
-    The proof requires the electronic energy to come from an ``SCF Done``
-    line and requires the remainder of the log after the *last* ``SCF Done``
-    line to contain no method-final-energy marker.  Any marker means the log
-    carries a different method's final energy (for example a double hybrid's
-    ``E2(Method)/E(Method)`` pair or a composite summary), so the SCF value
-    must not be published as the requested method's energy.
+    A Gaussian ``External`` job (``external="..."``) prints no ``SCF Done``
+    line; each energy evaluation of the external program is echoed as
+    ``Recovered energy=``.  The proof requires the log to announce an External
+    calculation, to contain no ``SCF Done`` line, to contain no ONIOM layer
+    (an ONIOM energy is an extrapolation, not one layer's energy), and to have
+    no method-final-energy marker after the last ``Recovered energy=`` line.
+
+    Parameters
+    ----------
+    text : str
+        Full log file content.
+
+    Returns
+    -------
+    str | None
+        ``None`` when the proof holds; otherwise a stable reason string.
+    """
+    if EXTERNAL_CALCULATION_MARKER not in text:
+        return "external_energy_without_external_calculation"
+    if SCF_DONE_MARKER in text:
+        return "electronic_energy_source_not_scf_final"
+    if "ONIOM" in text:
+        return "external_energy_in_oniom"
+    last = text.rfind(EXTERNAL_RECOVERED_MARKER)
+    if last < 0:
+        return "electronic_energy_source_not_scf_final"
+    line_end = text.find("\n", last)
+    tail = text[line_end:] if line_end >= 0 else ""
+    for name, pattern in _METHOD_FINAL_ENERGY_MARKERS:
+        if pattern.search(tail):
+            return f"post_external_final_energy_marker:{name}"
+    return None
+
+
+def final_energy_semantics_problem(text: str, sources: Mapping[str, str]) -> str | None:
+    """Prove that the parsed electronic energy is a publishable final energy.
+
+    Two proofs are accepted, selected by the source of the electronic energy:
+
+    * ``scf_done`` (a Gaussian SCF job): the electronic energy comes from an
+      ``SCF Done`` line and the remainder of the log after the *last* ``SCF
+      Done`` line contains no method-final-energy marker.  Any marker means the
+      log carries a different method's final energy (for example a double
+      hybrid's ``E2(Method)/E(Method)`` pair or a composite summary), so the SCF
+      value must not be published as the requested method's energy.
+    * ``external_recovered`` (a Gaussian ``External`` calculation): the log
+      contains the ``External calculation of energy`` marker and no ``SCF
+      Done`` line, no ``ONIOM`` layer, and no method-final-energy marker after
+      the last ``Recovered energy=`` line.  See
+      :func:`_external_recovered_problem`.
 
     Parameters
     ----------
@@ -205,9 +263,11 @@ def final_energy_semantics_problem(text: str, sources: Mapping[str, str]) -> str
     Returns
     -------
     str | None
-        ``None`` when the published electronic energy is proven to be an SCF
-        final energy; otherwise a stable reason string.
+        ``None`` when the published electronic energy is proven to be a final
+        energy of the requested method; otherwise a stable reason string.
     """
+    if sources.get("electronic") == EXTERNAL_RECOVERED_SOURCE:
+        return _external_recovered_problem(text)
     if sources.get("electronic") != "scf_done":
         return "electronic_energy_source_not_scf_final"
     last = text.rfind(SCF_DONE_MARKER)

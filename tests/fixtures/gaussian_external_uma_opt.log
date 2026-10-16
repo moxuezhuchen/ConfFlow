@@ -1,0 +1,290 @@
+ Entering Gaussian System, Link 0=g16
+ Initial command:
+ /opt/g16/l1.exe "/scratch/Gau-1075642.inp" -scrdir="/scratch/"
+ Default is to use a total of   6 processors:
+                                6 via shared-memory
+                                1 via Linda
+ Entering Link 1 = /opt/g16/l1.exe PID=   1075644.
+  
+ Copyright (c) 1988-2021, Gaussian, Inc.  All Rights Reserved.
+  
+ This is part of the Gaussian(R) 16 program.  It is based on
+ the Gaussian(R) 09 system (copyright 2009, Gaussian, Inc.),
+ the Gaussian(R) 03 system (copyright 2003, Gaussian, Inc.),
+ the Gaussian(R) 98 system (copyright 1998, Gaussian, Inc.),
+ the Gaussian(R) 94 system (copyright 1995, Gaussian, Inc.),
+ the Gaussian 92(TM) system (copyright 1992, Gaussian, Inc.),
+ the Gaussian 90(TM) system (copyright 1990, Gaussian, Inc.),
+ the Gaussian 88(TM) system (copyright 1988, Gaussian, Inc.),
+ the Gaussian 86(TM) system (copyright 1986, Carnegie Mellon
+ University), and the Gaussian 82(TM) system (copyright 1983,
+ Carnegie Mellon University). Gaussian is a federally registered
+ trademark of Gaussian, Inc.
+  
+ This software contains proprietary and confidential information,
+ including trade secrets, belonging to Gaussian, Inc.
+  
+ This software is provided under written license and may be
+ used, copied, transmitted, or stored only in accord with that
+ written license.
+  
+ The following legend is applicable only to US Government
+ contracts under FAR:
+  
+                    RESTRICTED RIGHTS LEGEND
+  
+ Use, reproduction and disclosure by the US Government is
+ subject to restrictions as set forth in subparagraphs (a)
+ and (c) of the Commercial Computer Software - Restricted
+ Rights clause in FAR 52.227-19.
+  
+ Gaussian, Inc.
+ 340 Quinnipiac St., Bldg. 40, Wallingford CT 06492
+  
+  
+ ---------------------------------------------------------------
+ Warning -- This program may not be used in any manner that
+ competes with the business of Gaussian, Inc. or will provide
+ assistance to any competitor of Gaussian, Inc.  The licensee
+ of this program is prohibited from giving any competitor of
+ Gaussian, Inc. access to this program.  By using this program,
+ the user acknowledges that Gaussian, Inc. is engaged in the
+ business of creating and licensing software in the field of
+ computational chemistry and represents and warrants to the
+ licensee that it is not a competitor of Gaussian, Inc. and that
+ it will not use this program in any manner prohibited above.
+ ---------------------------------------------------------------
+  
+
+ Cite this work as:
+ Gaussian 16, Revision C.02,
+ M. J. Frisch, G. W. Trucks, H. B. Schlegel, G. E. Scuseria, 
+ M. A. Robb, J. R. Cheeseman, G. Scalmani, V. Barone, 
+ G. A. Petersson, H. Nakatsuji, X. Li, M. Caricato, A. V. Marenich, 
+ J. Bloino, B. G. Janesko, R. Gomperts, B. Mennucci, H. P. Hratchian, 
+ J. V. Ortiz, A. F. Izmaylov, J. L. Sonnenberg, D. Williams-Young, 
+ F. Ding, F. Lipparini, F. Egidi, J. Goings, B. Peng, A. Petrone, 
+ T. Henderson, D. Ranasinghe, V. G. Zakrzewski, J. Gao, N. Rega, 
+ G. Zheng, W. Liang, M. Hada, M. Ehara, K. Toyota, R. Fukuda, 
+ J. Hasegawa, M. Ishida, T. Nakajima, Y. Honda, O. Kitao, H. Nakai, 
+ T. Vreven, K. Throssell, J. A. Montgomery, Jr., J. E. Peralta, 
+ F. Ogliaro, M. J. Bearpark, J. J. Heyd, E. N. Brothers, K. N. Kudin, 
+ V. N. Staroverov, T. A. Keith, R. Kobayashi, J. Normand, 
+ K. Raghavachari, A. P. Rendell, J. C. Burant, S. S. Iyengar, 
+ J. Tomasi, M. Cossi, J. M. Millam, M. Klene, C. Adamo, R. Cammi, 
+ J. W. Ochterski, R. L. Martin, K. Morokuma, O. Farkas, 
+ J. B. Foresman, and D. J. Fox, Gaussian, Inc., Wallingford CT, 2019.
+ 
+ ******************************************
+ Gaussian 16:  ES64L-G16RevC.02  7-Dec-2021
+                16-Oct-2026 
+ ******************************************
+ %nprocshared=2
+ Will use up to    2 processors via shared memory.
+ %mem=2GB
+ ----------------------
+ # opt external="uma_s"
+ ----------------------
+ 1/6=10,10=10,18=4000020,19=15,26=1,38=1/1,3;
+ 2/9=110,12=2,17=6,18=5,40=1/2;
+ 3/11=9,25=1,30=1,41=9900000,43=2,71=1/1;
+ 4/20=17,22=1001,24=3,113=1,114=1/2;
+ 6/7=2,8=2,9=2,10=2/1;
+ 7/44=-1/16;
+ 1/6=10,10=10,18=4000020,19=15,26=1/3(2);
+ 2/9=110/2;
+ 99//99;
+ 2/9=110/2;
+ 3/11=9,25=1,30=1,41=9900000,43=2,71=1/1;
+ 4/16=2,20=17,22=1001,24=3,113=1,114=1/2;
+ 7/44=-1/16;
+ 1/6=10,10=10,18=4000020,19=15,26=1/3(-4);
+ 2/9=110/2;
+ 6/7=2,8=2,9=2,10=2/1;
+ 99/9=10/99;
+ -----
+ water
+ -----
+ Symbolic Z-matrix:
+ Charge =  0 Multiplicity = 1
+ O                     0.        0.        0.15 
+ H                     0.        0.7572   -0.4692 
+ H                     0.       -0.7572   -0.4692 
+ 
+
+ GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
+ Berny optimization.
+ Initialization pass.
+ No Z-matrix variables, so optimization will use Cartesian coordinates.
+ Trust Radius=1.00D-01 FncErr=1.00D-07 GrdErr=1.00D-07 EigMax=2.50D+02 EigMin=1.00D-04
+ Number of steps in this run=      2 maximum allowed number of steps=      2.
+ GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
+
+                          Input orientation:                          
+ ---------------------------------------------------------------------
+ Center     Atomic      Atomic             Coordinates (Angstroms)
+ Number     Number       Type             X           Y           Z
+ ---------------------------------------------------------------------
+      1          8           0        0.000000    0.000000    0.150000
+      2          1           0        0.000000    0.757200   -0.469200
+      3          1           0        0.000000   -0.757200   -0.469200
+ ---------------------------------------------------------------------
+                    Distance matrix (angstroms):
+                    1          2          3
+     1  O    0.000000
+     2  H    0.978141   0.000000
+     3  H    0.978141   1.514400   0.000000
+ Stoichiometry    H2O
+ Framework group  C2V[C2(O),SGV(H2)]
+ Deg. of freedom     2
+ Full point group                 C2V     NOp   4
+ Largest Abelian subgroup         C2V     NOp   4
+ Largest concise Abelian subgroup C2      NOp   2
+                         Standard orientation:                         
+ ---------------------------------------------------------------------
+ Center     Atomic      Atomic             Coordinates (Angstroms)
+ Number     Number       Type             X           Y           Z
+ ---------------------------------------------------------------------
+      1          8           0        0.000000   -0.000000    0.123840
+      2          1           0        0.000000    0.757200   -0.495360
+      3          1           0       -0.000000   -0.757200   -0.495360
+ ---------------------------------------------------------------------
+ Rotational constants (GHZ):         736.3521664         437.3013824         274.3636064
+ Standard basis: STO-3G (5D, 7F)
+ There are     4 symmetry adapted cartesian basis functions of A1  symmetry.
+ There are     0 symmetry adapted cartesian basis functions of A2  symmetry.
+ There are     1 symmetry adapted cartesian basis functions of B1  symmetry.
+ There are     2 symmetry adapted cartesian basis functions of B2  symmetry.
+ There are     4 symmetry adapted basis functions of A1  symmetry.
+ There are     0 symmetry adapted basis functions of A2  symmetry.
+ There are     1 symmetry adapted basis functions of B1  symmetry.
+ There are     2 symmetry adapted basis functions of B2  symmetry.
+     7 basis functions,    21 primitive gaussians,     7 cartesian basis functions
+     5 alpha electrons        5 beta electrons
+       nuclear repulsion energy         9.0054751987 Hartrees.
+ NAtoms=    3 NActive=    3 NUniq=    2 SFac= 2.25D+00 NAtFMM=   60 NAOKFM=F Big=F
+ Integral buffers will be    131072 words long.
+ Raffenetti 1 integral format.
+ Two-electron integral symmetry is turned on.
+ External calculation of energy and first derivatives.
+ Running external command "uma_s R"
+         input file       "/scratch/Gau-1075644.EIn"
+         output file      "/scratch/Gau-1075644.EOu"
+         message file     "/scratch/Gau-1075644.EMs"
+         fchk file        "/scratch/Gau-1075644.EFC"
+         mat. el file     "/scratch/Gau-1075644.EUF"
+ Recovered energy= -76.4329468109     dipole=      0.000000000000      0.000000000000      0.000000000000
+ NRF= 0 NRA=   0 NVA=   3 HaveQM=F NVQ=       0
+ Convergence limit is  0.750E-04 MaxStp= 10000 StMxLn= 3.00D-04 StpMin= 1.00D-06.
+ Convergence criteria             0.00011250 0.00007500 0.00045000 0.00030000
+  Step  NS  ND Rises OKQ   Scale  Max. Force  RMS Force Max. Disp.  RMS Disp.     Energy   Flag
+     1   0   0   F    T  1.00D+00 0.02425275 0.01060375 0.02425275 0.01060375  -76.4329468 ----
+     2   0   0   F    F  1.59D-01 0.02425275 0.01060375 0.00386410 0.00168946  -76.4335306 ----
+     3   0   0   F    T  6.62D+00 0.00362354 0.00182942 0.02240839 0.01229320  -76.4335421 ----
+     4   0   0   F    F -1.13D-01 0.00362354 0.00182942 0.00254255 0.00139484  -76.4336291 ----
+     5   0   0   F    T  6.10D+01 0.00036345 0.00017268 0.02569341 0.01089837  -76.4336305 ----
+     6   0   0   T    F  1.82D-02 0.00036345 0.00017268 0.00046782 0.00019844  -76.4331885 ---+
+     7   0   0   F    T  3.40D+02 0.00000112 0.00000056 0.00036137 0.00019844  -76.4336307 ====
+ Running external command "uma_s R"
+         input file       "/scratch/Gau-1075644.EIn"
+         output file      "/scratch/Gau-1075644.EOu"
+         message file     "/scratch/Gau-1075644.EMs"
+         fchk file        "/scratch/Gau-1075644.EFC"
+         mat. el file     "/scratch/Gau-1075644.EUF"
+ Recovered energy= -76.4336306702     dipole=      0.000000000000      0.000000000000      0.000000000000
+ Energy=    -76.4336307     NIter=   0.
+ Dipole moment=       0.000000       0.000000       0.000000
+ ***** Axes restored to original set *****
+ -------------------------------------------------------------------
+ Center     Atomic                   Forces (Hartrees/Bohr)
+ Number     Number              X              Y              Z
+ -------------------------------------------------------------------
+      1        8           0.000000000   -0.000000002   -0.000000489
+      2        1          -0.000000000    0.000001122    0.000000245
+      3        1           0.000000000   -0.000001120    0.000000243
+ -------------------------------------------------------------------
+ Cartesian Forces:  Max     0.000001122 RMS     0.000000565
+
+ GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
+ Berny optimization.
+ Search for a local minimum.
+ Step number   1 out of a maximum of    2
+ All quantities printed in internal units (Hartrees-Bohrs-Radians)
+ Mixed Optimization -- En-DIIS/RFO-DIIS
+ Second derivative matrix not updated -- unit matrix used.
+ ITU=  0
+ RFO step:  Lambda= 0.00000000D+00 EMin= 1.00000000D+00
+ ClnCor:  largest displacement from symmetrization is 2.52D-09 for atom     3.
+ Linear search not attempted -- first point.
+ ClnCor:  largest displacement from symmetrization is 2.04D-08 for atom     3.
+ Variable       Old X    -DE/DX   Delta X   Delta X   Delta X     New X
+                                 (Linear)    (Quad)   (Total)
+    X1       -0.00000   0.00000   0.00000  -0.00000   0.00000   0.00000
+    Y1        0.00000  -0.00000   0.00000  -0.00000  -0.00000   0.00000
+    Z1        0.24122  -0.00000   0.00000  -0.00000  -0.00000   0.24122
+    X2        0.00000  -0.00000   0.00000   0.00000  -0.00000   0.00000
+    Y2        1.44132   0.00000   0.00000   0.00000   0.00000   1.44132
+    Z2       -0.86554   0.00000   0.00000   0.00000   0.00000  -0.86554
+    X3       -0.00000   0.00000   0.00000  -0.00000   0.00000  -0.00000
+    Y3       -1.44132  -0.00000   0.00000  -0.00000  -0.00000  -1.44132
+    Z3       -0.86554   0.00000   0.00000   0.00000   0.00000  -0.86554
+         Item               Value     Threshold  Converged?
+ Maximum Force            0.000001     0.000450     YES
+ RMS     Force            0.000001     0.000300     YES
+ Maximum Displacement     0.000001     0.001800     YES
+ RMS     Displacement     0.000001     0.001200     YES
+ Predicted change in Energy=-1.423867D-12
+ Optimization completed.
+    -- Stationary point found.
+ GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
+
+                          Input orientation:                          
+ ---------------------------------------------------------------------
+ Center     Atomic      Atomic             Coordinates (Angstroms)
+ Number     Number       Type             X           Y           Z
+ ---------------------------------------------------------------------
+      1          8           0       -0.000000    0.000000    0.127648
+      2          1           0        0.000000    0.762712   -0.458024
+      3          1           0       -0.000000   -0.762712   -0.458024
+ ---------------------------------------------------------------------
+                    Distance matrix (angstroms):
+                    1          2          3
+     1  O    0.000000
+     2  H    0.961635   0.000000
+     3  H    0.961635   1.525425   0.000000
+ Stoichiometry    H2O
+ Framework group  CS[SG(H2O)]
+ Deg. of freedom     3
+ Full point group                 CS      NOp   2
+ Omega: Change in point group or standard orientation.
+
+ Old FWG=C02V [C2(O1),SGV(H2)]
+ New FWG=CS   [SG(H2O1)]
+ Largest Abelian subgroup         CS      NOp   2
+ Largest concise Abelian subgroup C1      NOp   1
+                         Standard orientation:                         
+ ---------------------------------------------------------------------
+ Center     Atomic      Atomic             Coordinates (Angstroms)
+ Number     Number       Type             X           Y           Z
+ ---------------------------------------------------------------------
+      1          8           0        0.000000    0.117134    0.000000
+      2          1           0        0.762712   -0.468538   -0.000000
+      3          1           0       -0.762712   -0.468538    0.000000
+ ---------------------------------------------------------------------
+ Rotational constants (GHZ):         823.0732924         431.0031235         282.8752342
+ Unable to Open any file for archive entry.
+ 1\1\GINC-XJ\FOpt\External='uma_s'\ZDO\H2O1\ROOT\16-Oct-2026\0\\# opt e
+ xternal="uma_s"\\water\\0,1\O,-0.0000000005,0.0000000077,0.1276480141\
+ H,0.0000000008,0.7627124213,-0.4580240037\H,-0.0000000003,-0.762712429
+ 8,-0.4580240104\\Version=ES64L-G16RevC.02\HF=-76.4336307\RMSD=0.000e+0
+ 0\RMSF=5.648e-07\Dipole=0.,0.,0.\PG=CS [SG(H2O1)]\\@
+ The archive entry for this job was punched.
+
+
+ DIATOMIC MOLECULES ARE PECULIAR BECAUSE THEY ONLY HAVE TWO ENDS,
+ AND THESE ENDS ARE VERY CLOSE TOGETHER.
+ KLAUS RUEDENBERG, REV.MOD.PHYS. PG 176, 32, (1960)
+ Job cpu time:       0 days  0 hours  0 minutes  0.6 seconds.
+ Elapsed time:       0 days  0 hours  0 minutes  8.0 seconds.
+ File lengths (MBytes):  RWF=      6 Int=      0 D2E=      0 Chk=      1 Scr=      1
+ Normal termination of Gaussian 16 at Fri Oct 16 22:32:27 2026.

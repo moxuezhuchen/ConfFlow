@@ -64,6 +64,12 @@ published boundary (`confflow.boundary.v4`) byte-identical.
   (C5.3c-1), `efbaecd` (C5.3b).
 - **ConfGen report provenance fields** are declared in the configuration
   contract. `8d968dc` (C3.3).
+- **Gaussian External energies are published.** For External calculations
+  (e.g. UMA via `native: {keyword: 'external="uma_s"'}`), the electronic energy is
+  the last `Recovered energy=` value of the log. The energy is accepted only when
+  the log contains the External marker ("External calculation of energy") and
+  has no "SCF Done" and no ONIOM. Parser version v4. Docs: a UMA rescoring route
+  in `docs/USAGE.md` and the example `docs/examples/uma_rescoring.yaml`.
 
 ### Changed
 

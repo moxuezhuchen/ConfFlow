@@ -49,6 +49,8 @@ _GIBBS_CORRECTION_PATTERN = re.compile(
     r"Thermal\s+correction\s+to\s+Gibbs\s+Free\s+Energy=\s*(\S+)"
 )
 _FREQUENCIES_PATTERN = re.compile(r"Frequencies --\s+([-\d.\s]+)")
+_EXTERNAL_RECOVERED_TOKEN: str = "Recovered energy="
+_EXTERNAL_RECOVERED_PATTERN = re.compile(r"Recovered energy=\s*([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)")
 _ARCHIVE_HF_PATTERN = re.compile(r"\\HF=([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)")
 _ARCHIVE_GIBBS_PATTERN = re.compile(r"\\Gibbs=([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)")
 _WHITESPACE_PATTERN = re.compile(r"\s+")
@@ -198,8 +200,11 @@ def parse_energies(text: str) -> tuple[dict[str, float], dict[str, str]]:
     tuple[dict[str, float], dict[str, str]]
         Parsed energy subset and per-key source markers. ``electronic`` comes
         from the last ``SCF Done`` line (with Fortran ``D`` exponents
-        rewritten to ``E``), falling back to the last archive ``\\HF=`` value
-        only when no ``SCF Done`` line parsed. ``gibbs`` comes from the last
+        rewritten to ``E``, source ``scf_done``). Only when no ``SCF Done``
+        line parsed does it fall back to the last ``Recovered energy=`` value
+        of a Gaussian ``External`` calculation (full printed precision, source
+        ``external_recovered``). Only when neither parsed does it fall back to
+        the last archive ``\\HF=`` value (source ``archive_hf``). ``gibbs`` comes from the last
         ``Sum of electronic and thermal Free Energies`` line, falling back to
         the last archive ``\\Gibbs=`` value only when that line is absent.
         ``gibbs_correction`` comes from the last ``Thermal correction to
@@ -208,8 +213,15 @@ def parse_energies(text: str) -> tuple[dict[str, float], dict[str, str]]:
     """
     energies: dict[str, float] = {}
     sources: dict[str, str] = {}
+    external_recovered: float | None = None
     for raw_line in text.splitlines():
         line = raw_line.replace("D", "E")
+        if _EXTERNAL_RECOVERED_TOKEN in line:
+            recovered_match = _EXTERNAL_RECOVERED_PATTERN.search(line)
+            if recovered_match is not None:
+                recovered_value = _to_float(recovered_match.group(1))
+                if recovered_value is not None:
+                    external_recovered = recovered_value
         if _SCF_DONE_TOKEN in raw_line:
             try:
                 value = float(line.split()[4])
@@ -230,6 +242,9 @@ def parse_energies(text: str) -> tuple[dict[str, float], dict[str, str]]:
             if gibbs_correction_value is not None:
                 energies["gibbs_correction"] = gibbs_correction_value
                 sources["gibbs_correction"] = "thermochemistry"
+    if "electronic" not in energies and external_recovered is not None:
+        energies["electronic"] = external_recovered
+        sources["electronic"] = "external_recovered"
     if "electronic" not in energies or "gibbs" not in energies:
         compact = _collect_archive_compact(text)
         if "electronic" not in energies:

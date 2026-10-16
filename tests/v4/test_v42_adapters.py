@@ -111,7 +111,7 @@ class TestProgramResolution:
         assert orca.log_extension == "out"
         assert orca.default_executable == "orca"
         assert gaussian.adapter_version == "confflow.program.gaussian.v2"
-        assert gaussian.parser_version == "confflow.program.gaussian.parser.v3"
+        assert gaussian.parser_version == "confflow.program.gaussian.parser.v4"
         assert orca.adapter_version == "confflow.program.orca.v2"
         assert orca.parser_version == "confflow.program.orca.parser.v2"
 

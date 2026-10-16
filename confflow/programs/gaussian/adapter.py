@@ -45,7 +45,7 @@ __all__ = [
 ADAPTER_VERSION: str = "confflow.program.gaussian.v2"
 
 #: Parser contract version folded into digests.
-PARSER_VERSION: str = "confflow.program.gaussian.parser.v3"
+PARSER_VERSION: str = "confflow.program.gaussian.parser.v4"
 
 #: Media types recorded on discovered artifacts, keyed by file extension.
 MEDIA_TYPES_BY_EXTENSION: dict[str, str] = {
@@ -516,9 +516,11 @@ class GaussianProgramAdapter:
         energies, sources = _parsing.parse_energies(text)
         # Runtime publication proof: the published electronic energy is the
         # last SCF Done value only when no later method-final-energy marker
-        # exists.  A failure is an ERROR parser diagnostic, which the
-        # executor treats as authoritative even with no declared checks, so
-        # no scientific result is published from an unverified energy.
+        # exists, or the last Recovered energy= value of an External
+        # calculation when the log proves it is that job's final energy.  A
+        # failure is an ERROR parser diagnostic, which the executor treats as
+        # authoritative even with no declared checks, so no scientific result
+        # is published from an unverified energy.
         semantics_problem = _energy_semantics.final_energy_semantics_problem(text, sources)
         committed = _parsing.parse_frequencies(text)
         frequencies = _parsing.true_vibrational_modes(committed)
