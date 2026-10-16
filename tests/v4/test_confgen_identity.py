@@ -242,3 +242,24 @@ def test_profile_bound_never_exceeds_rmsd() -> None:
         y[idn.kept] = ref[idn.kept][perm]
         y = y + rng.normal(0.0, 0.01, ref.shape)
         assert idn._bound(fr, idn.fingerprint(y)) <= idn.rmsd(ref, y) + 1e-9 < R_TOL
+
+
+@pytest.mark.parametrize("split", [0, 7])
+def test_add_many_matches_sequential_add(butane, split) -> None:
+    # dihedral steps of 7 degrees with energies jittered inside E_TOL: neighbours merge, and
+    # later lower-energy rediscoveries replace members (stale precomputed verdicts)
+    _, ref, _, idn = butane
+    rng = np.random.default_rng(3)
+    rows = [
+        (-100.0 + rng.uniform(0, 0.4) * _KCAL, rotate_about_central(ref, a) @ _proper_rotation(k),
+         "t00", f"dg:{k}", "")
+        for k, a in enumerate(range(0, 360, 7))
+    ]  # fmt: skip
+    one, many = MinimaPool(idn), MinimaPool(idn)
+    seq = [one.add(*r) for r in rows]
+    got = [many.add(*r) for r in rows[:split]]
+    got += many.add_many(rows[split:], lambda f, xs: list(map(f, xs)), chunks=1)
+    assert got == seq
+    assert many.hits == one.hits
+    assert [(m.energy, m.origin) for m in many.minima] == [(m.energy, m.origin) for m in one.minima]
+    assert any(h > 1 for h in one.hits) and len(one) > 3
