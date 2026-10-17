@@ -50,6 +50,7 @@ __all__ = ["run_search_item"]
 
 _HARTREE_TO_KCAL = 627.5094740631
 _SHAPE_FIT_MARGIN = 0.2  # Å: declared-shape RMSD excess over the best shape that warns
+_KEEP_WIDENED_SCOPE = "all_classes_input_unclassified"  # search.arrangement_scope value
 
 
 class _ImportError(DomainError):
@@ -78,6 +79,25 @@ def _shape_fit_diagnostic(fit: Any, step_id: str, work_item: WorkItem) -> Diagno
         work_item.logical_key,
         None,
         FrozenDict(dict(fit)),
+    )
+
+
+def _keep_scope_diagnostic(stats: Any, step_id: str, work_item: WorkItem) -> Diagnostic | None:
+    """Warn when ``arrangement: keep`` widened the search to every coordination class."""
+    if not isinstance(stats, Mapping) or stats.get("arrangement_scope") != _KEEP_WIDENED_SCOPE:
+        return None
+    template = stats.get("template")
+    return Diagnostic(
+        "confgen_keep_scope_widened",
+        f"arrangement 'keep' was requested but the input donor geometry fits no class of shape "
+        f"{template}, so every coordination class was searched; declare coordination.shapes: "
+        "[input] to keep the input arrangement",
+        DiagnosticSeverity.WARNING,
+        step_id,
+        work_item.id,
+        work_item.logical_key,
+        None,
+        FrozenDict({"template": template, "arrangement_scope": stats.get("arrangement_scope")}),
     )
 
 
@@ -483,6 +503,9 @@ def _run(
         )
         if shape_diag is not None:
             diagnostics.append(shape_diag)
+        keep_diag = _keep_scope_diagnostic(search_stats, context.step_id, work_item)
+        if keep_diag is not None:
+            diagnostics.append(keep_diag)
         structures = StructureSet(tuple(members))
         return _result(WorkItemStatus.COMPLETED, structures, tuple(diagnostics), artifacts)
 
