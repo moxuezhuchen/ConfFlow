@@ -15,6 +15,14 @@ published boundary (`confflow.boundary.v4`) byte-identical.
 
 ### Fixed
 
+- **ConfGen records which xTB ran, and never reuses another xTB's result.** The search
+  summary stored the first line of `xtb --version`, which is a banner of dashes for every
+  xtb build; it now stores the `xtb version … (commit)` line. A finished relaxation was
+  reused when only its coordinates matched; it is now reused only when the coordinates,
+  restraints, charge, spin, cycle limit and the xtb binary (by content hash) all match, so
+  resuming a run with another xtb or other restraints relaunches xtb. `done.json` files
+  written before this change are not reused.
+
 - **Gaussian `extra_sections` / `gaussian_extra` keep their blank lines.** The
   text after the geometry was rendered with every blank line removed, so two
   sections (a basis set and then a pseudopotential, for example) reached
