@@ -75,12 +75,6 @@ published boundary (`confflow.boundary.v4`) byte-identical.
   least 0.2 Å (RMSD) better than `coordination.shapes`, the step reports the
   WARNING `confgen_input_shape_mismatch`; the search is unchanged. The fit is in
   the search statistics as `input_shape_fit`.
-- **ConfGen adaptive budget cap scales with rotatable bonds.** Without `budget`, the cap is
-  now max(8000, 1000 × rotatable bonds) instead of 8000; the effective cap is reported as
-  `budget_cap` in the search statistics. Evidence: traces of four flexible GEOM molecules
-  (14-19 rotatable bonds, 20000 relaxations) found their lowest conformer within 6400
-  relaxations, and the extra budget raised the minima within 1 kcal/mol (r16_02: 51 at 8000,
-  74 at 16000, 78 at 20000). A fixed `budget` is unchanged.
 - **ConfGen no longer stalls on hopeless embeddings.** Local re-embedding now stops after
   10 s (or `embed_timeout_seconds` if smaller) instead of 120 s, and every global DG start is
   its own parallel task (seeds unchanged; worker map chunk size 1). Measured on this repo's

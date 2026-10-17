@@ -33,7 +33,6 @@ __all__ = [
     "DEFAULT_SEARCH_STARTS_WITHOUT_METAL",
     "DEFAULT_SEARCH_BUDGET",
     "DEFAULT_SEARCH_BUDGET_CAP",
-    "DEFAULT_SEARCH_BUDGET_PER_ROTOR",
     "DEFAULT_SEARCH_WINDOW_KCAL",
     "REMOVED_ENGINES_MESSAGE",
     "SearchContext",
@@ -69,10 +68,6 @@ DEFAULT_SEARCH_BUDGET: int = 1500
 #: Relaxation cap when ``budget`` is unset: the search then spends at least
 #: ``DEFAULT_SEARCH_BUDGET`` and continues while the low-energy region still grows.
 DEFAULT_SEARCH_BUDGET_CAP: int = 8000
-
-#: The adaptive cap is at least this many relaxations per rotatable bond (the effective cap is
-#: ``max(DEFAULT_SEARCH_BUDGET_CAP, DEFAULT_SEARCH_BUDGET_PER_ROTOR * rotors)``).
-DEFAULT_SEARCH_BUDGET_PER_ROTOR: int = 1000
 
 #: Energy window (kcal/mol) for parent selection and for the published conformers.
 DEFAULT_SEARCH_WINDOW_KCAL: float = 6.0

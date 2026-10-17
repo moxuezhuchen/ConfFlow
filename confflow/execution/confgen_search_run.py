@@ -24,7 +24,6 @@ from typing import Any
 from confflow.science.confgen.search_spec import (
     DEFAULT_SEARCH_BUDGET,
     DEFAULT_SEARCH_BUDGET_CAP,
-    DEFAULT_SEARCH_BUDGET_PER_ROTOR,
     DEFAULT_SEARCH_WINDOW_KCAL,
     build_search_context,
     resolve_search_starts,
@@ -268,7 +267,6 @@ def _run(
     if settings_doc["adaptive"]:
         settings_doc["budget"] = DEFAULT_SEARCH_BUDGET
         settings_doc["budget_cap"] = DEFAULT_SEARCH_BUDGET_CAP
-        settings_doc["budget_per_rotor"] = DEFAULT_SEARCH_BUDGET_PER_ROTOR
     settings_doc.setdefault("window_kcal", DEFAULT_SEARCH_WINDOW_KCAL)
     settings_doc.setdefault("arrangement", "keep")
     settings_doc.setdefault("release", True)
