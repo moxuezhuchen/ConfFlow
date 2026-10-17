@@ -2,6 +2,8 @@
 
 Builds RDKit ETKDGv3 starting geometries biased toward a commanded
 shape-class placement from the typed graph and a trusted reference geometry.
+The shape is either a registered ideal polyhedron or ``"input"``, whose template
+is the reference's own metal-donor core (identity placement only).
 Embedding returns whatever RDKit realizes (possibly fewer than requested).
 
 The returned starts are starts only: they are not audited, not labeled
@@ -22,7 +24,7 @@ from typing import Any
 import numpy as np
 
 from .coordination.shapes import get_shape
-from .graph import CoordinationSpec, EdgeType, TypedGraph
+from .graph import INPUT_SHAPE, CoordinationSpec, EdgeType, TypedGraph
 
 __all__ = [
     "DGSeedError",
@@ -33,6 +35,21 @@ __all__ = [
 
 #: Charge trial order for automatic fragment bond perception.
 _CHARGE_ORDER: tuple[int, ...] = (0, -1, 1, -2, 2, -3, 3, -4)
+
+#: Bounds slack (Angstrom) that admits the input geometry for ``INPUT_SHAPE``. With the metal
+#: removed, RDKit applies free-ligand priors (s-trans conjugated chelates such as bipyridine,
+#: van der Waals contacts between different ligands, short X-ray C-H) that can exclude the real
+#: structure and make the fixed input core unsmoothable; the input is a real structure, so the
+#: bounds must contain it.
+_INPUT_ADMIT_TOL: float = 0.25
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class _InputTemplate:
+    """Template taken from the input's own metal-donor core (``shape="input"``)."""
+
+    vertices: np.ndarray
+    coordination_number: int
 
 
 class DGSeedError(ValueError):
@@ -168,7 +185,11 @@ def _validate_inputs(
     shape: str,
     settings: DGSeedSettings,
 ) -> tuple[np.ndarray, list[int], list[int], int | None, Any]:
-    """Validate inputs fail-closed, returning reference/donors/order/metal/shape."""
+    """Validate inputs fail-closed, returning reference/donors/order/metal/template.
+
+    ``shape`` is either a registered ideal polyhedron or ``INPUT_SHAPE``; the latter
+    needs the identity placement and takes its template from ``reference``.
+    """
     count = settings.count
     if isinstance(count, bool) or not isinstance(count, int) or count < 1:
         raise DGSeedError(f"count must be a positive int, got {settings.count!r}")
@@ -191,12 +212,14 @@ def _validate_inputs(
         if site.hapticity != 1 or len(site.atoms) != 1:
             raise DGSeedError(f"binding site {site.id!r} must hold exactly one atom")
         donors.append(int(site.atoms[0]))
-    try:
-        template = get_shape(shape)
-    except (ValueError, KeyError, TypeError) as exc:
-        raise DGSeedError(f"unknown coordination shape {shape!r}") from exc
-    if template.coordination_number != len(donors):
-        raise DGSeedError(f"shape {shape!r} needs {template.coordination_number} sites")
+    template: Any = None
+    if shape != INPUT_SHAPE:
+        try:
+            template = get_shape(shape)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise DGSeedError(f"unknown coordination shape {shape!r}") from exc
+        if template.coordination_number != len(donors):
+            raise DGSeedError(f"shape {shape!r} needs {template.coordination_number} sites")
     order = list(placement)
     if len(order) != len(donors):
         raise DGSeedError(f"placement length {len(order)} needs {len(donors)}")
@@ -207,6 +230,8 @@ def _validate_inputs(
             raise DGSeedError(f"placement holds out-of-range vertex {value!r}")
     if len(set(order)) != len(order):
         raise DGSeedError("placement holds repeated vertex indices")
+    if shape == INPUT_SHAPE and order != list(range(len(donors))):
+        raise DGSeedError("shape 'input' takes the identity placement")
     metal = spec.metal_center
     if isinstance(metal, bool) or not isinstance(metal, int):
         raise DGSeedError(f"metal center {metal!r} is not an int")
@@ -217,6 +242,12 @@ def _validate_inputs(
             raise DGSeedError(f"donor atom {donor!r} is out of range")
         if donor == metal:
             raise DGSeedError("metal center must not be a donor atom")
+    if shape == INPUT_SHAPE:
+        # indices are validated above, so the template reads only real atoms
+        template = _InputTemplate(
+            vertices=np.asarray([ref[donor] - ref[metal] for donor in donors], dtype=float),
+            coordination_number=len(donors),
+        )
     return ref, donors, [int(value) for value in order], int(metal), template
 
 
@@ -373,7 +404,8 @@ def generate_dg_seeds(
     placement : Sequence[int]
         ``placement[i]`` is the shape vertex index of ``binding_sites[i]``.
     shape : str
-        Shape name accepted by ``coordination.shapes.get_shape``.
+        Shape name accepted by ``coordination.shapes.get_shape``, or ``"input"``
+        (template = the reference's own metal-donor core; identity placement only).
     settings : DGSeedSettings
         Embedding settings.
 
@@ -468,6 +500,19 @@ def generate_dg_seeds(
             reactions.add((min(edge.a, edge.b), max(edge.a, edge.b)))
 
     bounds = np.asarray(rdDistGeom.GetMoleculeBoundsMatrix(mol), dtype=float)
+    if shape == INPUT_SHAPE and metal is not None:
+        for peer in range(graph.natoms):
+            if peer == metal:
+                continue
+            low, high = (metal, peer) if metal < peer else (peer, metal)
+            bounds[low, high] = 1000.0
+            bounds[high, low] = 0.0
+        dists = np.linalg.norm(ref[:, None, :] - ref[None, :, :], axis=-1)
+        rows, cols = np.triu_indices(graph.natoms, k=1)
+        upper = dists[rows, cols] + _INPUT_ADMIT_TOL
+        lower = np.maximum(0.0, dists[rows, cols] - _INPUT_ADMIT_TOL)
+        bounds[rows, cols] = np.maximum(bounds[rows, cols], upper)
+        bounds[cols, rows] = np.minimum(bounds[cols, rows], lower)
 
     def _set_pair(first: int, second: int, dist: float, tol: float) -> None:
         low, high = (first, second) if first < second else (second, first)
