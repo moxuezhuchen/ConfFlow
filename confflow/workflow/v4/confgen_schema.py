@@ -27,6 +27,8 @@ from pydantic import (
     model_validator,
 )
 
+from confflow.science.confgen.graph import INPUT_CN_MIN, INPUT_SHAPE
+
 Index = Annotated[StrictInt, Field(ge=0)]
 Positive = Annotated[float, Field(gt=0, strict=True)]
 
@@ -73,10 +75,15 @@ class CoordinationConstraintModel(ConfgenSpecModel):
 
 
 class CoordinationGenerationSpec(ConfgenSpecModel):
-    """Declared coordination scope for the DG search (exactly one shape)."""
+    """Declared coordination scope for the DG search (exactly one shape).
+
+    ``shapes: ["input"]`` takes the input structure's own metal-donor core as the
+    template (arrangement only); it needs at least ``INPUT_CN_MIN`` sites and no
+    upper bound. Registered ideal shapes keep 4 to 6 sites.
+    """
 
     metal_center: Index
-    binding_sites: list[BindingSiteModel] = Field(min_length=4, max_length=6)
+    binding_sites: list[BindingSiteModel] = Field(min_length=INPUT_CN_MIN)
     shapes: list[StrictStr] = Field(min_length=1, max_length=1)
     constraints: list[CoordinationConstraintModel] = Field(default_factory=list)
 
@@ -84,7 +91,18 @@ class CoordinationGenerationSpec(ConfgenSpecModel):
     def check_shapes_and_sites(self) -> CoordinationGenerationSpec:
         if len(set(self.shapes)) != len(self.shapes):
             raise ValueError(f"coordination shapes hold duplicates: {self.shapes!r}")
-        allowed = set(_supported_shapes())
+        if self.shapes == [INPUT_SHAPE]:
+            if len(self.binding_sites) < INPUT_CN_MIN:
+                raise ValueError(
+                    f"shape {INPUT_SHAPE!r} needs at least {INPUT_CN_MIN} binding sites, "
+                    f"got {len(self.binding_sites)}"
+                )
+        elif not 4 <= len(self.binding_sites) <= 6:
+            raise ValueError(
+                f"coordination binding_sites must hold 4 to 6 sites for ideal shapes, "
+                f"got {len(self.binding_sites)}"
+            )
+        allowed = set(_supported_shapes()) | {INPUT_SHAPE}
         unknown = [name for name in self.shapes if name not in allowed]
         if unknown:
             raise ValueError(
@@ -171,6 +189,19 @@ class ConfgenModelV3(ConfgenSpecModel):
     topology: ConfgenTopologyModel = Field(default_factory=ConfgenTopologyModel)
     tolerances: ConfgenToleranceModel = Field(default_factory=ConfgenToleranceModel)
     search: ConfgenSearchModel | None = None
+
+    @model_validator(mode="after")
+    def check_input_arrangement(self) -> ConfgenModelV3:
+        """Shape ``input`` keeps the input arrangement; ``enumerate`` is not defined for it."""
+        coordination = self.coordination
+        if (
+            coordination is not None
+            and coordination.shapes == [INPUT_SHAPE]
+            and self.search is not None
+            and self.search.arrangement == "enumerate"
+        ):
+            raise ValueError(f"shape {INPUT_SHAPE!r} supports arrangement 'keep' only")
+        return self
 
     @model_validator(mode="before")
     @classmethod
