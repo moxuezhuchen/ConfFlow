@@ -70,6 +70,11 @@ published boundary (`confflow.boundary.v4`) byte-identical.
   the log contains the External marker ("External calculation of energy") and
   has no "SCF Done" and no ONIOM. Parser version v4. Docs: a UMA rescoring route
   in `docs/USAGE.md` and the example `docs/examples/uma_rescoring.yaml`.
+- **ConfGen warns when the input does not look like the declared shape.** If the
+  input donor geometry fits another shape of the same coordination number at
+  least 0.2 Å (RMSD) better than `coordination.shapes`, the step reports the
+  WARNING `confgen_input_shape_mismatch`; the search is unchanged. The fit is in
+  the search statistics as `input_shape_fit`.
 
 ### Changed
 

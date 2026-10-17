@@ -38,7 +38,7 @@ from confflow.science.confgen.calculator import (
     DistanceRestraint,
     RelaxRequest,
 )
-from confflow.science.confgen.coordination import enumeration, shapes
+from confflow.science.confgen.coordination import enumeration, perception, shapes
 from confflow.science.confgen.graph import CoordinationSpec, TypedGraph
 from confflow.science.confgen.identity import (
     HARTREE_TO_KCAL,
@@ -690,6 +690,12 @@ class _Explorer:
             "hessians": self.hessians,
             "rotors": len(self.rotors),
             "targets_searched": [t.id for t in self.targets],
+            "input_shape_fit": (
+                perception.shape_fit(self.ref, self.metal, self.donors,
+                                     self.spec.site_ids, self.shape)
+                if self.metal is not None and self.donors and self.shape and self.spec is not None
+                else None
+            ),  # fmt: skip
             "unique_minima": len(self.pool),
             "spent": dict(self.spent),
             "found_in_window": dict(self.found),
