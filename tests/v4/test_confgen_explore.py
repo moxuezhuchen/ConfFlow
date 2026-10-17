@@ -294,8 +294,8 @@ def test_dg_starts_go_out_in_parallel_slices(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(search, "generate_starts", _spy)
     explore.explore(graph, spec, ref, _SHAPE, _settings(starts=10), _FakeCalc(), map)
-    # one kept target, ten first-round starts: three slices of the same request
-    assert calls[:3] == [(10, (0, 4)), (10, (4, 8)), (10, (8, 10))]
+    # one kept target, ten first-round starts: one slice of the same request per start
+    assert calls[:10] == [(10, (i, i + 1)) for i in range(10)]
 
 
 def test_starts_lost_to_timeouts_are_counted(monkeypatch: pytest.MonkeyPatch) -> None:

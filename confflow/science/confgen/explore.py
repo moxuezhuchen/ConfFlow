@@ -60,7 +60,6 @@ _RESTRAINT_TOL = 0.03  # Angstrom
 _PROBE_MAX_KCAL = 12.0
 _LM_KIDS_MODES, _LM_AMPS = 6, (1.2, 2.2)
 _SEED_MOD = 2_000_003  # x 1000 stays below 2**31
-_DG_CHUNK = 4  # DG starts per parallel task
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +96,9 @@ class ExploreSettings:
     saturation_rate: float = 1.0 / 250.0
     small_ring_torsions: Literal["both", "on", "off"] = "both"
     embed_timeout: int = 120  # per start, as the workflow default embed_timeout_seconds
+    #: local re-embedding limit (s): measured successes take <= 4 s (Zr7, TS1, Pt), failures run
+    #: until the limit, so a long one only stalls the round (the smaller of the two applies)
+    reembed_timeout: int = 10
     fragment_charges: tuple[tuple[int, int], ...] = ()
     bond_scale: float = 1.25
 
@@ -112,6 +114,12 @@ def _dg_task(args: tuple[Any, ...]) -> tuple[str, list[np.ndarray], str | None, 
         return target.id, [], str(exc), ()
     err = found.failures[0][1] if found.failures else None
     return target.id, [s.coords for s in found.starts], err, tuple(found.stereo_centers)
+
+
+def _reembed_limit(st: ExploreSettings) -> int:
+    """Return the local re-embedding timeout: the smaller positive limit, 0 for none."""
+    limits = [t for t in (st.reembed_timeout, st.embed_timeout) if t > 0]
+    return min(limits) if limits else 0
 
 
 def _reembed_task(args: tuple[Any, ...]) -> tuple[np.ndarray | None, str | None]:
@@ -403,10 +411,9 @@ class _Explorer:
         self.dg_round += 1
         # generate_starts derives RDKit seeds as seed * 1000 + small offsets: keep it 32-bit
         base = self.st.seed * 100003 + 7919 * self.dg_round
-        # each target's starts go out in slices of one request (identical seeds), so a single
-        # target (arrangement keep) still fills every worker instead of one process
-        chunks = [(k, t, c, (i, min(c, i + _DG_CHUNK)))
-                  for k, (t, c) in enumerate(plan) for i in range(0, c, _DG_CHUNK)]  # fmt: skip
+        # one task per start, each a slice of one request (seeds as for the whole request), so
+        # a single target fills every worker and one slow start delays no other start
+        chunks = [(k, t, c, (i, i + 1)) for k, (t, c) in enumerate(plan) for i in range(c)]
         tasks = [(self.graph, self.spec, self.ref, self.shape, t, c, (base + 31 * k) % _SEED_MOD,
                   self.st, w) for k, t, c, w in chunks]  # fmt: skip
         items = []
@@ -418,8 +425,7 @@ class _Explorer:
                 self.fail["dg_embed"] += 1
             if len(coords) < hi - lo:  # timed out or unembeddable starts are skipped silently
                 self.fail["dg_no_start"] += hi - lo - len(coords)
-            for j, xyz in enumerate(coords):
-                items.append((f"{tag}/{tid}_{lo + j:02d}", xyz, f"dg:{tid}"))
+            items += [(f"{tag}/{tid}_{lo:02d}", xyz, f"dg:{tid}") for xyz in coords]
         return items
 
     def _single_kids(self, m: Minimum) -> list[tuple[str, np.ndarray]]:
@@ -499,7 +505,7 @@ class _Explorer:
         for m in ps:
             for k, s in enumerate(self._free_sets()):
                 tasks.append((self.elements, self.bonds, self.metal, m.coords, frozenset(s),
-                              self.re_pairs, self.rng.randrange(1, 2**30), self.st.embed_timeout))  # fmt: skip
+                              self.re_pairs, self.rng.randrange(1, 2**30), _reembed_limit(self.st)))  # fmt: skip
                 names.append((f"reembed/m{m.id:05d}_{k:02d}", f"reembed:{m.id}"))
         items = []
         for (name, origin), (x, err) in zip(names, self.pmap(_reembed_task, tasks)):
@@ -729,6 +735,10 @@ def explore(
     """
     if settings.budget < 1:
         raise search.SearchError(f"budget must be positive, got {settings.budget!r}")
+    if settings.reembed_timeout < 0:
+        raise search.SearchError(
+            f"reembed_timeout must be non-negative, got {settings.reembed_timeout!r}"
+        )
     if settings.budget_per_rotor < 0:
         raise search.SearchError(
             f"budget_per_rotor must be non-negative, got {settings.budget_per_rotor!r}"

@@ -208,8 +208,10 @@ def _run(job_path: str) -> int:
                     futures.ProcessPoolExecutor(max_workers=job["cores"], mp_context=ctx)
                 )
 
+                # one task per worker call: the tasks are coarse (one DG start, one re-embedding,
+                # one RMSD batch) and pairing them lets one slow task hold back another
                 def pmap(fn: Any, items: Any) -> Any:
-                    return pool.map(fn, items, chunksize=2)
+                    return pool.map(fn, items, chunksize=1)
 
             run = explore(
                 job["graph"],

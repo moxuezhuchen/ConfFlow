@@ -81,6 +81,14 @@ published boundary (`confflow.boundary.v4`) byte-identical.
   (14-19 rotatable bonds, 20000 relaxations) found their lowest conformer within 6400
   relaxations, and the extra budget raised the minima within 1 kcal/mol (r16_02: 51 at 8000,
   74 at 16000, 78 at 20000). A fixed `budget` is unchanged.
+- **ConfGen no longer stalls on hopeless embeddings.** Local re-embedding now stops after
+  10 s (or `embed_timeout_seconds` if smaller) instead of 120 s, and every global DG start is
+  its own parallel task (seeds unchanged; worker map chunk size 1). Measured on this repo's
+  TS1 (106 atoms, budget 512, 16 cores): every re-embedding that ran past 5 s failed (Zr7 and
+  TS1, 0 of 596 successes above 4 s), and the search took 961 s (re-embed limit) and 1062 s
+  (per-start DG) instead of 1161 s with byte-identical xTB inputs (553/553) and the same
+  published conformers. Pt (akugod) embeds in seconds and is unaffected. DG start names now
+  carry the true start index after a failed start, and `dg_embed` counts per start.
 
 ### Changed
 
