@@ -55,7 +55,7 @@
 协议（`confflow/science/confgen/calculator.py`）完成，能量引擎可替换；默认实现为 xTB
 （`confflow/execution/confgen_xtb.py`）。worker 是被监督的子进程 `confflow/execution/confgen_search_worker.py`，
 执行侧为 `confflow/execution/confgen_search_run.py`。CPU 密集的 RDKit 任务经注入的并行映射执行。
-对同一输入、同一 `seed` 与同一设置（并行映射顺序相同），结果确定。
+对同一输入、同一 `seed` 与同一设置（并行映射顺序相同），结果确定；嵌入超时按墙钟计，恰在上限附近完成的出发或重嵌入可能因机器负载而不同。
 
 约束：结果是约束下 xTB 的极小点，不是能量验证过的过渡态或最终构象能量；
 ConfFlow 不给出 DFT 能量。
@@ -119,7 +119,7 @@ ConfFlow 不给出 DFT 能量。
 | `arrangement` | `keep` | `keep`：保持输入的配位排布（输入不可归类时搜索全部类别）；`enumerate`：枚举所有配位类 |
 | `release` | `true` | 是否做去约束收尾 |
 | `small_ring_torsions` | `both` | 小环扭转开关：`both` 时每批 DG 出发约一半开、一半关；`on`/`off` 全局开或关 |
-| `embed_timeout_seconds` | `120` | 逐起点的 DG 嵌入超时（秒）：每个出发单独一次 RDKit 调用；超时或无法嵌入的出发被跳过（计入 `search.failures.dg_no_start`），其余出发保留。同一类别的出发按原请求切成每 4 个一片并行嵌入（种子与整次请求相同，结果不变） |
+| `embed_timeout_seconds` | `120` | 逐起点的 DG 嵌入超时（秒）：每个出发单独一次 RDKit 调用；超时或无法嵌入的出发被跳过（计入 `search.failures.dg_no_start`），其余出发保留。每个出发单独作为一个并行任务（种子与整次请求相同，结果不变）。局部重嵌入另用 10 s 上限（与本值取较小者）：实测成功的重嵌入都在 4 s 内，失败的会一直跑到上限 |
 | `max_cycles` | `1000` | xTB 松弛最大循环数 |
 | `bond_scale` | `1.25` | 审计阶段重新感知键时的尺度（与 `tolerances.bond_scale` 独立） |
 | `fragment_charges` | `[]` | DG 片段电荷覆盖：`{atom, charge}`，`atom` 使用本步骤的 `index_base` |
