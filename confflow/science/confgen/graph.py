@@ -50,6 +50,8 @@ __all__ = [
     "SUPPORTED_SHAPES",
     "CN_SHAPES",
     "CN_RANGE",
+    "INPUT_SHAPE",
+    "INPUT_CN_MIN",
     "EDGE_KINDS",
     "INDEX_CONVENTIONS",
     "COVALENT_RADII",
@@ -83,6 +85,14 @@ CN_SHAPES: dict[int, tuple[str, ...]] = {
 
 #: Inclusive coordination-number range for the single-metal model.
 CN_RANGE: tuple[int, int] = (4, 6)
+
+#: Template taken from the input's own metal-donor core instead of an ideal polyhedron. It has
+#: no registered vertices, so it is valid at any coordination number from ``INPUT_CN_MIN`` and
+#: is kept out of ``SUPPORTED_SHAPES`` / ``CN_SHAPES`` (the ideal-shape contract).
+INPUT_SHAPE: str = "input"
+
+#: Smallest coordination number accepted with ``INPUT_SHAPE``.
+INPUT_CN_MIN: int = 2
 
 
 class EdgeType(str, Enum):
@@ -553,11 +563,20 @@ class CoordinationSpec:
         if self.metal_center in donors:
             raise UnsupportedTopologyError("metal center must not be a donor atom")
         cn = len(sites)
+        shapes = tuple(self.shapes)
+        if shapes == (INPUT_SHAPE,):
+            if cn < INPUT_CN_MIN:
+                raise UnsupportedTopologyError(
+                    f"shape {INPUT_SHAPE!r} needs at least {INPUT_CN_MIN} binding sites, got {cn}"
+                )
+            object.__setattr__(self, "shapes", shapes)
+            return
+        if INPUT_SHAPE in shapes:
+            raise UnsupportedTopologyError(f"shape {INPUT_SHAPE!r} cannot be combined with others")
         if not CN_RANGE[0] <= cn <= CN_RANGE[1]:
             raise UnsupportedTopologyError(
                 f"coordination number {cn} outside supported range {CN_RANGE}"
             )
-        shapes = tuple(self.shapes)
         if shapes == ("auto",):
             object.__setattr__(self, "shapes", CN_SHAPES[cn])
         else:
