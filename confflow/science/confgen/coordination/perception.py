@@ -24,6 +24,7 @@ from typing import Any
 
 import numpy as np
 
+from ..graph import CN_SHAPES
 from .enumeration import canonical_representative, command_key
 from .shapes import get_shape, kabsch_rmsd, proper_rotation_group
 
@@ -33,6 +34,7 @@ __all__ = [
     "perceive_donors",
     "audit_frames",
     "donor_directions",
+    "shape_fit",
 ]
 
 
@@ -189,6 +191,39 @@ def perceive_donors(
         best_class=tuple(int(v) for v in best_rep),
         labeled_key=labeled_key,
     )
+
+
+def shape_fit(
+    coordinates: np.ndarray,
+    metal: int,
+    donors: Sequence[int],
+    site_ids: Sequence[str],
+    declared: str,
+) -> dict[str, Any] | None:
+    """Fit donor geometry against every admissible shape for its coordination number.
+
+    Returns the declared shape's RMSD, the best-fitting shape, and the per-shape
+    RMSD map as plain JSON-compatible values.  None when the coordination number
+    has no admissible shapes, *declared* is not one of them, or the fit fails.
+    """
+    shapes = CN_SHAPES.get(len(donors), ())
+    if declared not in shapes:
+        return None
+    try:
+        rmsd = {
+            name: float(perceive_donors(coordinates, metal, donors, site_ids, name).best_rmsd)
+            for name in shapes
+        }
+    except ValueError:
+        return None
+    best = min(shapes, key=lambda name: rmsd[name])
+    return {
+        "declared": declared,
+        "declared_rmsd": rmsd[declared],
+        "best": best,
+        "best_rmsd": rmsd[best],
+        "rmsd": rmsd,
+    }
 
 
 def audit_frames(

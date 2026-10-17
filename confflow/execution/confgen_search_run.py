@@ -49,10 +49,36 @@ from .xyz_import import import_xyz
 __all__ = ["run_search_item"]
 
 _HARTREE_TO_KCAL = 627.5094740631
+_SHAPE_FIT_MARGIN = 0.2  # Å: declared-shape RMSD excess over the best shape that warns
 
 
 class _ImportError(DomainError):
     pass
+
+
+def _shape_fit_diagnostic(fit: Any, step_id: str, work_item: WorkItem) -> Diagnostic | None:
+    """Warn when the input donor geometry fits another admissible shape clearly better."""
+    if not isinstance(fit, Mapping) or fit.get("best") == fit.get("declared"):
+        return None
+    declared, best = fit.get("declared"), fit.get("best")
+    try:
+        declared_rmsd, best_rmsd = float(fit["declared_rmsd"]), float(fit["best_rmsd"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not declared_rmsd - best_rmsd >= _SHAPE_FIT_MARGIN:  # also rejects NaN
+        return None
+    return Diagnostic(
+        "confgen_input_shape_mismatch",
+        f"input donor geometry fits {best} (RMSD {best_rmsd:.2f} Å) better than the declared "
+        f"{declared} ({declared_rmsd:.2f} Å); the search still uses the declared shape - "
+        "correct coordination.shapes if the declaration is wrong",
+        DiagnosticSeverity.WARNING,
+        step_id,
+        work_item.id,
+        work_item.logical_key,
+        None,
+        FrozenDict(dict(fit)),
+    )
 
 
 def _histogram(payload: Any) -> dict[str, int]:
@@ -452,6 +478,11 @@ def _run(
                     FrozenDict({"release_relaxations": search_stats.get("release_relaxations")}),
                 )
             )
+        shape_diag = _shape_fit_diagnostic(
+            search_stats.get("input_shape_fit"), context.step_id, work_item
+        )
+        if shape_diag is not None:
+            diagnostics.append(shape_diag)
         structures = StructureSet(tuple(members))
         return _result(WorkItemStatus.COMPLETED, structures, tuple(diagnostics), artifacts)
 
