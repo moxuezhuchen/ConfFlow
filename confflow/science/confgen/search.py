@@ -22,7 +22,7 @@ from confflow.science.confgen.calculator import (
 )
 from confflow.science.confgen.coordination import enumeration, perception, shapes
 from confflow.science.confgen.dg_seed import DGSeedError, DGSeedSettings, generate_dg_seeds
-from confflow.science.confgen.graph import CoordinationSpec, TypedGraph
+from confflow.science.confgen.graph import INPUT_SHAPE, CoordinationSpec, TypedGraph
 from confflow.science.data import get_atomic_number
 
 __all__ = (
@@ -40,6 +40,11 @@ _R_TOL, _MD_TOL, _C_SCALE, _D_TOL = 0.02, 0.03, 0.70, 30.0
 #: Topology hysteresis (x covalent-radius sum): a reference bond breaks only beyond _BREAK,
 #: a new bond forms only below _FORM; ordinary stretching during relaxation is not a change.
 _BREAK, _FORM = 1.45, 1.10
+#: New-coordination rule for the input shape (Angstrom / x covalent-radius sum): a non-donor
+#: atom counts as newly bound only if it is close to the metal AND closer than in the reference
+#: by _NEW_CONTACT_DROP. The drop is relative because small-bite chelates (kappa2-nitrate) put a
+#: non-donor atom near the metal already in the input; an absolute cut-off would misread that.
+_NEW_CONTACT_SCALE, _NEW_CONTACT_DROP = 1.25, 0.3
 
 
 def _signed_volume(coords: np.ndarray, center: int, neighbors: Sequence[int]) -> float:
@@ -203,6 +208,10 @@ def plan_targets(
         return (SearchTarget(id="t00"),)
     if not shape:
         raise SearchError("a coordination shape is required with a coordination spec")
+    if shape == INPUT_SHAPE:
+        # the input's own donor arrangement is the only class; no ideal-shape enumeration
+        cn = spec.coordination_number
+        return (SearchTarget(id="t00", placement=tuple(range(cn)), command=tuple(range(cn))),)
     try:
         pipe = enumeration.enumerate_targets(spec, shape)
     except ValueError as exc:
@@ -294,6 +303,25 @@ def _radius(symbol: str) -> float:
 
 def _dist(xyz: np.ndarray, i: int, j: int) -> float:
     return float(np.linalg.norm(xyz[i] - xyz[j]))
+
+
+def _new_coordination(
+    new: np.ndarray,
+    ref: np.ndarray,
+    elements: Sequence[str],
+    metal: int,
+    donors: Sequence[int],
+) -> bool:
+    """Return whether a non-donor atom has moved into metal coordination since the reference."""
+    declared = set(donors) | {metal}
+    for j, element in enumerate(elements):
+        if j in declared:
+            continue
+        d_new, d_ref = _dist(new, metal, j), _dist(ref, metal, j)
+        close = d_new < _NEW_CONTACT_SCALE * (_radius(elements[metal]) + _radius(element))
+        if close and d_new < d_ref - _NEW_CONTACT_DROP:
+            return True
+    return False
 
 
 def _perceive_bonds(
@@ -411,17 +439,23 @@ def audit_structure(
     if metal is not None:
         if spec is None or shape is None:
             raise SearchError("metal-bearing audit needs a coordination spec and shape")
-        sites = [site.id for site in spec.binding_sites]
-        group = shapes.proper_rotation_group(shape)
-        wanted = {tuple(commanded)} if allowed is None else {tuple(c) for c in allowed}
-        try:
-            seen = perception.perceive_donors(new, metal, donors, sites, shape)
-            got = enumeration.canonical_representative(tuple(seen.best_class), group)
-            actual = got if seen.unambiguous else None
-        except ValueError:
-            actual = None
-        if actual is None or actual not in wanted:
-            failed.append("coordination_class")
+        if shape == INPUT_SHAPE:
+            # the donor arrangement is checked by the explorer; here only new coordination counts
+            actual = tuple(range(spec.coordination_number))
+            if _new_coordination(new, ref, elements, metal, donors):
+                failed.append("coordination_class")
+        else:
+            sites = [site.id for site in spec.binding_sites]
+            group = shapes.proper_rotation_group(shape)
+            wanted = {tuple(commanded)} if allowed is None else {tuple(c) for c in allowed}
+            try:
+                seen = perception.perceive_donors(new, metal, donors, sites, shape)
+                got = enumeration.canonical_representative(tuple(seen.best_class), group)
+                actual = got if seen.unambiguous else None
+            except ValueError:
+                actual = None
+            if actual is None or actual not in wanted:
+                failed.append("coordination_class")
     adj = _adjacency(len(elements), ref_bonds, metal)
     stereo = True
     for i in stereo_centers:
