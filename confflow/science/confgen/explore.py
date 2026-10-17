@@ -91,6 +91,8 @@ class ExploreSettings:
     #: lowest at no more than ``saturation_rate`` per relaxation and did not lower the minimum
     adaptive: bool = False
     min_budget: int = 1500
+    #: adaptive cap is at least this many relaxations per rotatable bond
+    budget_per_rotor: int = 0
     saturation_window: int = 500
     saturation_rate: float = 1.0 / 250.0
     small_ring_torsions: Literal["both", "on", "off"] = "both"
@@ -173,6 +175,10 @@ class _Explorer:
         radii = np.array([search._radius(e) for e in self.elements])
         self.topo = Topology(self.id, reference, self.bonds, radii)
         self.rotors: list[Rotor] = list(self.topo.rotors)
+        # rotor count is fixed from here on (probing only changes the moves of each rotor)
+        self.cap = (
+            max(st.budget, st.budget_per_rotor * len(self.rotors)) if st.adaptive else st.budget
+        )
         self.donors = (
             list(spec.donor_indices) if spec is not None and self.metal is not None else []
         )
@@ -309,7 +315,7 @@ class _Explorer:
             raise search.SearchCancelled("search cancelled")
 
     def _left(self) -> int:
-        return max(0, self.st.budget - self.nopt)
+        return max(0, self.cap - self.nopt)
 
     def _rel(self, m: Minimum) -> float:
         return (m.energy - self.pool.lowest()) * HARTREE_TO_KCAL
@@ -689,6 +695,7 @@ class _Explorer:
             "release_relaxations": self.released,
             "hessians": self.hessians,
             "rotors": len(self.rotors),
+            "budget_cap": self.cap,
             "targets_searched": [t.id for t in self.targets],
             "input_shape_fit": (
                 perception.shape_fit(self.ref, self.metal, self.donors,
@@ -722,6 +729,10 @@ def explore(
     """
     if settings.budget < 1:
         raise search.SearchError(f"budget must be positive, got {settings.budget!r}")
+    if settings.budget_per_rotor < 0:
+        raise search.SearchError(
+            f"budget_per_rotor must be non-negative, got {settings.budget_per_rotor!r}"
+        )
     ex = _Explorer(graph, spec, np.asarray(reference, dtype=float), shape, settings, calculator,
                    parallel_map, should_cancel)  # fmt: skip
     final, stats = ex.run()

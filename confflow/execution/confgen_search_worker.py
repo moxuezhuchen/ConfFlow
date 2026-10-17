@@ -139,10 +139,12 @@ def _load_job(path: str) -> dict[str, Any]:
         raise _JobError(f"job field 'settings.adaptive' must be a boolean, got {adaptive!r}")
     budget = _int(section.get("budget"), "settings.budget", 1)
     cap = _int(section.get("budget_cap", budget), "settings.budget_cap", 1) if adaptive else budget
+    per_rotor = _int(section.get("budget_per_rotor", 0), "settings.budget_per_rotor", 0)
     settings = ExploreSettings(
         budget=max(cap, budget),
         adaptive=adaptive,
         min_budget=budget,
+        budget_per_rotor=per_rotor,
         window_kcal=float(window),
         seed=_int(section.get("seed"), "settings.seed"),
         starts=None if starts is None else _int(starts, "settings.starts", 1),
