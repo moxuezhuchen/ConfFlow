@@ -281,8 +281,9 @@ def resolve_search_coordination(section: Mapping[str, Any]) -> CoordinationSpec:
     Unknown keys fail closed (this rejects the removed realization keys:
     ``backend``, ``budgets``, ``treatment``, ``donor_configuration``,
     ``site_group`` and section ``tolerances``). ``shapes`` must name exactly
-    one registered shape; admissibility at the declared coordination number
-    is enforced by :class:`CoordinationSpec`.
+    one registered shape or ``input`` (the input's own donor core, at least
+    ``INPUT_CN_MIN`` sites); ideal shapes take 4 to 6 sites. Admissibility at
+    the declared coordination number is enforced by :class:`CoordinationSpec`.
     """
     if not isinstance(section, Mapping):
         raise ValueError("coordination section must be a mapping")
@@ -295,7 +296,19 @@ def resolve_search_coordination(section: Mapping[str, Any]) -> CoordinationSpec:
     if isinstance(metal, bool) or not isinstance(metal, int) or metal < 0:
         raise ValueError(f"coordination metal_center must be a non-negative int, got {metal!r}")
     raw_sites = section.get("binding_sites")
-    if not isinstance(raw_sites, (list, tuple)) or not 4 <= len(raw_sites) <= 6:
+    shapes = section.get("shapes")
+    if not isinstance(shapes, (list, tuple)) or len(shapes) != 1:
+        raise ValueError("$.coordination.shapes must name exactly one shape")
+    shape = str(shapes[0])
+    if shape == "auto":
+        raise ValueError("$.coordination.shapes must name exactly one shape, not 'auto'")
+    if shape == _graph.INPUT_SHAPE:
+        if not isinstance(raw_sites, (list, tuple)) or len(raw_sites) < _graph.INPUT_CN_MIN:
+            raise ValueError(
+                f"$.coordination.binding_sites must hold at least {_graph.INPUT_CN_MIN} sites "
+                f"for shape {shape!r}"
+            )
+    elif not isinstance(raw_sites, (list, tuple)) or not 4 <= len(raw_sites) <= 6:
         raise ValueError("$.coordination.binding_sites must hold 4 to 6 sites")
     sites: list[_graph.BindingSite] = []
     seen: set[str] = set()
@@ -323,12 +336,6 @@ def resolve_search_coordination(section: Mapping[str, Any]) -> CoordinationSpec:
         if entry.get("hapticity", 1) != 1:
             raise ValueError(f"{path}.hapticity must be 1")
         sites.append(_graph.BindingSite(id=site_id, kind="atom", atoms=(int(atom),), hapticity=1))
-    shapes = section.get("shapes")
-    if not isinstance(shapes, (list, tuple)) or len(shapes) != 1:
-        raise ValueError("$.coordination.shapes must name exactly one shape")
-    shape = str(shapes[0])
-    if shape == "auto":
-        raise ValueError("$.coordination.shapes must name exactly one shape, not 'auto'")
     constraints: list[_graph.ForbiddenTrans] = []
     for position, entry in enumerate(section.get("constraints", []) or []):
         path = f"$.coordination.constraints[{position}]"

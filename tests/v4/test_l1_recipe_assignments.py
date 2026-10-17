@@ -202,8 +202,9 @@ def test_b1_contract_boundary_bytes_unchanged() -> None:
     # 迭代搜索声明：confgen search 新增 budget/window_kcal/arrangement/release，
     # starts 默认改为 None/60；contract 摘要更新，boundary 不变。
     # Gaussian External 能量可发布：parser_version v3→v4，contract 摘要更新，boundary 不变。
+    # ConfGen 新增 coordination shapes: [input]（输入核心模板，keep 专用，位点数 >=2）：contract 摘要更新，boundary 不变。
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(env)).hexdigest() == (
-        "sha256:8eb8f934f235730c402f7967bbafa22456e724fd8c6ed1430b20193fb62a2743"
+        "sha256:fdc6ad79fb4f26440132a70641923c3b1c97379f0ad8c3da8e06f7466799f170"
     )
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(bdoc)).hexdigest() == (
         "sha256:ff7491007ffd37e4e688e9dd1c73aba5301ccd699f9610d060bd2029cf370f27"

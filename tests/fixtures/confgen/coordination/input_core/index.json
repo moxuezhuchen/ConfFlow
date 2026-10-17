@@ -1,0 +1,66 @@
+{
+ "cd6_bpy3": {
+  "source": "Acta Cryst. E, doi 10.1107/S1600536808036593 ([Cd(bpy)3]2+ cation as prepared for the 2026-10-17 holdout); [Cd(bpy)3]2+ cation, charge +2",
+  "metal_center0": 0,
+  "donors0": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6
+  ],
+  "charge": 2,
+  "multiplicity": 1,
+  "natoms": 61
+ },
+ "ti7_salan": {
+  "source": "COD 4343582 (heteroleptic Ti(IV) salan, CN7)",
+  "metal_center0": 0,
+  "donors0": [
+   99,
+   100,
+   101,
+   102,
+   103,
+   104,
+   105
+  ],
+  "charge": 0,
+  "multiplicity": 1,
+  "natoms": 108
+ },
+ "zr8_onn": {
+  "source": "COD 4082162 (Zr[ONN]2Cl2, CN8; lattice toluene removed)",
+  "metal_center0": 0,
+  "donors0": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8
+  ],
+  "charge": 0,
+  "multiplicity": 1,
+  "natoms": 127
+ },
+ "cd7_ntb": {
+  "source": "COD 2204517 ([Cd(NTB)(NO3)2], CN7, kappa2-nitrate)",
+  "metal_center0": 0,
+  "donors0": [
+   1,
+   2,
+   5,
+   8,
+   13,
+   16,
+   17
+  ],
+  "charge": 0,
+  "multiplicity": 1,
+  "natoms": 61
+ }
+}

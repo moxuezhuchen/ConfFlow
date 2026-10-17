@@ -39,7 +39,7 @@ from confflow.science.confgen.calculator import (
     RelaxRequest,
 )
 from confflow.science.confgen.coordination import enumeration, perception, shapes
-from confflow.science.confgen.graph import CoordinationSpec, TypedGraph
+from confflow.science.confgen.graph import INPUT_SHAPE, CoordinationSpec, TypedGraph
 from confflow.science.confgen.identity import (
     HARTREE_TO_KCAL,
     Identity,
@@ -175,6 +175,8 @@ class _Explorer:
         self.calc, self.pmap, self.should_cancel = calc, pmap, should_cancel
         self.rng = random.Random(f"explore-{st.seed}")
         self.metal = graph.metal_center
+        if shape == INPUT_SHAPE and st.arrangement != "keep":
+            raise search.SearchError("shape 'input' supports arrangement 'keep' only")
         self.id = Identity(graph)
         self.elements = self.id.elements
         self.bonds = dg_seed._candidate_bonds(graph)
@@ -245,8 +247,8 @@ class _Explorer:
 
     def _reduce_targets(self) -> None:
         """Keep one target per orbit of graph-equivalent donor permutations."""
-        if self.spec is None or self.shape is None:
-            return
+        if self.spec is None or self.shape is None or self.shape == INPUT_SHAPE:
+            return  # the input shape has one target: no rotation group to reduce by
         try:
             perms = self._donor_perms()
         except Exception:  # automorphism search is an optimisation only
@@ -282,6 +284,9 @@ class _Explorer:
             self.arr_perms = [list(pm) for pm in self._donor_perms()]
         except Exception:
             self.arr_perms = [list(range(len(self.donors)))]
+        if self.shape == INPUT_SHAPE:  # the input is the arrangement: no class to classify
+            self.arr_ref = self._angles(self.ref)
+            return
         rec = search.audit_structure(self.ref, self.graph, self.spec, self.ref, self.shape, (), (),
                                      True, self.st.bond_scale, allowed=self.allowed)  # fmt: skip
         if "coordination_class" in rec.failed_checks or rec.actual_class not in self.tid:
@@ -338,7 +343,7 @@ class _Explorer:
             if self.metal is None or rec.actual_class is None:
                 return "t00", ()
             return self.tid.get(rec.actual_class, "unclassified"), ()
-        if bad == ["coordination_class"] and self.metal is not None:
+        if bad == ["coordination_class"] and self.metal is not None and self.shape != INPUT_SHAPE:
             ok = all(
                 np.linalg.norm(xyz[d] - xyz[self.metal])
                 <= _DONOR_SLACK * np.linalg.norm(self.ref[d] - self.ref[self.metal])
@@ -700,6 +705,7 @@ class _Explorer:
                 perception.shape_fit(self.ref, self.metal, self.donors,
                                      self.spec.site_ids, self.shape)
                 if self.metal is not None and self.donors and self.shape and self.spec is not None
+                and self.shape != INPUT_SHAPE
                 else None
             ),  # fmt: skip
             "unique_minima": len(self.pool),
