@@ -10,7 +10,8 @@
 #   confflow v4 validate --workflow confflow.example.yaml --json
 #   confflow v4 run --workflow confflow.example.yaml \
 #     --inputs structures=mol.xyz --run-root ./run \
-#     --executable orca=/opt/orca601/orca --json
+#     --executable orca=/opt/orca601/orca \
+#     --executable xtb=/opt/xtb-pr/current/bin/xtb --json
 #
 # Document shape (see docs/architecture/WORKFLOW_V4.md)
 # -----------------------------------------------------

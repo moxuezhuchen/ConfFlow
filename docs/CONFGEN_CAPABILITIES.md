@@ -71,7 +71,7 @@ ConfFlow 不给出 DFT 能量。
   executor: confgen
   bindings: {structure: {source: {run: structures}}}
   resources: {cores_per_item: 2, memory_per_item: "4GB"}
-  execution: {executable: "/opt/orca611/otool_xtb"}
+  execution: {executable: "/opt/xtb-pr/current/bin/xtb"}
   confgen:
     schema_version: 4
     index_base: 1
@@ -142,7 +142,17 @@ ConfFlow 不给出 DFT 能量。
 
 搜索需要 xTB 可执行文件，按 `xtb` 程序名解析：步骤的 `execution.executable` 优先，
 否则取运行请求中 `executables["xtb"]` 的默认值。解析不到即在开工前 fail-closed。
-worker 记录 xTB 的 `--version` 行到 `summary.json`。
+worker 记录 xTB 的 `xtb version … (commit)` 行到 `summary.json`。已完成的松弛只有在坐标、约束、
+电荷、自旋、循环上限和 xTB 可执行文件（按内容哈希）都相同时才复用。
+
+推荐的 xTB：上游 main 68fe777 加 grimme-lab/xtb #1465、#1466、#1464 的静态构建，版本行为
+`xtb version 6.7.1 (68fe777+pr1464.1465.1466)`。本机路径 `/opt/xtb-pr/current/bin/xtb`，
+814 服务器 `/home/xianj/xtb-pr/current/bin/xtb`（目录内有 README 与可重建的源码包）。
+- 官方 6.7.1（`otool_xtb`、`/opt/xtb671`）在 TS1 六配位 Al 上的 GFN2 解析梯度与有限差分相差
+  最多 3.3e-2 Eh/bohr，上游 #1214 已修复，但尚无正式版本包含该修复。
+- 2026-10-18 验证（TS1 106 原子、Zr7 144 原子各 32 个真实输入，带约束）：单点与上游 main 相差
+  ≤3e-12 Eh，梯度与有限差分一致到 1e-6，优化全部收敛；16 个单线程并发时每步耗时相对官方 6.7.1
+  本机 1.66×/1.89×，814 服务器 2.15×/2.28×（TS1/Zr7）。
 
 ## 5. 审计
 
