@@ -183,3 +183,11 @@ def test_model_accepts_cn6_octahedral_document() -> None:
     model = ConfgenModelV3.model_validate(document)
     assert model.coordination is not None
     assert model.coordination.shapes == ["octahedral"]
+
+
+def test_schema_input_constants_match_graph() -> None:
+    from confflow.science.confgen import graph
+    from confflow.workflow.v4 import confgen_schema
+
+    assert confgen_schema.INPUT_SHAPE == graph.INPUT_SHAPE
+    assert confgen_schema.INPUT_CN_MIN == graph.INPUT_CN_MIN

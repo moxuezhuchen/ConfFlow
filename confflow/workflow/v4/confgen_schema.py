@@ -27,7 +27,10 @@ from pydantic import (
     model_validator,
 )
 
-from confflow.science.confgen.graph import INPUT_CN_MIN, INPUT_SHAPE
+#: Pinned copies of ``confflow.science.confgen.graph.INPUT_SHAPE`` / ``INPUT_CN_MIN`` (pinned by
+#: test): the workflow schema must not import the science package at module import time.
+INPUT_SHAPE = "input"
+INPUT_CN_MIN = 2
 
 Index = Annotated[StrictInt, Field(ge=0)]
 Positive = Annotated[float, Field(gt=0, strict=True)]
