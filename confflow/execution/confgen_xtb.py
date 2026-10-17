@@ -44,6 +44,8 @@ __all__ = [
 ]
 
 _CONV = "GEOMETRY OPTIMIZATION CONVERGED"
+_VERSION_LINE = re.compile(r"xtb version\s+\S.*", re.IGNORECASE)
+_HAS_WORD = re.compile(r"[A-Za-z0-9]")
 
 
 class Cancelled(RuntimeError):
@@ -58,13 +60,31 @@ def resolve_xtb(path: str) -> str | None:
 
 
 def xtb_version(exe: str) -> str:
-    """Return the first non-empty line of ``exe --version`` (empty when unavailable)."""
+    """Return the ``xtb version ... (commit) ...`` line of ``exe --version``.
+
+    Falls back to the first line with any letter or digit (xtb opens with a banner of
+    dashes); empty when the executable cannot be run.
+    """
     try:
         proc = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=60)
         out = proc.stdout + proc.stderr
     except (OSError, subprocess.SubprocessError):
         return ""
-    return next((line.strip() for line in out.splitlines() if line.strip()), "")
+    lines = [line.strip(" *|\t") for line in out.splitlines()]
+    hit = next((m.group(0) for line in lines if (m := _VERSION_LINE.search(line))), None)
+    return hit if hit is not None else next((x for x in lines if _HAS_WORD.search(x)), "")
+
+
+def _file_sha256(path: str) -> str:
+    """Return the sha256 of the file at ``path`` (the path itself when it cannot be read)."""
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(block)
+    except OSError:
+        return f"path:{path}"
+    return digest.hexdigest()
 
 
 def write_xyz_frames(path: Path, els: list[str], frames: list[tuple[np.ndarray, str]]) -> None:
@@ -100,7 +120,8 @@ def _constrain_block(restraints: Sequence[Restraint]) -> str | None:
 class XtbCalculator:
     """GFN2-xTB optimiser: one xtb process per request, ``cores`` at a time, under ``workdir``.
 
-    Each request runs in ``workdir/<key>``; a finished run whose input is unchanged is reused.
+    Each request runs in ``workdir/<key>``; a finished run is reused only when its coordinates,
+    restraints, charge, spin, cycle limit and xtb binary (by content) are all unchanged.
     ``cancel()`` (safe from a signal handler) stops new launches and terminates running ones.
     """
 
@@ -120,6 +141,7 @@ class XtbCalculator:
         self._info = CalculatorInfo(
             "xtb", "GFN2-xTB", version, frozenset({CAP_RESTRAINED_RELAX, CAP_HESSIAN})
         )
+        self._exe_sha = _file_sha256(shutil.which(exe) or exe)
         self._stop = threading.Event()
         self._live: set[subprocess.Popen[str]] = set()
         self._lock = threading.Lock()
@@ -215,18 +237,32 @@ class XtbCalculator:
             raise Cancelled("search cancelled")
         return proc.returncode == 0
 
+    def _run_key(self, xyz_path: Path, cinp: str | None) -> str:
+        """Return the cache key of one optimisation: every input that can change its result."""
+        doc = {
+            "xyz": hashlib.sha256(xyz_path.read_bytes()).hexdigest(),
+            "constrain": cinp,
+            "charge": self._charge,
+            "uhf": self._uhf,
+            "cycles": self._cycles,
+            "xtb_sha256": self._exe_sha,
+        }
+        return hashlib.sha256(json.dumps(doc, sort_keys=True).encode("utf-8")).hexdigest()
+
     def _relax_one(self, here: Path, xyz: np.ndarray, cinp: str | None) -> RelaxOutcome:
         els = self._els
         here.mkdir(parents=True, exist_ok=True)
         write_xyz_frames(here / "in.xyz", els, [(xyz, "frame")])
         if cinp is not None:
             (here / "c.inp").write_text(cinp, encoding="utf-8")
-        digest = hashlib.sha256((here / "in.xyz").read_bytes()).hexdigest()
+        else:
+            (here / "c.inp").unlink(missing_ok=True)
+        digest = self._run_key(here / "in.xyz", cinp)
         done = here / "done.json"
         if done.is_file():
             try:
                 prev = json.loads(done.read_text(encoding="utf-8"))
-                if prev.get("in_sha256") == digest:
+                if prev.get("key_sha256") == digest:
                     converged = bool(prev["converged"])
                     opt = read_first_frame(here / "xtbopt.xyz", len(els)) if converged else None
                     return RelaxOutcome(opt, prev["energy_eh"], converged, float(prev["wall_s"]))
@@ -278,7 +314,7 @@ class XtbCalculator:
         conv = bool(ok) and (here / "xtbopt.xyz").is_file()
         energy = float(found[-1]) if found else None
         if not self._stop.is_set():  # a cancelled run is not a result: resume must relaunch it
-            payload = {"in_sha256": digest, "energy_eh": energy, "converged": conv, "wall_s": wall}
+            payload = {"key_sha256": digest, "energy_eh": energy, "converged": conv, "wall_s": wall}
             done.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
         opt = read_first_frame(here / "xtbopt.xyz", len(els)) if conv else None
         return RelaxOutcome(opt, energy, conv, wall)
