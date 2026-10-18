@@ -17,14 +17,18 @@ from confflow.execution.confgen_xtb import (
     Cancelled,
     XtbCalculator,
     _constrain_block,
+    _fixed_block,
+    _input_blocks,
     read_first_frame,
     resolve_xtb,
     write_xyz_frames,
 )
 from confflow.science.confgen.calculator import (
+    CAP_FIXED_ATOMS,
     CAP_HESSIAN,
     CAP_RESTRAINED_RELAX,
     DistanceRestraint,
+    FixedAtom,
     RelaxRequest,
 )
 from tests.v4._dg_search_helpers import _write_fake
@@ -100,6 +104,16 @@ def test_info_identity_and_capabilities(tmp_path: Path) -> None:
     assert info.method == "GFN2-xTB"
     assert info.supports(CAP_RESTRAINED_RELAX)
     assert info.supports(CAP_HESSIAN)
+    assert info.supports(CAP_FIXED_ATOMS)
+
+
+def test_fixed_atoms_render_separately_from_distance_restraints() -> None:
+    fixed = (FixedAtom(0, (0.0, 0.0, 0.0)), FixedAtom(3, (1.0, 2.0, 3.0)))
+    assert _fixed_block(fixed) == "$fix\n  atoms: 1, 4\n$end\n"
+    combined = _input_blocks((DistanceRestraint(0, 1, 1.5),), fixed)
+    assert combined is not None
+    assert "$constrain" in combined and "$fix" in combined
+    assert "distance: 1, 2, 1.50000" in combined
 
 
 def test_hessian_without_output_file_is_none(

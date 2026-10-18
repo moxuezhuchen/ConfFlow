@@ -131,10 +131,12 @@ class TopologyAtomModel(ConfgenSpecModel):
     label: StrictStr | None = None
     role: StrictStr = ""
     stereo: StrictStr | None = None
+    formal_charge: StrictInt | None = None
 
 
 class ConfgenTopologyModel(ConfgenSpecModel):
     bonds: list[TypedEdgeModel | tuple[Index, Index]] | None = None
+    reaction_pairs: list[tuple[Index, Index]] | None = None
     atoms: list[TopologyAtomModel] = Field(default_factory=list)
     add_bond: list[TypedEdgeModel | tuple[Index, Index]] | None = None
     del_bond: list[tuple[Index, Index]] | None = None
@@ -170,6 +172,14 @@ class ConfgenSearchModel(ConfgenSpecModel):
     max_cycles: StrictInt = Field(default=1000, ge=1)
     bond_scale: StrictFloat = Field(default=1.25, gt=0)
     fragment_charges: list[FragmentChargeModel] = Field(default_factory=list)
+    freeze_core: list[Index] = Field(default_factory=list)
+    ez_policy: Literal["preserve"] = "preserve"
+
+    @model_validator(mode="after")
+    def check_freeze_core(self) -> ConfgenSearchModel:
+        if len(set(self.freeze_core)) != len(self.freeze_core):
+            raise ValueError("search.freeze_core holds duplicate atom indices")
+        return self
 
 
 class ConfgenToleranceModel(ConfgenSpecModel):

@@ -62,7 +62,15 @@ def test_reembed_keeps_the_core_hand(name: str) -> None:
     for free in ex._free_sets()[:4]:
         for seed in range(1, 7):
             out, _err = explore._reembed_task(
-                (ex.elements, ex.bonds, ex.metal, xyz, frozenset(free), ex.re_pairs, seed, limit)
+                (
+                    ex.graph,
+                    xyz,
+                    frozenset(free),
+                    ex.re_pairs,
+                    seed,
+                    ex.st.fragment_charges,
+                    limit,
+                )
             )
             attempts += 1
             if out is None:

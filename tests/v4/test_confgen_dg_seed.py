@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,6 +20,7 @@ from confflow.science.confgen.dg_seed import (
     _candidate_bonds,
     _perceive_fragment,
     generate_dg_seeds,
+    stable_chemistry_molecule,
 )
 from confflow.science.confgen.graph import (
     AtomRef,
@@ -153,6 +155,7 @@ def test_reference_placement_starts_hold_commanded_geometry() -> None:
         for donor, want in expected:
             gap = abs(float(np.linalg.norm(start[spec.metal_center] - start[donor])) - want)
             assert gap <= 0.05
+    assert graph.reaction_pairs[0] not in _candidate_bonds(graph)
 
 
 def test_rearranged_placements_embed_into_commanded_class() -> None:
@@ -226,7 +229,15 @@ def test_fragment_charges_reported_and_overridable() -> None:
     shared = _shared(True)
     auto = dict(shared.fragment_charges)
     assert dict(_shared(False).fragment_charges) == auto
-    assert sorted(auto.values()) == [-2, -1]
+    # The reaction relation is geometric rather than a stable bond, so the reactant graph has
+    # three components (an additional neutral fragment) instead of incorrectly merging the last
+    # two into the metal-containing ligand.
+    assert sorted(auto.values()) == [-2, -1, 0]
+    first, second = graph.reaction_pairs[0]
+    fragment_for = {
+        atom: fragment for fragment, _charge in shared.fragment_charges for atom in fragment
+    }
+    assert fragment_for[first] != fragment_for[second]
     donors_n = [d for d in spec.donor_indices if graph.atoms[d].element == "N"]
     host = next(ix for ix, _ in shared.fragment_charges if all(d in ix for d in donors_n))
     assert auto[host] == -2
@@ -239,6 +250,26 @@ def test_fragment_charges_reported_and_overridable() -> None:
     summary = forced.to_dict()
     assert summary["requested"] == 2 and summary["returned"] == len(forced.coords)
     json.dumps(summary)
+
+
+def test_complete_stable_chemistry_declarations_are_authoritative() -> None:
+    graph, ref = _organic_graph("C")
+    atoms = tuple(AtomRef(atom.index, atom.element, formal_charge=0) for atom in graph.atoms)
+    edges = tuple(TypedEdge(edge.a, edge.b, EdgeType.COVALENT, 1.0) for edge in graph.edges)
+    declared = TypedGraph(atoms, edges, total_charge=0, multiplicity=1)
+    _mol, _fragments, mode, note = stable_chemistry_molecule(declared, ref)
+    assert mode == "explicit_stable_graph"
+    assert note == ""
+    result = generate_dg_seeds(declared, None, ref, [], "ignored", DGSeedSettings(1, 9))
+    assert result.chemistry_mode == "explicit_stable_graph"
+
+    partial = replace(
+        declared,
+        atoms=(AtomRef(0, "C", formal_charge=0),)
+        + tuple(AtomRef(atom.index, atom.element) for atom in declared.atoms[1:]),
+    )
+    with pytest.raises(DGSeedError, match="only part"):
+        stable_chemistry_molecule(partial, ref)
 
 
 def test_invalid_inputs_fail_closed() -> None:

@@ -9,6 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from confflow.science.confgen.graph import AtomRef, EdgeType, TypedEdge, TypedGraph
 from confflow.science.confgen.identity import E_TOL, HARTREE_TO_KCAL, R_TOL, Identity, MinimaPool
 from confflow.science.confgen.rotors import Rotor, rotate
 from tests.v4._dg_search_helpers import _embed, build_topology
@@ -158,6 +159,84 @@ def test_identity_classes_group_symmetric_carbons(butane) -> None:
     assert idn.classes[0] == idn.classes[3]
     assert idn.classes[1] == idn.classes[2]
     assert idn.classes[0] != idn.classes[1]
+
+
+def test_automorphisms_preserve_bond_order_and_typed_edge_semantics() -> None:
+    atoms = tuple(AtomRef(i, "C") for i in range(4))
+    graph = TypedGraph(
+        atoms,
+        (
+            TypedEdge(0, 1, EdgeType.COVALENT, 2.0),
+            TypedEdge(2, 3, EdgeType.COORDINATION),
+        ),
+    )
+    idn = Identity(graph)
+    assert idn.full[0][1] == "COVALENT@2"
+    # Endpoint flips remain legal, but the covalent double edge cannot exchange with the
+    # coordination edge even though the old RDKit bond encoding used DOUBLE for both.
+    autos = idn.automorphisms()
+    assert autos is not None and len(autos) == 4
+    kept = [int(atom) for atom in idn.kept]
+    for row in autos:
+        mapping = {kept[pos]: kept[int(dst)] for pos, dst in enumerate(row)}
+        assert idn.full[mapping[0]][mapping[1]] == "COVALENT@2"
+        assert idn.full[mapping[2]][mapping[3]] == "COORDINATION"
+
+
+def test_fixed_atoms_and_formal_charge_are_identity_colors() -> None:
+    bonded = TypedGraph(
+        (AtomRef(0, "C"), AtomRef(1, "C")),
+        (TypedEdge(0, 1, EdgeType.COVALENT),),
+    )
+    fixed = Identity(bonded, fixed_atoms=(0,))
+    autos = fixed.automorphisms()
+    assert autos is not None and len(autos) == 1
+    assert fixed.classes[0] != fixed.classes[1]
+    with pytest.raises(ValueError, match="out of range"):
+        Identity(bonded, fixed_atoms=(2,))
+
+    charged = TypedGraph(
+        (AtomRef(0, "O", formal_charge=0), AtomRef(1, "O", formal_charge=-1)),
+        (),
+        total_charge=-1,
+        multiplicity=1,
+    )
+    identity = Identity(charged)
+    autos = identity.automorphisms()
+    assert autos is not None and len(autos) == 1
+
+
+def test_graph_witness_preserves_charge_bond_order_and_reaction_pairs() -> None:
+    charged = TypedGraph(
+        atoms=(AtomRef(0, "C", formal_charge=1), AtomRef(1, "C", formal_charge=-1)),
+        edges=(TypedEdge(0, 1, EdgeType.COVALENT, bond_order=1.0),),
+        total_charge=0,
+    )
+    report = charged.validate_witness((1, 0))
+    assert report.element_preserving and report.typed_edge_preserving
+    assert not report.chemical_metadata_preserving and not report.topology_valid
+
+    bond_order_graph = TypedGraph(
+        atoms=tuple(AtomRef(index, "C") for index in range(4)),
+        edges=(
+            TypedEdge(0, 1, EdgeType.COVALENT, bond_order=1.0),
+            TypedEdge(2, 3, EdgeType.COVALENT, bond_order=2.0),
+        ),
+    )
+    report = bond_order_graph.validate_witness((2, 3, 0, 1))
+    assert report.element_preserving and report.typed_edge_preserving
+    assert not report.chemical_metadata_preserving
+
+    reaction_graph = TypedGraph(
+        atoms=tuple(AtomRef(index, "C") for index in range(4)),
+        edges=(
+            TypedEdge(0, 1, EdgeType.COVALENT, bond_order=1.0),
+            TypedEdge(2, 3, EdgeType.COVALENT, bond_order=1.0),
+        ),
+        reaction_pairs=((0, 2),),
+    )
+    report = reaction_graph.validate_witness((1, 0, 3, 2))
+    assert report.typed_edge_preserving and not report.chemical_metadata_preserving
 
 
 def test_automorphisms_keep_edge_kinds() -> None:

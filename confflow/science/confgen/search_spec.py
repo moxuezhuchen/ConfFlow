@@ -85,7 +85,7 @@ _TOP_LEVEL_KEYS = frozenset(
     }
 )
 
-_TOPO_KEYS = frozenset({"bonds", "add_bond", "del_bond", "atoms"})
+_TOPO_KEYS = frozenset({"bonds", "add_bond", "del_bond", "atoms", "reaction_pairs"})
 
 _COORD_KEYS = frozenset({"metal_center", "binding_sites", "shapes", "constraints"})
 
@@ -106,7 +106,7 @@ def _has_indices(raw: Mapping[str, Any]) -> bool:
     """Return True when any v4 index-bearing section carries content."""
     topology = raw.get("topology")
     if isinstance(topology, Mapping):
-        for key in ("bonds", "add_bond", "del_bond", "atoms"):
+        for key in ("bonds", "add_bond", "del_bond", "atoms", "reaction_pairs"):
             entries = topology.get(key)
             if isinstance(entries, (list, tuple)) and len(entries) > 0:
                 return True
@@ -183,13 +183,15 @@ def normalize_search_spec(raw: Mapping[str, Any]) -> dict[str, Any]:
     if unknown_topo:
         raise ValueError(f"spec topology holds unknown keys {unknown_topo}")
     topo: dict[str, Any] = {}
-    for key in ("bonds", "add_bond", "del_bond"):
+    for key in ("bonds", "add_bond", "del_bond", "reaction_pairs"):
         if topology.get(key) is not None:
             pairs = topology[key]
             if isinstance(pairs, (str, bytes)) or not isinstance(pairs, Sequence):
                 raise ValueError(f"spec topology.{key} must be a list of index entries")
             validated: list[Any] = []
             for index, item in enumerate(pairs):
+                if key == "reaction_pairs" and isinstance(item, Mapping):
+                    raise ValueError(f"spec topology.reaction_pairs[{index}] must be an index pair")
                 shape = validate_topo_entry(item, path=f"spec topology.{key}[{index}]")
                 validated.append(
                     convert_topo_entry(shape, base=base, path=f"spec topology.{key}[{index}]")
@@ -202,16 +204,19 @@ def normalize_search_spec(raw: Mapping[str, Any]) -> dict[str, Any]:
         converted_decls: list[dict[str, Any]] = []
         for index, item in enumerate(declarations):
             shape = validate_atom_declaration(item, path=f"spec topology.atoms[{index}]")
-            converted_decls.append(
-                {
-                    "index": convert_index(
-                        shape["index"], base=base, path=f"spec topology.atoms[{index}].index"
-                    ),
-                    "label": shape.get("label"),
-                    "role": shape.get("role", ""),
-                    "stereo": shape.get("stereo"),
-                }
-            )
+            declaration = {
+                "index": convert_index(
+                    shape["index"], base=base, path=f"spec topology.atoms[{index}].index"
+                ),
+                "label": shape.get("label"),
+                "role": shape.get("role", ""),
+                "stereo": shape.get("stereo"),
+            }
+            # Preserve the legacy normalized wire exactly when the new
+            # chemistry metadata was not declared by the input.
+            if "formal_charge" in item:
+                declaration["formal_charge"] = shape.get("formal_charge")
+            converted_decls.append(declaration)
         topo["atoms"] = converted_decls
     if "bonds" in topo and ("add_bond" in topo or "del_bond" in topo):
         raise ValueError(

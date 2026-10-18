@@ -19,7 +19,7 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -31,6 +31,7 @@ __all__ = [
     "DGSeedResult",
     "DGSeedSettings",
     "generate_dg_seeds",
+    "stable_chemistry_molecule",
 ]
 
 #: Charge trial order for automatic fragment bond perception.
@@ -102,6 +103,7 @@ class DGSeedSettings:
     fragment_charges: tuple[tuple[int, int], ...] = ()
     timeout_seconds: int = 0
     first_start: int = 0
+    freeze_core: tuple[int, ...] = ()
 
 
 #: Shared default settings (frozen, safe to share across calls).
@@ -116,6 +118,9 @@ class DGSeedResult:
     requested: int
     fragment_charges: tuple[tuple[tuple[int, ...], int], ...]
     stereo_centers: tuple[int, ...] = ()
+    chemistry_mode: str = "perceived_stable_graph"
+    chemistry_note: str = ""
+    embedding_relaxed_centers: tuple[int, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-compatible summary (no arrays).
@@ -132,18 +137,75 @@ class DGSeedResult:
                 [list(indices), int(charge)] for indices, charge in self.fragment_charges
             ],
             "stereo_centers": [int(c) for c in self.stereo_centers],
+            "chemistry_mode": self.chemistry_mode,
+            "chemistry_note": self.chemistry_note,
+            "embedding_relaxed_centers": list(self.embedding_relaxed_centers),
         }
 
 
 def _candidate_bonds(graph: TypedGraph) -> set[tuple[int, int]]:
-    """Collect single-bond candidates (covalent plus reaction edges/pairs)."""
+    """Return only stable covalent connectivity for valence/stereo perception."""
     bonds: set[tuple[int, int]] = set()
     for edge in graph.edges:
-        if edge.type in (EdgeType.COVALENT, EdgeType.FORMING, EdgeType.BREAKING):
+        if edge.type is EdgeType.COVALENT:
             bonds.add((min(edge.a, edge.b), max(edge.a, edge.b)))
-    for first, second in graph.reaction_pairs:
-        bonds.add((min(int(first), int(second)), max(int(first), int(second))))
     return bonds
+
+
+def _reaction_pairs(graph: TypedGraph) -> set[tuple[int, int]]:
+    """Collect reaction geometry relations independently of stable connectivity."""
+    pairs = {(min(int(a), int(b)), max(int(a), int(b))) for a, b in graph.reaction_pairs}
+    for edge in graph.edges:
+        if edge.type in (EdgeType.FORMING, EdgeType.BREAKING):
+            pairs.add((min(edge.a, edge.b), max(edge.a, edge.b)))
+    return pairs
+
+
+def embedding_molecule(
+    graph: TypedGraph, molecule: Any, reference: np.ndarray, fixed: Sequence[int] = ()
+) -> tuple[Any, tuple[int, ...]]:
+    """Copy stable chemistry for ETKDG, preserving all non-conflicting stereo constraints.
+
+    Reaction ZERO edges are embedding hints only. A reactive tetrahedral center outside its
+    neighbor tetrahedron cannot satisfy ETKDG's ordinary center-volume condition. Its atom tag
+    is redundant only when the center and all four stable neighbors are exactly pinned; remove
+    that tag on this copy alone and keep the independent output stereo audit.
+    """
+    from rdkit import Chem
+
+    builder = Chem.RWMol(molecule)
+    reactions = _reaction_pairs(graph)
+    reactive = {i for pair in reactions for i in pair}
+    pinned = set(fixed)
+    relaxed = []
+    for atom in builder.GetAtoms():
+        center = atom.GetIdx()
+        peers = [n.GetIdx() for n in atom.GetNeighbors()]
+        if (
+            center not in reactive
+            or center not in pinned
+            or len(peers) != 4
+            or not set(peers).issubset(pinned)
+            or atom.GetChiralTag()
+            not in (Chem.ChiralType.CHI_TETRAHEDRAL_CW, Chem.ChiralType.CHI_TETRAHEDRAL_CCW)
+        ):
+            continue
+        matrix = np.vstack((np.asarray(reference)[peers].T, np.ones(4)))
+        try:
+            weights = np.linalg.solve(matrix, np.append(reference[center], 1.0))
+            nonstandard = bool(np.min(weights) < -1e-6)
+        except np.linalg.LinAlgError:
+            nonstandard = True
+        if nonstandard:
+            atom.SetChiralTag(Chem.ChiralType.CHI_UNSPECIFIED)
+            relaxed.append(center)
+    for first, second in sorted(reactions):
+        if builder.GetBondBetweenAtoms(first, second) is None:
+            builder.AddBond(first, second, Chem.BondType.ZERO)
+    result = builder.GetMol()
+    result.UpdatePropertyCache(strict=False)
+    Chem.FastFindRings(result)
+    return result, tuple(relaxed)
 
 
 def _split_fragments(
@@ -201,6 +263,14 @@ def _validate_inputs(
         raise DGSeedError(f"reference shape {ref.shape} needs {(graph.natoms, 3)}")
     if not bool(np.all(np.isfinite(ref))):
         raise DGSeedError("reference geometry must hold only finite values")
+    fixed = tuple(settings.freeze_core)
+    if len(set(fixed)) != len(fixed):
+        raise DGSeedError("freeze_core contains duplicate atom indices")
+    for index in fixed:
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise DGSeedError(f"freeze_core index {index!r} is not an integer")
+        if not 0 <= index < graph.natoms:
+            raise DGSeedError(f"freeze_core index {index!r} is out of range")
     if spec is None:
         if graph.metal_center is not None:
             raise DGSeedError("graph holds a metal center but no coordination spec was given")
@@ -251,7 +321,7 @@ def _validate_inputs(
     return ref, donors, [int(value) for value in order], int(metal), template
 
 
-def _charge_overrides(natoms: int, entries: tuple[tuple[int, int], ...]) -> dict[int, int]:
+def _charge_overrides(natoms: int, entries: Sequence[tuple[int, int]]) -> dict[int, int]:
     """Normalize fragment charge overrides fail-closed."""
     override: dict[int, int] = {}
     try:
@@ -380,6 +450,211 @@ def _embed_per_start(
     return tuple(found)
 
 
+def _declared_bond_type(Chem: Any, order: float) -> Any:
+    """Translate supported explicit stable bond orders to RDKit bond types."""
+    mapping = {
+        1.0: Chem.BondType.SINGLE,
+        1.5: Chem.BondType.AROMATIC,
+        2.0: Chem.BondType.DOUBLE,
+        3.0: Chem.BondType.TRIPLE,
+    }
+    try:
+        return mapping[float(order)]
+    except KeyError as exc:
+        raise DGSeedError(
+            f"stable graph has unsupported explicit bond order {order!r}; "
+            "DG supports 1, 1.5, 2, and 3"
+        ) from exc
+
+
+def _declared_stable_chemistry(
+    graph: TypedGraph,
+    bonds: set[tuple[int, int]],
+    elements: list[str],
+    ref: np.ndarray,
+    Chem: Any,
+    Point3D: Any,
+    override: dict[int, int],
+) -> (
+    tuple[
+        Any,
+        dict[tuple[int, int], Any],
+        dict[int, int],
+        tuple[tuple[tuple[int, ...], int], ...],
+        str,
+    ]
+    | None
+):
+    """Build RDKit chemistry only from complete, explicit stable-graph declarations.
+
+    Partial bond-order or formal-charge annotations fail closed. With no such annotations the
+    legacy geometry perception path remains available, but its mode is reported to the caller.
+    """
+    stable_edges = [edge for edge in graph.edges if edge.type is EdgeType.COVALENT]
+    declared_charges = [atom.formal_charge for atom in graph.atoms]
+    has_atom_charges = any(value is not None for value in declared_charges)
+    complete_atom_charges = all(value is not None for value in declared_charges)
+    if not has_atom_charges:
+        return None
+    if not complete_atom_charges:
+        raise DGSeedError(
+            "stable chemistry declares formal charges for only part of the atom set; "
+            "provide a formal charge for every atom or remove the partial declarations"
+        )
+
+    missing: list[str] = []
+    if any(atom.formal_charge is None for atom in graph.atoms):
+        missing.append("formal_charge for every atom")
+    if any(edge.bond_order is None for edge in stable_edges):
+        missing.append("bond_order for every stable covalent edge")
+    if graph.total_charge is None:
+        missing.append("total_charge")
+    if graph.multiplicity is None:
+        missing.append("multiplicity")
+    if missing:
+        raise DGSeedError(
+            "stable chemistry declarations are incomplete; provide " + ", ".join(missing)
+        )
+    if graph.multiplicity != 1:
+        raise DGSeedError(
+            f"explicit stable-graph DG chemistry supports singlet multiplicity 1, "
+            f"got {graph.multiplicity}"
+        )
+    charges = {atom.index: cast(int, atom.formal_charge) for atom in graph.atoms}
+    if sum(charges.values()) != graph.total_charge:
+        raise DGSeedError(
+            "stable-graph formal charges sum to "
+            f"{sum(charges.values())}, not declared total_charge {graph.total_charge}"
+        )
+    orders = {
+        edge.pair: _declared_bond_type(Chem, cast(float, edge.bond_order)) for edge in stable_edges
+    }
+    for fragment in _split_fragments(graph.natoms, graph.metal_center, bonds):
+        named = {override[index] for index in fragment if index in override}
+        fragment_charge = sum(charges[index] for index in fragment)
+        if named and (len(named) != 1 or next(iter(named)) != fragment_charge):
+            raise DGSeedError(
+                f"fragment {fragment} charge override conflicts with explicit formal charges"
+            )
+
+    builder = Chem.RWMol()
+    for index, element in enumerate(elements):
+        atom = Chem.Atom(element)
+        atom.SetFormalCharge(charges[index])
+        atom.SetNoImplicit(True)
+        builder.AddAtom(atom)
+    for pair, bond_type in sorted(orders.items()):
+        builder.AddBond(pair[0], pair[1], bond_type)
+        if bond_type == Chem.BondType.AROMATIC:
+            builder.GetAtomWithIdx(pair[0]).SetIsAromatic(True)
+            builder.GetAtomWithIdx(pair[1]).SetIsAromatic(True)
+            builder.GetBondBetweenAtoms(*pair).SetIsAromatic(True)
+    conformer = Chem.Conformer(graph.natoms)
+    for index in range(graph.natoms):
+        conformer.SetAtomPosition(index, Point3D(*ref[index]))
+    builder.AddConformer(conformer, assignId=True)
+    mol = builder.GetMol()
+    try:
+        mol.UpdatePropertyCache(strict=True)
+        flags = Chem.SanitizeFlags.SANITIZE_ALL ^ Chem.SanitizeFlags.SANITIZE_PROPERTIES
+        Chem.SanitizeMol(mol, sanitizeOps=flags)
+    except Exception as exc:
+        raise DGSeedError(f"explicit stable chemistry is not RDKit-sanitizable: {exc}") from exc
+    radicals = [atom.GetIdx() for atom in mol.GetAtoms() if atom.GetNumRadicalElectrons() != 0]
+    if radicals:
+        raise DGSeedError(
+            "explicit stable chemistry leaves unassigned radical electrons on atoms "
+            f"{radicals}; provide a supported closed-shell singlet graph"
+        )
+    Chem.AssignStereochemistryFrom3D(mol)
+    used = tuple(
+        (tuple(fragment), sum(charges[index] for index in fragment))
+        for fragment in _split_fragments(graph.natoms, graph.metal_center, bonds)
+    )
+    return mol, orders, charges, used, "explicit_stable_graph"
+
+
+def stable_chemistry_molecule(
+    graph: TypedGraph,
+    reference: np.ndarray,
+    fragment_charges: Sequence[tuple[int, int]] = (),
+) -> tuple[Any, tuple[tuple[tuple[int, ...], int], ...], str, str]:
+    """Build the shared stable-graph molecule used for DG and stereo perception.
+
+    Complete formal-charge, stable bond-order, total-charge, and multiplicity declarations are
+    authoritative. Older inputs without per-atom charges retain geometry-based perception and
+    return an explicit note describing the inferred path.
+    """
+    ref = np.asarray(reference, dtype=float)
+    if ref.shape != (graph.natoms, 3) or not bool(np.all(np.isfinite(ref))):
+        raise DGSeedError("reference geometry must hold one finite coordinate triple per atom")
+    try:
+        from rdkit import Chem
+        from rdkit.Geometry import Point3D
+    except ImportError as exc:
+        raise DGSeedError("RDKit is unavailable, cannot perceive stable chemistry") from exc
+
+    bonds = _candidate_bonds(graph)
+    elements = [atom.element for atom in graph.atoms]
+    override = _charge_overrides(graph.natoms, fragment_charges)
+    declared = _declared_stable_chemistry(graph, bonds, elements, ref, Chem, Point3D, override)
+    if declared is not None:
+        mol, _orders, _charges, declared_used, mode = declared
+        return mol, declared_used, mode, ""
+
+    orders: dict[tuple[int, int], Any] = {}
+    charges: dict[int, int] = {}
+    used: list[tuple[tuple[int, ...], int]] = []
+    missing: list[str] = []
+    if any(edge.type is EdgeType.COVALENT and edge.bond_order is None for edge in graph.edges):
+        missing.append("stable covalent bond orders")
+    if any(atom.formal_charge is None for atom in graph.atoms):
+        missing.append(
+            "complete per-atom formal charges (bond-order metadata alone is insufficient)"
+        )
+    if graph.total_charge is None:
+        missing.append("total charge")
+    if graph.multiplicity is None:
+        missing.append("multiplicity")
+    note = (
+        "geometry-based bond-order perception used on the stable covalent graph; missing "
+        + ", ".join(missing)
+    )
+    for frag in _split_fragments(graph.natoms, graph.metal_center, bonds):
+        named = {override[a] for a in frag if a in override}
+        if len(named) > 1:
+            raise DGSeedError(f"fragment {frag} holds conflicting charge overrides")
+        explicit = bool(named)
+        trials = (next(iter(named)),) if named else _CHARGE_ORDER
+        piece_orders, piece_charges, picked = _perceive_fragment(
+            frag, bonds, elements, ref, trials, explicit=explicit
+        )
+        orders.update(piece_orders)
+        charges.update(piece_charges)
+        used.append((tuple(frag), picked))
+
+    try:
+        builder = Chem.RWMol()
+        for index, element in enumerate(elements):
+            atom = Chem.Atom(element)
+            atom.SetFormalCharge(charges.get(index, 0))
+            atom.SetNoImplicit(True)
+            builder.AddAtom(atom)
+        for first, second in sorted(orders):
+            builder.AddBond(first, second, orders[(first, second)])
+        reference_conf = Chem.Conformer(graph.natoms)
+        for index in range(graph.natoms):
+            reference_conf.SetAtomPosition(index, Point3D(*ref[index]))
+        builder.AddConformer(reference_conf, assignId=True)
+        mol = builder.GetMol()
+        mol.UpdatePropertyCache(strict=False)
+        flags = Chem.SanitizeFlags.SANITIZE_ALL ^ Chem.SanitizeFlags.SANITIZE_PROPERTIES
+        Chem.SanitizeMol(mol, sanitizeOps=flags)
+    except Exception as exc:
+        raise DGSeedError(f"Failed to assemble the RDKit molecule: {exc}") from exc
+    return mol, tuple(used), "perceived_stable_graph", note
+
+
 def generate_dg_seeds(
     graph: TypedGraph,
     spec: CoordinationSpec | None,
@@ -423,7 +698,6 @@ def generate_dg_seeds(
         graph, spec, reference, placement, shape, settings
     )
     requested = int(settings.count)
-    override = _charge_overrides(graph.natoms, settings.fragment_charges)
     try:
         from rdkit import Chem
         from rdkit.Chem import rdDistGeom
@@ -432,73 +706,53 @@ def generate_dg_seeds(
     except ImportError as exc:
         raise DGSeedError("RDKit is unavailable, cannot generate DG seeds") from exc
 
-    bonds = _candidate_bonds(graph)
-    elements = [atom.element for atom in graph.atoms]
-    orders: dict[tuple[int, int], Any] = {}
-    charges: dict[int, int] = {}
-    used: list[tuple[tuple[int, ...], int]] = []
-    for frag in _split_fragments(graph.natoms, metal, bonds):
-        named = {override[a] for a in frag if a in override}
-        if len(named) > 1:
-            raise DGSeedError(f"fragment {frag} holds conflicting charge overrides")
-        explicit = bool(named)
-        trials = (next(iter(named)),) if named else _CHARGE_ORDER
-        piece_orders, piece_charges, picked = _perceive_fragment(
-            frag, bonds, elements, ref, trials, explicit=explicit
-        )
-        orders.update(piece_orders)
-        charges.update(piece_charges)
-        used.append((tuple(frag), picked))
+    mol, used, chemistry_mode, chemistry_note = stable_chemistry_molecule(
+        graph, ref, settings.fragment_charges
+    )
 
-    try:
-        builder = Chem.RWMol()
-        for index in range(graph.natoms):
-            atom = Chem.Atom(elements[index])
-            atom.SetFormalCharge(charges.get(index, 0))
-            atom.SetNoImplicit(True)
-            builder.AddAtom(atom)
-        for first, second in sorted(orders):
-            builder.AddBond(first, second, orders[(first, second)])
-        reference_conf = Chem.Conformer(graph.natoms)
-        for index in range(graph.natoms):
-            reference_conf.SetAtomPosition(index, Point3D(*ref[index]))
-        builder.AddConformer(reference_conf, assignId=True)
-        mol = builder.GetMol()
-        mol.UpdatePropertyCache(strict=False)
-        flags = Chem.SanitizeFlags.SANITIZE_ALL ^ Chem.SanitizeFlags.SANITIZE_PROPERTIES
-        Chem.SanitizeMol(mol, sanitizeOps=flags)
-        Chem.AssignStereochemistryFrom3D(mol)
-        stereo = tuple(
-            sorted(
-                index
-                for index in range(graph.natoms)
-                if mol.GetAtomWithIdx(index).GetChiralTag()
-                in (
-                    Chem.rdchem.ChiralType.CHI_TETRAHEDRAL_CW,
-                    Chem.rdchem.ChiralType.CHI_TETRAHEDRAL_CCW,
-                )
+    Chem.AssignStereochemistryFrom3D(mol)
+    stereo = tuple(
+        sorted(
+            index
+            for index in range(graph.natoms)
+            if mol.GetAtomWithIdx(index).GetChiralTag()
+            in (
+                Chem.rdchem.ChiralType.CHI_TETRAHEDRAL_CW,
+                Chem.rdchem.ChiralType.CHI_TETRAHEDRAL_CCW,
             )
         )
-    except Exception as exc:
-        raise DGSeedError(f"Failed to assemble the RDKit molecule: {exc}") from exc
+    )
 
     targets: dict[int, np.ndarray] = {}
     if metal is not None and template is not None:
         vertices = np.asarray(template.vertices, dtype=float)
         unit = vertices / np.linalg.norm(vertices, axis=1, keepdims=True)
-        targets[metal] = np.zeros(3)
+        targets[metal] = ref[metal].copy()
         for slot, donor in enumerate(donors):
             radius = float(np.linalg.norm(ref[metal] - ref[donor]))
-            targets[donor] = radius * unit[order[slot]]
+            targets[donor] = targets[metal] + radius * unit[order[slot]]
+    reactions = _reaction_pairs(graph)
+    geometry_ref = ref.copy()
+    rotation = np.eye(3)
+    if targets:
+        core_indices = np.asarray(sorted(targets), dtype=int)
+        source = ref[core_indices]
+        destination = np.asarray([targets[int(index)] for index in core_indices])
+        source_center = source.mean(axis=0)
+        destination_center = destination.mean(axis=0)
+        u, _singular, vt = np.linalg.svd(
+            (source - source_center).T @ (destination - destination_center)
+        )
+        correction = np.eye(3)
+        correction[2, 2] = 1.0 if np.linalg.det(u @ vt) >= 0 else -1.0
+        rotation = u @ correction @ vt
+        geometry_ref = (ref - source_center) @ rotation + destination_center
+        for index, xyz in targets.items():
+            geometry_ref[index] = xyz
     neighbors: dict[int, set[int]] = {i: set() for i in range(graph.natoms)}
     for atom in mol.GetAtoms():
         for peer in atom.GetNeighbors():
             neighbors[atom.GetIdx()].add(peer.GetIdx())
-    reactions = {(min(int(a), int(b)), max(int(a), int(b))) for a, b in graph.reaction_pairs}
-    for edge in graph.edges:
-        if edge.type in (EdgeType.FORMING, EdgeType.BREAKING):
-            reactions.add((min(edge.a, edge.b), max(edge.a, edge.b)))
-
     bounds = np.asarray(rdDistGeom.GetMoleculeBoundsMatrix(mol), dtype=float)
     if shape == INPUT_SHAPE and metal is not None:
         for peer in range(graph.natoms):
@@ -520,17 +774,27 @@ def generate_dg_seeds(
         bounds[high, low] = max(0.0, dist - tol)
 
     def _ref_dist(first: int, second: int) -> float:
-        return float(np.linalg.norm(ref[first] - ref[second]))
+        return float(np.linalg.norm(geometry_ref[first] - geometry_ref[second]))
 
     for first, second in sorted(reactions):
-        _set_pair(first, second, _ref_dist(first, second), settings.forming_tolerance)
+        _set_pair(
+            first,
+            second,
+            float(np.linalg.norm(ref[first] - ref[second])),
+            settings.forming_tolerance,
+        )
     for first, second in sorted(reactions):
         for peer in sorted(neighbors[second]):
             if peer != first:
-                _set_pair(first, peer, _ref_dist(first, peer), settings.forming_neighbor_tolerance)
+                _set_pair(
+                    first,
+                    peer,
+                    float(np.linalg.norm(ref[first] - ref[peer])),
+                    settings.forming_neighbor_tolerance,
+                )
         for peer in sorted(neighbors[first]):
             if peer != second:
-                dist = _ref_dist(second, peer)
+                dist = float(np.linalg.norm(ref[second] - ref[peer]))
                 _set_pair(second, peer, dist, settings.forming_neighbor_tolerance)
     donor_set = set(donors)
     for donor in donors:
@@ -562,12 +826,31 @@ def generate_dg_seeds(
     params.useSmallRingTorsions = settings.small_ring_torsions
     params.timeout = settings.timeout_seconds
     params.SetBoundsMat(bounds)
-    if core:
-        params.SetCoordMap({i: Point3D(*targets[i]) for i in core})
-    starts = _embed_per_start(mol, requested, params, int(settings.first_start))
+    coord_map = {i: np.asarray(xyz, dtype=float) for i, xyz in targets.items()}
+    for index in settings.freeze_core:
+        point = ref[index]
+        if index in coord_map and not np.allclose(coord_map[index], point, rtol=0.0, atol=1.0e-4):
+            raise DGSeedError(
+                f"freeze_core atom {index} conflicts with the commanded coordination placement"
+            )
+        coord_map[index] = point
+    if coord_map:
+        params.SetCoordMap({i: Point3D(*map(float, xyz)) for i, xyz in coord_map.items()})
+    embedding_mol, relaxed_centers = embedding_molecule(graph, mol, ref, settings.freeze_core)
+    starts = _embed_per_start(embedding_mol, requested, params, int(settings.first_start))
+    from .stereo import double_bond_states, preserves_double_bonds
+
+    try:
+        states = double_bond_states(mol, ref)
+    except ValueError as exc:
+        raise DGSeedError(str(exc)) from exc
+    starts = tuple(x for x in starts if preserves_double_bonds(x, states))
     return DGSeedResult(
         coords=starts,
         requested=requested,
         fragment_charges=tuple(used),
         stereo_centers=stereo,
+        chemistry_mode=chemistry_mode,
+        chemistry_note=chemistry_note,
+        embedding_relaxed_centers=relaxed_centers,
     )

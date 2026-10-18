@@ -17,6 +17,7 @@ import pytest
 
 from confflow.science.confgen import explore, search
 from confflow.science.confgen.calculator import (
+    CAP_FIXED_ATOMS,
     CAP_HESSIAN,
     CalculatorInfo,
     RelaxOutcome,
@@ -139,6 +140,81 @@ def test_hessian_capability_enables_low_mode_moves() -> None:
     assert run.stats["hessians"] > 0
     assert calc.hessian_calls == run.stats["hessians"]
     assert run.stats["relaxations"] <= 40
+
+
+def test_fixed_core_is_required_checked_through_hessian_and_release() -> None:
+    graph, ref = _butane()
+    unsupported = _FakeCalc()
+    with pytest.raises(search.SearchError, match="does not declare fixed-atom support"):
+        explore.explore(graph, None, ref, None, _settings(freeze_core=(0,)), unsupported, map)
+    assert not unsupported.requests
+
+    class FixedCalc(_FakeCalc):
+        def __init__(self) -> None:
+            super().__init__(frozenset({CAP_FIXED_ATOMS, CAP_HESSIAN}))
+            self.hessian_requests: list[RelaxRequest] = []
+
+        def hessian(self, request):
+            self.hessian_requests.append(request)
+            return super().hessian(request)
+
+    hessian_calc = FixedCalc()
+    hessian_run = explore.explore(
+        graph,
+        None,
+        ref,
+        None,
+        _settings(budget=60, lowmode_gate=2.0, freeze_core=(0,), release=False),
+        hessian_calc,
+        map,
+    )
+    assert hessian_calc.hessian_requests
+    assert all(q.fixed_atoms[0].index == 0 for q in hessian_calc.hessian_requests)
+    assert all(q.fixed_atoms[0].index == 0 for q in hessian_calc.requests)
+    assert all(q.coords[0].tolist() == ref[0].tolist() for q in hessian_calc.requests)
+    assert hessian_run.stats["fixed_core"][
+        "output_displacement_tolerance_angstrom"
+    ] == pytest.approx(1e-5)
+
+    graph, spec, ref = _pt_toy()
+    release_calc = FixedCalc()
+    explore.explore(
+        graph,
+        spec,
+        ref,
+        _SHAPE,
+        _settings(budget=60, freeze_core=(0,), release=True),
+        release_calc,
+        map,
+    )
+    assert any(q.key.startswith("release/") for q in release_calc.requests)
+    assert all(q.fixed_atoms[0].index == 0 for q in release_calc.requests)
+
+
+def test_search_rejects_a_backend_that_claims_fixed_support_but_moves_the_core() -> None:
+    graph, ref = _butane()
+
+    class DriftingCalc(_FakeCalc):
+        def __init__(self) -> None:
+            super().__init__(frozenset({CAP_FIXED_ATOMS}))
+
+        def relax_many(self, requests):
+            outcomes = super().relax_many(requests)
+            return [
+                RelaxOutcome(
+                    coords=outcome.coords
+                    + np.array([[1e-3, 0.0, 0.0]] + [[0.0, 0.0, 0.0]] * (len(ref) - 1)),
+                    energy_eh=outcome.energy_eh,
+                    converged=True,
+                )
+                for outcome in outcomes
+            ]
+
+    run = explore.explore(
+        graph, None, ref, None, _settings(budget=1, freeze_core=(0,)), DriftingCalc(), map
+    )
+    assert run.stats["failures"]["core_displacement"] == 1
+    assert run.stats["outcome_class"] == "core_displacement"
 
 
 def test_release_false_publishes_from_restrained_pool() -> None:

@@ -261,6 +261,21 @@ def _run(
             raise DomainError(
                 f"confgen search fragment charge atom {atom + base} is out of range for {natoms} atoms"
             )
+    raw_freeze_core = section.get("freeze_core", []) if isinstance(section, Mapping) else []
+    if not isinstance(raw_freeze_core, (list, tuple)):
+        raise DomainError("confgen search freeze_core must be a list of atom indices")
+    freeze_core: list[int] = []
+    for value in raw_freeze_core:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise DomainError(f"confgen search freeze_core index must be an integer, got {value!r}")
+        index = value - base
+        if index < 0 or index >= natoms:
+            raise DomainError(
+                f"confgen search freeze_core atom {value} is out of range for {natoms} atoms"
+            )
+        if index in freeze_core:
+            raise DomainError(f"confgen search freeze_core repeats atom {value}")
+        freeze_core.append(index)
     charge, multiplicity = driving.charge, driving.multiplicity
     defaults = getattr(context, "scientific_defaults", None)
     if charge is None and defaults is not None:
@@ -309,13 +324,17 @@ def _run(
     settings_doc["starts"] = starts
     settings_doc["seed"] = int(seed)
     settings_doc["fragment_charges"] = [[a, q] for a, q in frag]
+    settings_doc["freeze_core"] = freeze_core
     walltime: float | None = binding.walltime_seconds if binding is not None else None
     walltime = float(walltime) if walltime else None
     job_path = os.path.join(attempt, "search_job.json")
+    graph_doc = science.graph.to_mapping(convention="internal0")
+    graph_doc["total_charge"] = int(charge)
+    graph_doc["multiplicity"] = int(multiplicity)
     job_doc = {
         "atoms": list(driving.atoms),
         "reference": [[float(x), float(y), float(z)] for x, y, z in driving.coordinates],
-        "graph": science.graph.to_mapping(convention="internal0"),
+        "graph": graph_doc,
         "coordination": thaw_value(coord_section) if isinstance(coord_section, Mapping) else None,
         "shape": shape,
         "charge": int(charge),
@@ -505,6 +524,7 @@ def _run(
                     "failed_checks": counts,
                     "release": release,
                     "stop": search_stats.get("stop"),
+                    "outcome_class": search_stats.get("outcome_class"),
                     "template": search_stats.get("template"),
                     "arrangement_scope": search_stats.get("arrangement_scope"),
                     "targets_searched": targets_searched,
@@ -591,14 +611,34 @@ def _run(
         counts = _histogram(payload)
         generated = totals.get("generated", "?") if isinstance(totals, dict) else "?"
         search_stats = payload.get("search")
+        search_stats = search_stats if isinstance(search_stats, dict) else {}
+        outcome_class = str(search_stats.get("outcome_class", ""))
+        diagnostic_code = {
+            "backend_failure": "confgen_backend_failure",
+            "chemical_rejection": "confgen_chemical_rejection",
+            "core_displacement": "confgen_core_displacement",
+            "truncated": "confgen_search_truncated",
+        }.get(outcome_class, "confgen_no_passing_structures")
+        outcome_message = {
+            "backend_failure": "backend relaxations failed",
+            "chemical_rejection": "chemical audit rejected all candidates",
+            "core_displacement": "the backend moved one or more frozen core atoms",
+            "truncated": "the search was truncated before it found a passing structure",
+        }.get(outcome_class, "none passed all audit checks")
         keep_diag = _keep_scope_diagnostic(search_stats, context.step_id, work_item)
         extra_diagnostics = (keep_diag,) if keep_diag is not None else ()
         return _failed(
-            f"confgen search ran {generated} relaxations but none passed all audit checks "
+            f"confgen search ran {generated} relaxations; none passed all audit checks; {outcome_message} "
             f"(failed checks: {', '.join(f'{k}={v}' for k, v in counts.items()) or 'none'})",
             "confgen_no_passing_structures",
             artifacts,
-            {"failed_checks": counts, "generated": generated},
+            {
+                "failed_checks": counts,
+                "generated": generated,
+                "outcome_class": outcome_class,
+                "reason_code": diagnostic_code,
+                "dg_errors": search_stats.get("dg_errors"),
+            },
             extra_diagnostics,
         )
     try:

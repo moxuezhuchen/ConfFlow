@@ -26,6 +26,7 @@ from typing import Any
 import numpy as np
 
 from confflow.science.confgen.graph import TypedGraph
+from confflow.science.confgen.stereo import DoubleBondState, double_bond_side, double_bond_states
 
 __all__ = [
     "E_TOL",
@@ -45,7 +46,7 @@ R_TOL = 0.2
 _AUTO_CAP = 60000
 _ANCHOR_TOL = 0.5  # Angstrom: anchor-triple distance consistency in the fallback RMSD
 _ANCHOR_CAP = 2000  # anchor-triple images tried at most
-#: distinct RDKit bond types per edge kind, so graph matches never swap edges of different kinds
+#: RDKit bond types only generate candidate mappings. Full semantic labels are checked after.
 _EDGE_BOND = {
     "COVALENT": "SINGLE",
     "COORDINATION": "DOUBLE",
@@ -59,6 +60,7 @@ def typed_mol(
     full: list[dict[int, str]],
     atoms: Sequence[int],
     isotopes: Sequence[int],
+    formal_charges: Sequence[int | None] | None = None,
 ) -> Any:
     """Return an RDKit molecule of ``atoms`` whose bond types carry the typed-graph edge kinds.
 
@@ -69,15 +71,22 @@ def typed_mol(
 
     where = {int(a): k for k, a in enumerate(atoms)}
     rw = Chem.RWMol()
+    charges = formal_charges or [None] * len(elements)
     for a, iso in zip(atoms, isotopes):
         atom = Chem.Atom(elements[int(a)])
+        # RDKit isotope fields are uint16, so fixed identity is enforced by semantic filtering
+        # and colour refinement rather than by a potentially truncating isotope sentinel.
         atom.SetIsotope(int(iso))
+        charge = charges[int(a)]
+        atom.SetFormalCharge(0 if charge is None else charge)
         atom.SetNoImplicit(True)
         rw.AddAtom(atom)
     for a in atoms:
         for b, kind in full[int(a)].items():
             if b in where and int(a) < b:
-                rw.AddBond(where[int(a)], where[b], getattr(Chem.BondType, _EDGE_BOND[kind]))
+                edge_family = kind.split("@", 1)[0]
+                bond_type = getattr(Chem.BondType, _EDGE_BOND[edge_family])
+                rw.AddBond(where[int(a)], where[b], bond_type)
     return rw.GetMol()
 
 
@@ -86,7 +95,21 @@ def full_adjacency(graph: TypedGraph) -> list[dict[int, str]]:
     n = graph.natoms
     full: list[dict[int, str]] = [dict() for _ in range(n)]
     for edge in graph.edges:
-        full[edge.a][edge.b] = full[edge.b][edge.a] = edge.type.value
+        previous = full[edge.a].get(edge.b)
+        # A reaction relation can coexist with a stable covalent bond; the latter is the
+        # molecular identity edge and must remain authoritative for valence and symmetry.
+        if (
+            previous is not None
+            and previous.startswith("COVALENT")
+            and edge.type.value != "COVALENT"
+        ):
+            continue
+        label = edge.type.value
+        if edge.type.value == "COVALENT" and edge.bond_order is not None:
+            order = float(edge.bond_order)
+            order_text = str(int(order)) if order.is_integer() else str(order)
+            label = f"COVALENT@{order_text}"
+        full[edge.a][edge.b] = full[edge.b][edge.a] = label
     for a, b in graph.reaction_pairs:
         full[int(a)].setdefault(int(b), "FORMING")
         full[int(b)].setdefault(int(a), "FORMING")
@@ -126,12 +149,32 @@ class Minimum:
 class Identity:
     """Graph symmetry and same-minimum test for one molecule."""
 
-    def __init__(self, graph: TypedGraph, r_tol: float = R_TOL, mirror: bool = True) -> None:
+    def __init__(
+        self,
+        graph: TypedGraph,
+        r_tol: float = R_TOL,
+        mirror: bool = True,
+        fixed_atoms: Sequence[int] = (),
+        stereo_states: tuple[DoubleBondState, ...] | None = None,
+    ) -> None:
         self.graph = graph
+        self.double_bond_states = stereo_states
         self.r_tol = float(r_tol)
         self.mirror = mirror
         self.elements = [atom.element for atom in graph.atoms]
         self.n = len(self.elements)
+        self.formal_charges = [atom.formal_charge for atom in graph.atoms]
+        checked_fixed: list[int] = []
+        for index in fixed_atoms:
+            if isinstance(index, bool) or not isinstance(index, (int, np.integer)):
+                raise ValueError(f"fixed atom index {index!r} is not an integer")
+            value = int(index)
+            if not 0 <= value < self.n:
+                raise ValueError("fixed atom index is out of range for graph identity")
+            checked_fixed.append(value)
+        if len(set(checked_fixed)) != len(checked_fixed):
+            raise ValueError("fixed atom indices must be unique for graph identity")
+        self.fixed_atoms = frozenset(checked_fixed)
         self.metal = graph.metal_center
         self.full = full_adjacency(graph)
         self.classes = self._refine()
@@ -140,8 +183,10 @@ class Identity:
                 i
                 for i, e in enumerate(self.elements)
                 if e != "H"
+                or i in self.fixed_atoms
+                or any(k in self.fixed_atoms for k in self.full[i])
                 or any(self.elements[k] not in ("C", "H") for k in self.full[i])
-                or any(kind != "COVALENT" for kind in self.full[i].values())
+                or any(not kind.startswith("COVALENT") for kind in self.full[i].values())
             ]
         )
         self._kept_groups = [
@@ -154,7 +199,10 @@ class Identity:
         self._nbrs: list[dict[int, str]] | None = None
 
     def _refine(self, rounds: int = 12) -> list[int]:
-        colour = [hash(e) for e in self.elements]
+        colour = [
+            hash((e, self.formal_charges[i], i if i in self.fixed_atoms else None))
+            for i, e in enumerate(self.elements)
+        ]
         for _ in range(rounds):
             colour = [
                 hash((colour[i], tuple(sorted((colour[j], t) for j, t in self.full[i].items()))))
@@ -169,12 +217,58 @@ class Identity:
         if self._autos is False:
             where = {int(a) for a in self.kept}
             folded = [1 + sum(1 for k in self.full[int(a)] if k not in where) for a in self.kept]
-            mol = typed_mol(self.elements, self.full, [int(a) for a in self.kept], folded)
+            mol = typed_mol(
+                self.elements,
+                self.full,
+                [int(a) for a in self.kept],
+                folded,
+                self.formal_charges,
+            )
             found = mol.GetSubstructMatches(
                 mol, uniquify=False, useChirality=False, maxMatches=_AUTO_CAP + 1
             )
-            self._autos = None if len(found) > _AUTO_CAP else np.array(found, dtype=int)
+            if len(found) > _AUTO_CAP:
+                self._autos = None
+            else:
+                legal = [match for match in found if self._semantic_match(match)]
+                self._autos = np.asarray(legal, dtype=int).reshape((len(legal), len(self.kept)))
         return self._autos  # type: ignore[return-value]
+
+    def _semantic_match(self, match: Sequence[int]) -> bool:
+        """Check a candidate mapping against full graph colors and exact frozen identities."""
+        if len(match) != len(self.kept):
+            return False
+        mapped = {int(self.kept[pos]): int(self.kept[int(dst)]) for pos, dst in enumerate(match)}
+        image = set(mapped.values())
+        for source, target in mapped.items():
+            if self.elements[source] != self.elements[target]:
+                return False
+            if self.formal_charges[source] != self.formal_charges[target]:
+                return False
+            if self.classes[source] != self.classes[target]:
+                return False
+            if source in self.fixed_atoms and target != source:
+                return False
+            hidden_source = sorted(
+                (self.elements[peer], self.formal_charges[peer], label)
+                for peer, label in self.full[source].items()
+                if peer not in mapped
+            )
+            hidden_target = sorted(
+                (self.elements[peer], self.formal_charges[peer], label)
+                for peer, label in self.full[target].items()
+                if peer not in image
+            )
+            if hidden_source != hidden_target:
+                return False
+        for source, target in mapped.items():
+            expected = {
+                mapped[peer]: label for peer, label in self.full[source].items() if peer in mapped
+            }
+            actual = {peer: label for peer, label in self.full[target].items() if peer in image}
+            if expected != actual:
+                return False
+        return True
 
     def rmsd(self, x: np.ndarray, y: np.ndarray, mirror: bool | None = None) -> float:
         """Return the best RMSD of ``x`` onto ``y`` over automorphisms (and mirror images).
@@ -182,6 +276,20 @@ class Identity:
         ``mirror`` defaults to the Identity's policy; the mirror image is only tried while the
         direct RMSD is not already below ``r_tol``.
         """
+        if self.double_bond_states is None:
+            from confflow.science.confgen.dg_seed import stable_chemistry_molecule
+
+            try:
+                mol = stable_chemistry_molecule(self.graph, x)[0]
+                self.double_bond_states = double_bond_states(mol, x)
+            except ValueError:
+                self.double_bond_states = ()
+        # E/Z is a chemical state, not a tolerance-dependent geometric difference. This also
+        # protects batched/parallel deduplication, even with an unusually loose RMSD cutoff.
+        for state in self.double_bond_states:
+            left, right = double_bond_side(x, state.atoms), double_bond_side(y, state.atoms)
+            if not left or not right or left != right:
+                return float("inf")
         best = self._rmsd(x, y)
         if (self.mirror if mirror is None else mirror) and best >= self.r_tol:
             best = min(best, self._rmsd(x * np.array([-1.0, 1.0, 1.0]), y))
@@ -290,6 +398,8 @@ class Identity:
             for v, kind in row.items():
                 if nbr[int(perm[u])].get(int(perm[v])) != kind:
                     return None  # a ring closure broke an edge: not a graph mapping
+        if not self._semantic_match(perm):
+            return None
         return perm
 
     def _kept_nbrs(self) -> list[dict[int, str]]:
@@ -353,14 +463,22 @@ _WORKER_IDENTITY: dict[str, Identity] = {}
 
 
 def _rmsd_task(
-    args: tuple[str, TypedGraph, float, bool, list[tuple[np.ndarray, np.ndarray]]],
+    args: tuple[
+        str,
+        TypedGraph,
+        float,
+        bool,
+        list[tuple[np.ndarray, np.ndarray]],
+        tuple[int, ...],
+        tuple[DoubleBondState, ...] | None,
+    ],
 ) -> list[bool]:
     """Worker: ``rmsd < r_tol`` for each pair, with the Identity built once per process."""
-    key, graph, r_tol, mirror, pairs = args
+    key, graph, r_tol, mirror, pairs, fixed, stereo = args
     idn = _WORKER_IDENTITY.get(key)
     if idn is None:
         _WORKER_IDENTITY.clear()
-        idn = _WORKER_IDENTITY[key] = Identity(graph, r_tol, mirror)
+        idn = _WORKER_IDENTITY[key] = Identity(graph, r_tol, mirror, fixed, stereo)
     return [idn.rmsd(x, y) < r_tol for x, y in pairs]
 
 
@@ -431,10 +549,25 @@ class MinimaPool:
         if pmap is None or len(need) < 4 * chunks:
             flat = [idn.rmsd(x, y) < idn.r_tol for x, y in pairs]
         else:
-            key = hashlib.sha256(pickle.dumps((idn.graph, idn.r_tol, idn.mirror))).hexdigest()
+            semantics = (
+                idn.graph,
+                idn.r_tol,
+                idn.mirror,
+                tuple(idn.fixed_atoms),
+                idn.double_bond_states,
+            )
+            key = hashlib.sha256(pickle.dumps(semantics)).hexdigest()
             size = -(-len(pairs) // chunks)
             tasks = [
-                (key, idn.graph, idn.r_tol, idn.mirror, pairs[k : k + size])
+                (
+                    key,
+                    idn.graph,
+                    idn.r_tol,
+                    idn.mirror,
+                    pairs[k : k + size],
+                    tuple(idn.fixed_atoms),
+                    idn.double_bond_states,
+                )
                 for k in range(0, len(pairs), size)
             ]
             flat = [v for out in pmap(_rmsd_task, tasks) for v in out]
