@@ -297,7 +297,15 @@ def test_metal_search_completed(tmp_path: Path) -> None:
     energies = [dict(r.metadata)["energy_eh"] for r in out.structures]
     assert energies == sorted(energies)
     assert len(out.results) == 0
-    assert {r.role for r in out.artifacts} >= {"search_summary", "search_structures"}
+    assert {r.role for r in out.artifacts} >= {
+        "search_summary",
+        "search_structures",
+        "search_input_baseline",
+    }
+    baseline = _summary(out, tmp_path, "search_input_baseline")
+    assert baseline["reference"]["energy_eh"] is None
+    assert baseline["baseline"]["final_record"]["passed"] is True
+    assert baseline["baseline"]["comparable_to_final"] is True
     info = [d for d in out.diagnostics if d.code == "confgen_completed"]
     assert len(info) == 1 and "passed" in info[0].message
     assert {dict(r.metadata)["search_release"] for r in out.structures} == {"done"}

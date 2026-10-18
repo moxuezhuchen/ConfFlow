@@ -20,6 +20,29 @@ does not prevent generated starts from using the remaining budget. `search.input
 records raw audit, optimization outcome and subsequent publication disposition, so a
 missing input can be distinguished from a rejected or window-excluded one.
 
+The evaluated input is also copied into an independent `SearchRun.input_baseline` record.
+Its search and final coordinates are separate read-only copies: replacing a representative
+in the search pool cannot rewrite this evidence. For an accepted input, when release changes
+the restraints, the original input receives a final-state optimization first, regardless of its restrained
+energy window. This direct path is distinct from releasing a geometry already moved by
+restrained search. Calls are reused only when both coordinates and restraints match.
+Without release, or when restraints already match, the evaluated input is reused.
+
+A valid final baseline joins the final candidate pool before ordinary deduplication and
+windowing. It remains archived even when a lower result excludes it from publication.
+`comparable_to_final` and `lowest_final_delta_kcal` report comparison only after a valid
+same-state baseline exists; failure or a time limit preserves earlier valid search evidence
+without claiming a completed final baseline. Baseline release is included in total
+`release_relaxations`, with its subset also reported as `baseline_release_relaxations`.
+These counters describe returned backend requests; a cancelled in-flight batch can already
+have consumed CPU. Fair resource comparisons still require supervisor CPU/wall accounting.
+
+The worker writes `input_baseline.json` before any optimization and updates it atomically
+after checkpoints and completion. It stores the original coordinates with no assigned
+energy, original typed graph, parameters, backend identity, and independent baseline stages.
+The `search_input_baseline` artifact remains available on cancellation, with an explicit
+execution status. It is separate from both final structures and resumable search state.
+
 ## Search scheduling
 
 `ExploreSettings` now bootstraps a small batch instead of performing a fixed second DG

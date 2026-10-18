@@ -142,6 +142,14 @@ def test_exit_zero_metal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         "version": "fake xtb 99.9",
     }
     assert summary["settings"]["starts"] == 1 and summary["settings"]["seed"] == 7
+    baseline = json.loads((work / "input_baseline.json").read_text())
+    assert baseline["reference"] == {"coordinates": ref.tolist(), "energy_eh": None}
+    assert baseline["baseline"]["status"] == "released"
+    assert baseline["baseline"]["search_record"]["passed"]
+    assert baseline["baseline"]["final_record"]["passed"]
+    assert baseline["baseline"]["comparable_to_final"] is True
+    assert baseline["baseline"]["lowest_final_delta_kcal"] <= 1e-8
+    assert baseline["backend"]["version"] == "fake xtb 99.9"
     energies = [r["energy_eh"] for r in summary["structures"] if r["passed"]]
     assert energies == sorted(energies)
     text = out.read_text(encoding="utf-8")
@@ -224,6 +232,9 @@ def test_one_call_budget_optimizes_input_and_persists_it(
     rows = inputs[0].read_text().splitlines()[2:]
     submitted = np.array([[float(v) for v in row.split()[1:4]] for row in rows])
     assert np.allclose(submitted, ref, atol=1e-6)
+    baseline = json.loads((work / "input_baseline.json").read_text())["baseline"]
+    assert baseline["comparable_to_final"] is True
+    assert baseline["search_record"]["coordinates"] == baseline["final_record"]["coordinates"]
 
 
 def test_resume_skips_xtb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -570,6 +581,55 @@ def test_checkpoint_survives_interrupted_search(
     assert saved["atoms"] == els
     assert not out.exists() and not summary.exists()
     assert not (work / "checkpoint.json.tmp").exists()
+
+
+def test_raw_input_artifact_survives_cancel_before_optimization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def cancel(*args: Any, **kwargs: Any) -> Any:
+        raise search.SearchCancelled("before first relaxation")
+
+    monkeypatch.setattr(worker, "explore", cancel)
+    job, work, out, summary = _job(tmp_path, *_metal_parts(tmp_path))
+    assert worker.main([job]) == 143
+    artifact = json.loads((work / "input_baseline.json").read_text())
+    raw = json.loads(Path(job).read_text())
+    assert artifact["reference"] == {"coordinates": raw["reference"], "energy_eh": None}
+    assert artifact["graph"] == raw["graph"]
+    assert artifact["parameters"]["settings"] == raw["settings"]
+    assert artifact["baseline"] is None
+    assert artifact["execution_status"] == "cancelled"
+    assert not out.exists() and not summary.exists()
+
+
+def test_valid_input_baseline_survives_cancel_after_first_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = worker.explore
+
+    def cancel_after_input(*args: Any, **kwargs: Any) -> Any:
+        publish = kwargs["checkpoint"]
+
+        def checkpoint(snapshot: search.SearchRun) -> None:
+            publish(snapshot)
+            raise search.SearchCancelled("after evaluated input baseline")
+
+        kwargs["checkpoint"] = checkpoint
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(worker, "explore", cancel_after_input)
+    job, work, out, summary = _job(tmp_path, *_metal_parts(tmp_path), cores=1)
+    assert worker.main([job]) == 143
+    artifact = json.loads((work / "input_baseline.json").read_text())
+    assert artifact["execution_status"] == "cancelled"
+    saved = artifact["baseline"]
+    assert saved["search_record"]["passed"] is True
+    assert saved["search_record"]["energy_eh"] is not None
+    assert saved["search_record"]["coordinates"]
+    assert saved["final_record"] is None
+    checkpoint = json.loads((work / "checkpoint.json").read_text())
+    assert checkpoint["input_baseline"]["search_record"] == saved["search_record"]
+    assert not out.exists() and not summary.exists()
 
 
 @pytest.mark.parametrize("limit", [0, -1, True, float("nan"), "240"])
