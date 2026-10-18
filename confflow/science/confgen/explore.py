@@ -466,7 +466,7 @@ class _Explorer:
     def _relax(self, items: list[tuple[str, np.ndarray, str]], pool: MinimaPool,
                restraints: tuple[DistanceRestraint, ...], free: bool = False) -> list[int]:  # fmt: skip
         """Relax (key, coords, origin) items within budget; add accepted minima; return new ids."""
-        ids = []
+        ids: list[int] = []
         items = items[: self._left()] if not free else items
         start = 0
         while start < len(items):
@@ -645,7 +645,8 @@ class _Explorer:
 
     def _reembed(self, quota: int) -> list[tuple[str, np.ndarray, str]]:
         ps = self._take("reembed", max(1, math.ceil(quota / 10)))
-        tasks, names = [], []
+        tasks: list[tuple[Any, ...]] = []
+        names: list[tuple[str, str]] = []
         for m in ps:
             for k, s in enumerate(self._free_sets(min(12, quota - len(tasks)))):
                 tasks.append((self.elements, self.bonds, self.metal, m.coords, frozenset(s),
