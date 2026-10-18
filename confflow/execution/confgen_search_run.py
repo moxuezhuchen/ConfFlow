@@ -50,6 +50,7 @@ __all__ = ["run_search_item"]
 
 _HARTREE_TO_KCAL = 627.5094740631
 _SHAPE_FIT_MARGIN = 0.2  # Å: declared-shape RMSD excess over the best shape that warns
+_KEEP_WIDENED_SCOPE = "all_classes_input_unclassified"  # search.arrangement_scope value
 
 
 class _ImportError(DomainError):
@@ -78,6 +79,37 @@ def _shape_fit_diagnostic(fit: Any, step_id: str, work_item: WorkItem) -> Diagno
         work_item.logical_key,
         None,
         FrozenDict(dict(fit)),
+    )
+
+
+def _keep_scope_diagnostic(stats: Any, step_id: str, work_item: WorkItem) -> Diagnostic | None:
+    """Warn when ``arrangement: keep`` widened the search to every coordination class."""
+    if not isinstance(stats, Mapping) or stats.get("arrangement_scope") != _KEEP_WIDENED_SCOPE:
+        return None
+    template = stats.get("template")
+    targets = stats.get("targets_searched")
+    target_text = (
+        ", ".join(str(target) for target in targets)
+        if isinstance(targets, (list, tuple))
+        else "unknown"
+    )
+    return Diagnostic(
+        "confgen_keep_scope_widened",
+        f"arrangement 'keep' was requested but the input donor geometry fits no class of shape "
+        f"{template}, so all admissible coordination classes were searched (targets: {target_text}); "
+        "declare coordination.shapes: [input] to keep the input arrangement",
+        DiagnosticSeverity.WARNING,
+        step_id,
+        work_item.id,
+        work_item.logical_key,
+        None,
+        FrozenDict(
+            {
+                "template": template,
+                "arrangement_scope": stats.get("arrangement_scope"),
+                "targets_searched": targets,
+            }
+        ),
     )
 
 
@@ -344,7 +376,11 @@ def _run(
         )
 
     def _failed(
-        msg: str, code: str, artifacts: ArtifactSet, details: dict[str, Any] | None = None
+        msg: str,
+        code: str,
+        artifacts: ArtifactSet,
+        details: dict[str, Any] | None = None,
+        extra_diagnostics: tuple[Diagnostic, ...] = (),
     ) -> WorkItemResult:
         diagnostic = Diagnostic(
             code,
@@ -356,7 +392,9 @@ def _run(
             None,
             FrozenDict(dict(details or {})),
         )
-        return _result(WorkItemStatus.FAILED, StructureSet(), (diagnostic,), artifacts)
+        return _result(
+            WorkItemStatus.FAILED, StructureSet(), (diagnostic, *extra_diagnostics), artifacts
+        )
 
     def _artifacts() -> ArtifactSet:
         run_root = os.path.realpath(context.run_root)
@@ -439,6 +477,7 @@ def _run(
                 )
             )
         counts = _histogram(payload)
+        targets_searched = search_stats.get("targets_searched")
         diagnostic = Diagnostic(
             "confgen_completed",
             f"confgen search published {len(members)} conformers "
@@ -460,6 +499,9 @@ def _run(
                     "failed_checks": counts,
                     "release": release,
                     "stop": search_stats.get("stop"),
+                    "template": search_stats.get("template"),
+                    "arrangement_scope": search_stats.get("arrangement_scope"),
+                    "targets_searched": targets_searched,
                 }
             ),
         )
@@ -483,6 +525,9 @@ def _run(
         )
         if shape_diag is not None:
             diagnostics.append(shape_diag)
+        keep_diag = _keep_scope_diagnostic(search_stats, context.step_id, work_item)
+        if keep_diag is not None:
+            diagnostics.append(keep_diag)
         structures = StructureSet(tuple(members))
         return _result(WorkItemStatus.COMPLETED, structures, tuple(diagnostics), artifacts)
 
@@ -525,12 +570,16 @@ def _run(
         totals = payload.get("totals", {})
         counts = _histogram(payload)
         generated = totals.get("generated", "?") if isinstance(totals, dict) else "?"
+        search_stats = payload.get("search")
+        keep_diag = _keep_scope_diagnostic(search_stats, context.step_id, work_item)
+        extra_diagnostics = (keep_diag,) if keep_diag is not None else ()
         return _failed(
             f"confgen search ran {generated} relaxations but none passed all audit checks "
             f"(failed checks: {', '.join(f'{k}={v}' for k, v in counts.items()) or 'none'})",
             "confgen_no_passing_structures",
             artifacts,
             {"failed_checks": counts, "generated": generated},
+            extra_diagnostics,
         )
     try:
         tail = open(os.path.join(rundir, "stderr.log"), encoding="utf-8").read()
