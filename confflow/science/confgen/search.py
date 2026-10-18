@@ -23,6 +23,13 @@ from confflow.science.confgen.calculator import (
 from confflow.science.confgen.coordination import enumeration, perception, shapes
 from confflow.science.confgen.dg_seed import DGSeedError, DGSeedSettings, generate_dg_seeds
 from confflow.science.confgen.graph import INPUT_SHAPE, CoordinationSpec, EdgeType, TypedGraph
+from confflow.science.confgen.stereo import (
+    DoubleBondState,
+    preserves_double_bonds,
+)
+from confflow.science.confgen.stereo import (
+    double_bond_states as perceive_double_bond_states,
+)
 from confflow.science.data import get_atomic_number
 
 __all__ = (
@@ -32,7 +39,7 @@ __all__ = (
 ).split()
 
 CHECKS = tuple(
-    "converged topology coordination_class stereo reaction_distance metal_donor_distance "
+    "converged topology coordination_class stereo double_bond_stereo reaction_distance metal_donor_distance "
     "donor_orientation contacts".split()
 )
 _SKIPPED_FREE = ("coordination_class", "metal_donor_distance", "donor_orientation")
@@ -77,6 +84,7 @@ class SearchSettings:
     bond_scale: float = 1.25
     #: embed only starts ``lo <= k < hi`` of the ``count`` (same seeds as the full request)
     window: tuple[int, int] | None = None
+    freeze_core: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -349,6 +357,7 @@ def generate_starts(
                 timeout_seconds=settings.embed_timeout,
                 fragment_charges=frag,
                 first_start=a,
+                freeze_core=tuple(settings.freeze_core),
             )
             try:
                 made = generate_dg_seeds(
@@ -574,6 +583,7 @@ def audit_structure(
     bond_scale: float = 1.25,
     *,
     allowed: Collection[tuple[int, ...]] | None = None,
+    double_bond_states: Sequence[DoubleBondState] | None = None,
 ) -> AuditRecord:
     ref = np.asarray(reference, dtype=float)
     new = np.asarray(coords, dtype=float)
@@ -620,6 +630,19 @@ def audit_structure(
         stereo = stereo and same
     if not stereo:
         failed.append("stereo")
+    if double_bond_states is None:
+        # Public standalone audits must protect E/Z too, even without caller-supplied atom tags.
+        from confflow.science.confgen.dg_seed import stable_chemistry_molecule
+
+        try:
+            molecule = stable_chemistry_molecule(graph, ref)[0]
+            double_bond_states = perceive_double_bond_states(molecule, ref)
+        except ValueError:
+            double_bond_states = ()
+            if any(edge.type is EdgeType.COVALENT and edge.bond_order == 2 for edge in graph.edges):
+                failed.append("double_bond_stereo")
+    if not preserves_double_bonds(new, tuple(double_bond_states)):
+        failed.append("double_bond_stereo")
     for i, j in pairs:
         if abs(_dist(new, i, j) - _dist(ref, i, j)) > _R_TOL:
             failed.append("reaction_distance")

@@ -34,9 +34,12 @@ import numpy as np
 
 from confflow.science.confgen import dg_seed, search
 from confflow.science.confgen.calculator import (
+    CAP_FIXED_ATOMS,
     CAP_HESSIAN,
+    FIXED_ATOM_TOLERANCE_ANGSTROM,
     Calculator,
     DistanceRestraint,
+    FixedAtom,
     RelaxRequest,
 )
 from confflow.science.confgen.coordination import enumeration, perception, shapes
@@ -46,9 +49,13 @@ from confflow.science.confgen.identity import (
     Identity,
     MinimaPool,
     Minimum,
-    typed_mol,
 )
-from confflow.science.confgen.rotors import Rotor, Topology, perceive_mol, rotate
+from confflow.science.confgen.rotors import Rotor, Topology, rotate
+from confflow.science.confgen.stereo import (
+    DoubleBondState,
+    double_bond_states,
+    preserves_double_bonds,
+)
 
 __all__ = ["ExploreSettings", "ParallelMap", "explore"]
 
@@ -107,19 +114,34 @@ class ExploreSettings:
     #: Soft wall limit, checked between bounded backend calls.
     time_limit_seconds: float | None = None
     relaxation_batch: int = 4
+    freeze_core: tuple[int, ...] = ()
+    ez_policy: Literal["preserve"] = "preserve"
 
 
 # ----------------------------------------------------------------------------- worker tasks
 def _dg_task(args: tuple[Any, ...]) -> tuple[str, list[np.ndarray], str | None, tuple[int, ...]]:
     graph, spec, ref, shape, target, count, seed, st, window = args
     settings = search.SearchSettings(count, seed, st.small_ring_torsions, st.embed_timeout,
-                                     st.fragment_charges, st.bond_scale, window)  # fmt: skip
+                                     st.fragment_charges, st.bond_scale, window,
+                                     st.freeze_core)  # fmt: skip
     try:
         found = search.generate_starts(graph, spec, ref, shape, [target], settings)
     except search.SearchError as exc:
         return target.id, [], str(exc), ()
     err = found.failures[0][1] if found.failures else None
     return target.id, [s.coords for s in found.starts], err, tuple(found.stereo_centers)
+
+
+def _timed_dg_task(args: tuple[Any, ...]) -> tuple[Any, float, float]:
+    wall, cpu = time.monotonic(), time.process_time()
+    result = _dg_task(args)
+    return result, time.monotonic() - wall, time.process_time() - cpu
+
+
+def _timed_reembed_task(args: tuple[Any, ...]) -> tuple[Any, float, float]:
+    wall, cpu = time.monotonic(), time.process_time()
+    result = _reembed_task(args)
+    return result, time.monotonic() - wall, time.process_time() - cpu
 
 
 def _fit_rmsd(p: np.ndarray, q: np.ndarray, proper: bool) -> float:
@@ -145,17 +167,12 @@ def _reembed_task(args: tuple[Any, ...]) -> tuple[np.ndarray | None, str | None]
     from rdkit.DistanceGeometry import DoTriangleSmoothing
     from rdkit.Geometry import Point3D
 
-    elements, bonds, metal, xyz, free, pairs, seed, timeout = args
+    graph, xyz, free, pairs, seed, fragment_charges, timeout = args
     try:
-        mol = Chem.RWMol(perceive_mol(elements, bonds, metal, xyz))
-        conf = Chem.Conformer(len(elements))
-        for i, p in enumerate(xyz):
-            conf.SetAtomPosition(i, Point3D(*map(float, p)))
-        mol.AddConformer(conf, assignId=True)
-        mol = mol.GetMol()
+        mol = dg_seed.stable_chemistry_molecule(graph, xyz, fragment_charges)[0]
         Chem.AssignStereochemistryFrom3D(mol)
         bounds = np.asarray(rdDistGeom.GetMoleculeBoundsMatrix(mol), dtype=float)
-        n = len(elements)
+        n = graph.natoms
         d = np.linalg.norm(xyz[:, None] - xyz[None], axis=-1)
 
         def _set(i: int, j: int, tol: float, target: float | None = None) -> None:
@@ -180,10 +197,15 @@ def _reembed_task(args: tuple[Any, ...]) -> tuple[np.ndarray | None, str | None]
         # Pinning the non-free atoms to their coordinates keeps the core's hand and avoids
         # reversing a rigid core around stereocentres in a free ligand region.
         params.SetCoordMap({i: Point3D(*map(float, xyz[i])) for i in fixed})
+        states = double_bond_states(mol, xyz)
+        mol, _relaxed = dg_seed.embedding_molecule(graph, mol, xyz, fixed)
         cid = rdDistGeom.EmbedMolecule(mol, params)
         if cid < 0:
             return None, "embed"
-        return np.array(mol.GetConformer(cid).GetPositions(), dtype=float), None
+        coords = np.array(mol.GetConformer(cid).GetPositions(), dtype=float)
+        if not preserves_double_bonds(coords, states):
+            return None, "double_bond_stereo"
+        return coords, None
     except Exception as exc:  # RDKit raises plain RuntimeErrors on hopeless inputs
         return None, f"error: {str(exc)[:40]}"
 
@@ -194,8 +216,27 @@ class _Explorer:
                  shape: str | None, st: ExploreSettings, calc: Calculator, pmap: ParallelMap,
                  should_cancel: Callable[[], bool] | None,
                  checkpoint: Callable[[search.SearchRun], None] | None = None) -> None:  # fmt: skip
-        self.graph, self.spec, self.ref, self.shape, self.st = graph, spec, reference, shape, st
+        ref = np.asarray(reference, dtype=float)
+        if ref.shape != (graph.natoms, 3) or not bool(np.all(np.isfinite(ref))):
+            raise search.SearchError("reference must hold one finite coordinate triple per atom")
+        fixed_indices = tuple(st.freeze_core)
+        if len(set(fixed_indices)) != len(fixed_indices):
+            raise search.SearchError("freeze_core contains duplicate atom indices")
+        for index in fixed_indices:
+            if isinstance(index, bool) or not isinstance(index, int):
+                raise search.SearchError(f"freeze_core index {index!r} is not an integer")
+            if not 0 <= index < graph.natoms:
+                raise search.SearchError(f"freeze_core index {index!r} is out of range")
+        self.graph, self.spec, self.ref, self.shape, self.st = graph, spec, ref, shape, st
         self.calc, self.pmap, self.should_cancel = calc, pmap, should_cancel
+        if st.freeze_core and not calc.info.supports(CAP_FIXED_ATOMS):
+            raise search.SearchError(
+                "freeze_core requested but calculator does not declare fixed-atom support"
+            )
+        self.fixed_atoms = tuple(
+            FixedAtom(index, (float(ref[index, 0]), float(ref[index, 1]), float(ref[index, 2])))
+            for index in fixed_indices
+        )
         self.checkpoint = checkpoint
         self.started = time.monotonic()
         self.relax_wall = 0.0
@@ -204,11 +245,30 @@ class _Explorer:
         self.metal = graph.metal_center
         if shape == INPUT_SHAPE and st.arrangement != "keep":
             raise search.SearchError("shape 'input' supports arrangement 'keep' only")
-        self.id = Identity(graph)
+        self.id = Identity(graph, fixed_atoms=st.freeze_core)
         self.elements = self.id.elements
         self.bonds = dg_seed._candidate_bonds(graph)
+        self.stable_molecule = None
+        self.stable_chemistry_error: str | None = None
+        self.chemistry_mode = "uninitialized"
+        self.chemistry_note = ""
+        self.fragment_charges: tuple[tuple[tuple[int, ...], int], ...] = ()
+        self.double_bond_states: tuple[DoubleBondState, ...] = ()
+        try:
+            (
+                self.stable_molecule,
+                self.fragment_charges,
+                self.chemistry_mode,
+                self.chemistry_note,
+            ) = dg_seed.stable_chemistry_molecule(graph, ref, st.fragment_charges)
+            self.double_bond_states = double_bond_states(self.stable_molecule, ref)
+            self.id.double_bond_states = self.double_bond_states
+        except ValueError as exc:
+            self.stable_chemistry_error = str(exc)
+            self.chemistry_mode = "rejected"
+            self.chemistry_note = str(exc)
         radii = np.array([search._radius(e) for e in self.elements])
-        self.topo = Topology(self.id, reference, self.bonds, radii)
+        self.topo = Topology(self.id, reference, self.bonds, radii, molecule=self.stable_molecule)
         self.rotors: list[Rotor] = list(self.topo.rotors)
         self.donors = (
             list(spec.donor_indices) if spec is not None and self.metal is not None else []
@@ -241,10 +301,28 @@ class _Explorer:
         self.pending_moves: dict[str, list[tuple[str, np.ndarray, str]]] = {}
         self.nopt = 0
         self.fail: Counter[str] = Counter()
+        self.dg_error_details: list[dict[str, str]] = []
         self.yields: Counter[str] = Counter()
         self.spent: Counter[str] = Counter()
         self.found: Counter[str] = Counter()
         self.rate = {"single": 0.5}
+        self.generation: dict[str, dict[str, Any]] = {
+            arm: dict(
+                attempts=0,
+                generated=0,
+                failures=0,
+                cpu_s=0.0,
+                worker_wall_s=0.0,
+                map_wall_s=0.0,
+                optimized=0,
+            )
+            for arm in ("dg", "single", "lowmode", "reembed")
+        }
+        self.round_index = 0
+        self.reembed_failure_streak = 0
+        self.reembed_backoff_level = 0
+        self.reembed_next_round = 0
+        self.reembed_disabled = False
         self.history: list[tuple[int, int, float]] = []  # (relaxations, new <3 kcal, lowest)
         self.hessians = 0
         self.released = 0
@@ -266,22 +344,17 @@ class _Explorer:
     def _donor_perms(self) -> list[tuple[int, ...]]:
         """Permutations of the binding sites induced by automorphisms of the typed graph."""
         assert self.spec is not None
-        full, els = self.id.full, self.elements
-        heavy = [i for i, e in enumerate(els) if e != "H"]
-        pos = {a: k for k, a in enumerate(heavy)}
-        hcount = [1 + sum(els[k] == "H" for k in full[a]) for a in heavy]
-        mol = typed_mol(
-            els, full, heavy, hcount
-        )  # edge kinds kept: donors of different roles never swap
+        pos = {int(atom): k for k, atom in enumerate(self.id.kept)}
         sites = [s.atoms[0] for s in self.spec.binding_sites]
         if any(a not in pos for a in sites):
             return [tuple(range(len(sites)))]
         where = {a: k for k, a in enumerate(sites)}
         perms: set[tuple[int, ...]] = set()
-        for match in mol.GetSubstructMatches(
-            mol, uniquify=False, useChirality=False, maxMatches=200000
-        ):
-            image = [heavy[match[pos[a]]] for a in sites]
+        automorphisms = self.id.automorphisms()
+        if automorphisms is None:
+            return [tuple(range(len(sites)))]
+        for match in automorphisms:
+            image = [int(self.id.kept[match[pos[a]]]) for a in sites]
             if all(a in where for a in image):
                 perms.add(tuple(where[a] for a in image))
         return sorted(perms) or [tuple(range(len(sites)))]
@@ -401,11 +474,11 @@ class _Explorer:
             self.baseline = replace(self.baseline, status="search_deferred")
             return
         try:
-            mol = perceive_mol(self.elements, self.bonds, self.metal, self.ref)
-            conf = Chem.Conformer(len(self.elements))
-            for i, point in enumerate(self.ref):
-                conf.SetAtomPosition(i, tuple(map(float, point)))
-            mol.AddConformer(conf, assignId=True)
+            if self.stable_chemistry_error is not None:
+                raise dg_seed.DGSeedError(self.stable_chemistry_error)
+            mol = self.stable_molecule
+            if mol is None:
+                raise dg_seed.DGSeedError("stable chemistry molecule is unavailable")
             Chem.AssignStereochemistryFrom3D(mol)
             self.centers = tuple(
                 atom.GetIdx()
@@ -416,6 +489,15 @@ class _Explorer:
                     Chem.rdchem.ChiralType.CHI_TETRAHEDRAL_CCW,
                 )
             )
+        except dg_seed.DGSeedError as exc:
+            self.input_seed.update(
+                status="raw_rejected", raw_failed_checks=["stable_chemistry"], detail=str(exc)
+            )
+            self.baseline = replace(
+                self.baseline, status="raw_rejected", raw_failed_checks=("stable_chemistry",)
+            )
+            self.fail["chemical_rejection"] += 1
+            return
         except Exception as exc:
             self.input_seed.update(
                 status="raw_rejected", raw_failed_checks=["stereo_perception"], detail=str(exc)
@@ -454,6 +536,38 @@ class _Explorer:
             self.baseline = replace(self.baseline, status="search_deferred")
 
     # -- bookkeeping -------------------------------------------------------------------------
+    def _record_generation(
+        self,
+        arm: str,
+        attempts: int,
+        generated: int,
+        wall: float,
+        cpu: float,
+        worker_wall: float,
+    ) -> None:
+        record = self.generation[arm]
+        record["attempts"] += attempts
+        record["generated"] += generated
+        record["failures"] += attempts - generated
+        record["cpu_s"] += cpu
+        record["worker_wall_s"] += worker_wall
+        record["map_wall_s"] += wall
+
+    def _reembed_share(self) -> float:
+        """Downweight unsuccessful/expensive generation; periodically probe after backoff."""
+        if self.reembed_disabled or self.round_index < self.reembed_next_round:
+            return 0.0
+        record, dg = self.generation["reembed"], self.generation["dg"]
+        if not record["attempts"]:
+            return self.st.share_reembed
+        success_rate = record["generated"] / record["attempts"]
+        cost_factor = 1.0
+        if record["cpu_s"] > 0 and dg["generated"] and dg["cpu_s"] > 0:
+            own_cost = record["cpu_s"] / max(1, record["generated"])
+            dg_cost = dg["cpu_s"] / dg["generated"]
+            cost_factor = min(1.0, dg_cost / own_cost)
+        return float(self.st.share_reembed * max(0.05, success_rate * cost_factor))
+
     def _poll(self) -> None:
         if self.should_cancel is not None and self.should_cancel():
             raise search.SearchCancelled("search cancelled")
@@ -499,7 +613,8 @@ class _Explorer:
     ) -> tuple[str | None, tuple[str, ...]]:
         """Return (label, ()) for an accepted structure, else (None, failed checks)."""
         rec = search.audit_structure(xyz, self.graph, self.spec, self.ref, self.shape, (), self.centers,
-                                     conv, self.st.bond_scale, allowed=self.allowed if self.shape else None)  # fmt: skip
+                                     conv, self.st.bond_scale, allowed=self.allowed if self.shape else None,
+                                     double_bond_states=self.double_bond_states)  # fmt: skip
         if rec.coordination_contacts:
             self.audit_evidence.append(
                 {
@@ -563,7 +678,10 @@ class _Explorer:
                 break
             batch = items[start : start + size]
             start += len(batch)
-            reqs = [RelaxRequest(key, x, restraints) for key, x, _ in batch]
+            reqs = [
+                RelaxRequest(key, self._pin_frozen(x), restraints, self.fixed_atoms)
+                for key, x, _ in batch
+            ]
             began = time.monotonic()
             outs = self.calc.relax_many(reqs)
             if len(outs) != len(reqs):
@@ -578,14 +696,44 @@ class _Explorer:
             input_bad: tuple[str, ...] = ()
             baseline_bad: tuple[str, ...] = ()
             for (key, _, origin), out in zip(batch, outs):
+                arm = origin.split(":")[0]
+                if arm in self.generation:
+                    self.generation[arm]["optimized"] += 1
                 if out.coords is None or out.energy_eh is None:
-                    self.fail["not_converged"] += 1
+                    failure = out.failure_kind or "not_converged"
+                    self.fail[failure] += 1
                     if origin == "input":
-                        input_bad = ("not_converged",)
+                        input_bad = (failure,)
                     if origin == "baseline:input":
-                        baseline_bad = ("not_converged",)
+                        baseline_bad = (failure,)
                     continue
-                label, bad = self._audit(out.coords, out.converged, free, key, origin)
+                coords = np.asarray(out.coords, dtype=float)
+                if (
+                    coords.shape != (self.graph.natoms, 3)
+                    or not bool(np.all(np.isfinite(coords)))
+                    or not np.isfinite(out.energy_eh)
+                ):
+                    self.fail["backend_failed"] += 1
+                    if origin == "input":
+                        input_bad = ("backend_failed",)
+                    if origin == "baseline:input":
+                        baseline_bad = ("backend_failed",)
+                    continue
+                displacement = max(
+                    (
+                        float(np.linalg.norm(coords[atom.index] - atom.coordinates))
+                        for atom in self.fixed_atoms
+                    ),
+                    default=0.0,
+                )
+                if displacement > FIXED_ATOM_TOLERANCE_ANGSTROM:
+                    self.fail["core_displacement"] += 1
+                    if origin == "input":
+                        input_bad = ("core_displacement",)
+                    if origin == "baseline:input":
+                        baseline_bad = ("core_displacement",)
+                    continue
+                label, bad = self._audit(coords, out.converged, free, key, origin)
                 if label is None:
                     self.fail.update(bad)
                     if origin == "input":
@@ -593,8 +741,8 @@ class _Explorer:
                     if origin == "baseline:input":
                         baseline_bad = bad
                     continue
-                cell = label + "#" + self.topo.ring_signature(out.coords)
-                rows.append((float(out.energy_eh), out.coords, label, origin, cell))
+                cell = label + "#" + self.topo.ring_signature(coords)
+                rows.append((float(out.energy_eh), coords, label, origin, cell))
             ids.extend(mid for mid in pool.add_many(rows, self.pmap) if mid is not None)
             for energy, coords, label, origin, _ in rows:
                 if origin in {"input", "baseline:input"}:
@@ -717,15 +865,38 @@ class _Explorer:
         tasks = [(self.graph, self.spec, self.ref, self.shape, t, c, (base + 31 * k) % _SEED_MOD,
                   self.st, w) for k, t, c, w in chunks]  # fmt: skip
         items = []
-        results = self.pmap(_dg_task, tasks)
+        began = time.monotonic()
+        measured = list(self.pmap(_timed_dg_task, tasks))
+        results = []
+        worker_wall = cpu = 0.0
+        for result in measured:
+            if len(result) == 3:
+                result, task_wall, task_cpu = result
+                worker_wall += task_wall
+                cpu += task_cpu
+            results.append(result)
         for (_, _, _, (lo, hi)), (tid, coords, err, centers) in zip(chunks, results):
             if centers and not self.centers:
                 self.centers = centers
             if err:
                 self.fail["dg_embed"] += 1
+                detail = str(err)
+                if any(
+                    marker in detail.lower()
+                    for marker in ("stable chemistry", "formal charge", "multiplicity", "radical")
+                ):
+                    self.fail["dg_chemical_rejection"] += 1
+                    kind = "chemical_rejection"
+                else:
+                    self.fail["dg_failure"] += 1
+                    kind = "dg_failure"
+                self.dg_error_details.append({"target": str(tid), "kind": kind, "reason": detail})
             if len(coords) < hi - lo:  # timed out or unembeddable starts are skipped silently
                 self.fail["dg_no_start"] += hi - lo - len(coords)
             items += [(f"{tag}/{tid}_{lo:02d}", xyz, f"dg:{tid}") for xyz in coords]
+        self._record_generation(
+            "dg", len(tasks), len(items), time.monotonic() - began, cpu, worker_wall
+        )
         return items
 
     def _single_kids(self, m: Minimum) -> list[tuple[str, np.ndarray]]:
@@ -738,7 +909,11 @@ class _Explorer:
     def _lowmode_kids(self, m: Minimum) -> list[tuple[str, np.ndarray]]:
         from rdkit import Chem
 
-        h = self.calc.hessian(RelaxRequest(f"hess/m{m.id:05d}", m.coords, self.restraints))
+        h = self.calc.hessian(
+            RelaxRequest(
+                f"hess/m{m.id:05d}", self._pin_frozen(m.coords), self.restraints, self.fixed_atoms
+            )
+        )
         self.hessians += 1
         if h is None:
             self.fail["hessian_failed"] += 1
@@ -746,8 +921,15 @@ class _Explorer:
         n3 = 3 * len(self.elements)
         pt = Chem.GetPeriodicTable()
         w = np.repeat([pt.GetAtomicWeight(e) for e in self.elements], 3) ** -0.5
-        ev, vec = np.linalg.eigh(h * w[:, None] * w[None, :])
-        order = np.argsort(np.abs(ev))[6:]  # drop translations and rotations
+        weighted = h * w[:, None] * w[None, :]
+        fixed_dofs = {3 * atom.index + axis for atom in self.fixed_atoms for axis in range(3)}
+        free_dofs = np.asarray([i for i in range(n3) if i not in fixed_dofs], dtype=int)
+        if free_dofs.size == 0:
+            return []
+        ev, free_vec = np.linalg.eigh(weighted[np.ix_(free_dofs, free_dofs)])
+        vec = np.zeros((n3, free_vec.shape[1]), dtype=float)
+        vec[free_dofs] = free_vec
+        order = np.argsort(np.abs(ev))[min(self._rigid_mode_count(), len(ev)) :]
         soft = sorted(order, key=lambda k: ev[k])[:_LM_KIDS_MODES]
         out = []
         for k in soft:
@@ -755,12 +937,28 @@ class _Explorer:
             d /= np.linalg.norm(d, axis=1).max()
             for amp in _LM_AMPS:
                 for sg in (1, -1):
+                    kid = m.coords + sg * amp * d
                     out.append(
-                        (f"lm{k:03d}_{amp:.1f}{'p' if sg > 0 else 'm'}", m.coords + sg * amp * d)
+                        (f"lm{k:03d}_{amp:.1f}{'p' if sg > 0 else 'm'}", self._pin_frozen(kid))
                     )
         return out
 
+    def _rigid_mode_count(self) -> int:
+        """Count global rigid motions compatible with exact Cartesian anchors."""
+        if not self.fixed_atoms:
+            return 6
+        points = np.asarray([atom.coordinates for atom in self.fixed_atoms], dtype=float)
+        if len(points) == 1:
+            return 3  # rotations about the pinned point remain free
+        offsets = points[1:] - points[0]
+        rank = int(np.linalg.matrix_rank(offsets, tol=1.0e-7))
+        if rank == 0:
+            return 3  # coincident anchors leave all rotations about their common point free
+        return 1 if rank == 1 else 0  # only spin about a collinear anchor axis remains
+
     def _moves(self, arm: str, quota: int) -> list[tuple[str, np.ndarray, str]]:
+        began, cpu = time.monotonic(), time.process_time()
+        attempts = generated = 0
         kids = self._single_kids if arm == "single" else self._lowmode_kids
         items = self.pending_moves.pop(arm, [])
         while len(items) < quota:
@@ -769,15 +967,30 @@ class _Explorer:
                 break
             for p in ps:
                 for tag, x in kids(p):
-                    if self.topo.clashes(x):
+                    attempts += 1
+                    if not preserves_double_bonds(x, self.double_bond_states):
+                        self.fail["generated_double_bond_stereo"] += 1
+                    elif self.topo.clashes(x):
                         self.fail["move_clash"] += 1
                     else:
                         items.append((f"{arm}/m{p.id:05d}_{tag}", x, f"{arm}:{p.id}"))
+                        generated += 1
         self.pending_moves[arm] = items[quota:]
+        wall = time.monotonic() - began
+        self._record_generation(arm, attempts, generated, wall, time.process_time() - cpu, wall)
         return items[:quota]
 
+    def _pin_frozen(self, coords: np.ndarray) -> np.ndarray:
+        """Return a finite copy with every frozen core atom at its input coordinate."""
+        result = np.asarray(coords, dtype=float).copy()
+        for atom in self.fixed_atoms:
+            result[atom.index] = atom.coordinates
+        return result
+
     def _free_sets(self, n: int = 12) -> list[set[int]]:
-        pinned = set(self.donors) | ({self.metal} if self.metal is not None else set())
+        pinned = set(self.donors) | {atom.index for atom in self.fixed_atoms}
+        if self.metal is not None:
+            pinned.add(self.metal)
         full = self.id.full
         ring_atoms = {i for r in self.topo.rings for i in r}
         centres = sorted(({i for r in self.rotors for i in r.bond} | ring_atoms) - pinned)
@@ -801,20 +1014,47 @@ class _Explorer:
         return out
 
     def _reembed(self, quota: int) -> list[tuple[str, np.ndarray, str]]:
+        if quota <= 0 or self.reembed_disabled or self.round_index < self.reembed_next_round:
+            return []
+        if self.reembed_backoff_level:
+            quota = 1  # bounded recovery probe rather than another full failed batch
         ps = self._take("reembed", max(1, math.ceil(quota / 10)))
         tasks: list[tuple[Any, ...]] = []
         names: list[tuple[str, str]] = []
         for m in ps:
             for k, s in enumerate(self._free_sets(min(12, quota - len(tasks)))):
-                tasks.append((self.elements, self.bonds, self.metal, m.coords, frozenset(s),
-                              self.re_pairs, self.rng.randrange(1, 2**30), _reembed_limit(self.st)))  # fmt: skip
+                if len(tasks) >= quota:
+                    break
+                tasks.append((self.graph, m.coords, frozenset(s), self.re_pairs,
+                              self.rng.randrange(1, 2**30), self.st.fragment_charges,
+                              _reembed_limit(self.st)))  # fmt: skip
                 names.append((f"reembed/m{m.id:05d}_{k:02d}", f"reembed:{m.id}"))
         items = []
-        for (name, origin), (x, err) in zip(names, self.pmap(_reembed_task, tasks)):
+        began = time.monotonic()
+        results = list(self.pmap(_timed_reembed_task, tasks))
+        worker_wall = cpu = 0.0
+        for (name, origin), result in zip(names, results):
+            if len(result) == 3:
+                result, task_wall, task_cpu = result
+                worker_wall += task_wall
+                cpu += task_cpu
+            x, err = result
             if x is None:
-                self.fail[f"reembed_{err.split(':')[0]}"] += 1
+                self.fail[f"reembed_{(err or 'embed').split(':')[0]}"] += 1
             else:
                 items.append((name, x, origin))
+        self._record_generation(
+            "reembed", len(tasks), len(items), time.monotonic() - began, cpu, worker_wall
+        )
+        if items:
+            self.reembed_failure_streak = self.reembed_backoff_level = 0
+            self.reembed_next_round = self.round_index
+        elif tasks:
+            self.reembed_failure_streak += len(tasks)
+            if self.reembed_failure_streak >= 4:
+                self.reembed_backoff_level += 1
+                self.reembed_next_round = self.round_index + 2**self.reembed_backoff_level
+                self.reembed_disabled = self.reembed_backoff_level >= 4
         return items
 
     def _dg_more(self, quota: int) -> list[tuple[str, np.ndarray, str]]:
@@ -840,7 +1080,9 @@ class _Explorer:
             for ri, r in enumerate(self.rotors):
                 for ang in r.moves:
                     x = rotate(ref.coords, r, ang)
-                    if not self.topo.clashes(x):
+                    if not preserves_double_bonds(x, self.double_bond_states):
+                        self.fail["generated_double_bond_stereo"] += 1
+                    elif not self.topo.clashes(x):
                         items.append(
                             (
                                 f"probe/m{ref.id:05d}_r{ri:02d}_{int(ang):03d}",
@@ -884,7 +1126,8 @@ class _Explorer:
 
     def _round(self) -> bool:
         st = self.st
-        share = {"dg": st.share_dg, "single": st.share_single, "reembed": st.share_reembed}
+        self.round_index += 1
+        share = {"dg": st.share_dg, "single": st.share_single, "reembed": self._reembed_share()}
         if (
             st.share_lowmode > 0
             and self.calc.info.supports(CAP_HESSIAN)
@@ -1061,6 +1304,24 @@ class _Explorer:
             "arrangement_scope": scope,
             "relaxations": self.nopt,
             "input_seed": dict(self.input_seed),
+            "stable_chemistry": {
+                "mode": self.chemistry_mode,
+                "note": self.chemistry_note,
+                "fragment_charges": [
+                    [list(indices), int(charge)] for indices, charge in self.fragment_charges
+                ],
+            },
+            "fixed_core": {
+                "atoms": [
+                    {"index": atom.index, "coordinates_angstrom": list(atom.coordinates)}
+                    for atom in self.fixed_atoms
+                ],
+                "output_displacement_tolerance_angstrom": FIXED_ATOM_TOLERANCE_ANGSTROM,
+            },
+            "double_bond_stereo": {
+                "policy": self.st.ez_policy,
+                "states": [asdict(state) for state in self.double_bond_states],
+            },
             "adaptive": self.st.adaptive,
             "stop": self.stop,
             "release": self.release_status,
@@ -1082,10 +1343,33 @@ class _Explorer:
             ),  # fmt: skip
             "unique_minima": len(self.pool),
             "spent": dict(self.spent),
+            "generation": {arm: dict(record) for arm, record in self.generation.items()},
+            "reembed_scheduler": {
+                "failure_streak": self.reembed_failure_streak,
+                "backoff_level": self.reembed_backoff_level,
+                "next_probe_round": self.reembed_next_round,
+                "disabled": self.reembed_disabled,
+            },
             "found_in_window": dict(self.found),
             "failures": dict(sorted(self.fail.items())),
+            "dg_errors": list(self.dg_error_details),
+            "outcome_class": self._outcome_class(),
             "coordination_evidence": list(self.audit_evidence),
         }
+
+    def _outcome_class(self) -> str:
+        """Separate incomplete work, chemistry refusal, frozen-core failures, and engine failure."""
+        if self.stop == "time_limit" or self.release_status in {"deferred", "partial"}:
+            return "truncated"
+        if len(self.pool):
+            return "completed"
+        if self.fail["core_displacement"]:
+            return "core_displacement"
+        if self.fail["backend_failed"] or self.fail["not_converged"]:
+            return "backend_failure"
+        if self.fail["chemical_rejection"] or self.fail["dg_chemical_rejection"]:
+            return "chemical_rejection"
+        return "no_minima"
 
     def _result(self, final: MinimaPool, stats: dict[str, Any]) -> search.SearchRun:
         rows = final.within(self.st.window_kcal)
@@ -1169,7 +1453,12 @@ class _Explorer:
         totals = {
             "targets": len(targets),
             "generated": self.nopt + self.released,
-            "relaxed": self.nopt + self.released - self.fail["not_converged"],
+            "relaxed": self.nopt
+            + self.released
+            - sum(
+                self.fail[k]
+                for k in ("not_converged", "backend_failed", "backend_failure", "core_displacement")
+            ),
             "passed": len(records),
         }
         return search.SearchRun(
@@ -1206,6 +1495,10 @@ def explore(
     realises (``t00`` without a metal, ``unclassified`` for a valid structure that fits no
     ideal polyhedron) and ``start`` is its unique minimum id.
     """
+    if settings.ez_policy != "preserve":
+        raise search.SearchError(
+            "ez_policy supports 'preserve' only; E/Z enumeration is not implemented"
+        )
     if settings.budget < 1:
         raise search.SearchError(f"budget must be positive, got {settings.budget!r}")
     if settings.batch < 1 or settings.relaxation_batch < 1:

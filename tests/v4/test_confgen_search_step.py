@@ -392,11 +392,12 @@ def test_zero_passing_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     out, _ = _run(_native(), _driving_metal(), _write_fake(tmp_path), tmp_path)
     assert out.status.value == "failed"
     errors = [d for d in out.diagnostics if d.is_error]
-    assert len(errors) == 1 and "none passed all audit checks" in errors[0].message
+    assert len(errors) == 1 and errors[0].code == "confgen_backend_failure"
+    assert "backend relaxations failed" in errors[0].message
     summary = _summary(out, tmp_path)
     assert summary["totals"]["passed"] == 0
     assert dict(errors[0].details["failed_checks"]) == summary["search"]["failures"]
-    assert "not_converged" in summary["search"]["failures"]
+    assert "backend_failed" in summary["search"]["failures"]
 
 
 def test_exit_two_reports_search_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -419,6 +420,7 @@ def test_exit_two_reports_search_failures(tmp_path: Path, monkeypatch: pytest.Mo
         search = {
             "relaxations": 6,
             "failures": {"stereo": 4, "topology": 2},
+            "outcome_class": "core_displacement",
             "template": "tetrahedral",
             "arrangement_scope": "all_classes_input_unclassified",
             "targets_searched": ["t00", "t01"],
@@ -432,9 +434,11 @@ def test_exit_two_reports_search_failures(tmp_path: Path, monkeypatch: pytest.Mo
     monkeypatch.setattr(WorkItemExecutor, "launch_and_wait", _launch)
     out = ConfgenExecutor().execute(item, ctx)
     assert out.status.value == "failed"
-    assert "ran 6 relaxations but none passed" in out.diagnostics[0].message
+    assert out.diagnostics[0].code == "confgen_core_displacement"
+    assert "backend moved one or more frozen core atoms" in out.diagnostics[0].message
     assert "failed checks: stereo=4, topology=2" in out.diagnostics[0].message
     assert dict(out.diagnostics[0].details["failed_checks"]) == {"stereo": 4, "topology": 2}
+    assert out.diagnostics[0].details["outcome_class"] == "core_displacement"
     warnings = [d for d in out.diagnostics if d.code == "confgen_keep_scope_widened"]
     assert len(warnings) == 1
     warning = warnings[0]
@@ -610,6 +614,33 @@ def test_default_starts_resolution(tmp_path: Path) -> None:
     summary = _summary(out, tmp_path)
     assert summary["settings"]["starts"] is None
     assert dict(out.structures[0].metadata)["starts"] is None
+
+
+@pytest.mark.parametrize("index_base", [0, 1])
+def test_freeze_core_schema_to_worker_index_conversion(tmp_path: Path, index_base: int) -> None:
+    """The public index convention survives compilation, job writing, and worker parsing."""
+    from confflow.execution.confgen_search_worker import _load_job
+
+    scope = _scope(
+        index_base=index_base,
+        coordination={
+            "metal_center": index_base,
+            "binding_sites": [{"id": f"s{i}", "atoms": [index_base + i + 1]} for i in range(4)],
+            "shapes": ["square_planar"],
+        },
+    )
+    scope["search"] = {**_SEARCH, "freeze_core": [index_base]}
+    native = FrozenDict(ConfgenModelV3.model_validate(scope).scientific_native())
+    out, _ = _run(native, _driving_metal(), _write_fake(tmp_path), tmp_path)
+    assert out.status.value == "completed", [str(d.message) for d in out.diagnostics]
+    jobs = list(tmp_path.rglob("search_job.json"))
+    assert len(jobs) == 1
+    wire = json.loads(jobs[0].read_text())
+    assert wire["settings"]["freeze_core"] == [0]
+    loaded = _load_job(str(jobs[0]))
+    assert loaded["settings"].freeze_core == (0,)
+    assert loaded["graph"].total_charge == 0
+    assert loaded["graph"].multiplicity == 1
 
 
 def test_end_to_end_binding(tmp_path: Path) -> None:

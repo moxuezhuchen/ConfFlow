@@ -26,9 +26,12 @@ from pathlib import Path
 import numpy as np
 
 from confflow.science.confgen.calculator import (
+    CAP_FIXED_ATOMS,
     CAP_HESSIAN,
     CAP_RESTRAINED_RELAX,
+    FIXED_ATOM_TOLERANCE_ANGSTROM,
     CalculatorInfo,
+    FixedAtom,
     RelaxOutcome,
     RelaxRequest,
     Restraint,
@@ -117,6 +120,23 @@ def _constrain_block(restraints: Sequence[Restraint]) -> str | None:
     return "\n".join(lines + ["$end"]) + "\n"
 
 
+def _fixed_block(fixed_atoms: Sequence[FixedAtom]) -> str | None:
+    """Render xTB's exact atom-freezing input block, distinct from distance restraints."""
+    if not fixed_atoms:
+        return None
+    indices = ", ".join(str(atom.index + 1) for atom in fixed_atoms)
+    return f"$fix\n  atoms: {indices}\n$end\n"
+
+
+def _input_blocks(restraints: Sequence[Restraint], fixed_atoms: Sequence[FixedAtom]) -> str | None:
+    blocks = [
+        block.strip()
+        for block in (_constrain_block(restraints), _fixed_block(fixed_atoms))
+        if block is not None
+    ]
+    return "\n".join(blocks) + "\n" if blocks else None
+
+
 class XtbCalculator:
     """GFN2-xTB optimiser: one xtb process per request, ``cores`` at a time, under ``workdir``.
 
@@ -139,7 +159,10 @@ class XtbCalculator:
         self._exe, self._work, self._els = exe, workdir, list(elements)
         self._charge, self._uhf, self._cycles, self._cores = charge, uhf, max_cycles, cores
         self._info = CalculatorInfo(
-            "xtb", "GFN2-xTB", version, frozenset({CAP_RESTRAINED_RELAX, CAP_HESSIAN})
+            "xtb",
+            "GFN2-xTB",
+            version,
+            frozenset({CAP_RESTRAINED_RELAX, CAP_HESSIAN, CAP_FIXED_ATOMS}),
         )
         self._exe_sha = _file_sha256(shutil.which(exe) or exe)
         self._stop = threading.Event()
@@ -172,7 +195,10 @@ class XtbCalculator:
             if self._stop.is_set():
                 raise Cancelled("search cancelled")
             return self._relax_one(
-                self._work / req.key, req.coords, _constrain_block(req.restraints)
+                self._work / req.key,
+                req.coords,
+                _input_blocks(req.restraints, req.fixed_atoms),
+                req.fixed_atoms,
             )
 
         with futures.ThreadPoolExecutor(max_workers=self._cores) as pool:
@@ -190,7 +216,7 @@ class XtbCalculator:
         here.mkdir(parents=True, exist_ok=True)
         write_xyz_frames(here / "in.xyz", self._els, [(request.coords, "hessian")])
         argv = [self._exe, "in.xyz", "--gfn", "2", "--hess"]
-        cinp = _constrain_block(request.restraints)
+        cinp = _input_blocks(request.restraints, request.fixed_atoms)
         if cinp is not None:
             (here / "c.inp").write_text(cinp, encoding="utf-8")
             argv += ["--input", "c.inp"]
@@ -237,11 +263,16 @@ class XtbCalculator:
             raise Cancelled("search cancelled")
         return proc.returncode == 0
 
-    def _run_key(self, xyz_path: Path, cinp: str | None) -> str:
+    def _run_key(
+        self, xyz_path: Path, cinp: str | None, fixed_atoms: Sequence[FixedAtom] = ()
+    ) -> str:
         """Return the cache key of one optimisation: every input that can change its result."""
         doc = {
             "xyz": hashlib.sha256(xyz_path.read_bytes()).hexdigest(),
             "constrain": cinp,
+            "fixed_atoms": [
+                {"index": atom.index, "coordinates": list(atom.coordinates)} for atom in fixed_atoms
+            ],
             "charge": self._charge,
             "uhf": self._uhf,
             "cycles": self._cycles,
@@ -249,7 +280,13 @@ class XtbCalculator:
         }
         return hashlib.sha256(json.dumps(doc, sort_keys=True).encode("utf-8")).hexdigest()
 
-    def _relax_one(self, here: Path, xyz: np.ndarray, cinp: str | None) -> RelaxOutcome:
+    def _relax_one(
+        self,
+        here: Path,
+        xyz: np.ndarray,
+        cinp: str | None,
+        fixed_atoms: Sequence[FixedAtom] = (),
+    ) -> RelaxOutcome:
         els = self._els
         here.mkdir(parents=True, exist_ok=True)
         write_xyz_frames(here / "in.xyz", els, [(xyz, "frame")])
@@ -257,7 +294,7 @@ class XtbCalculator:
             (here / "c.inp").write_text(cinp, encoding="utf-8")
         else:
             (here / "c.inp").unlink(missing_ok=True)
-        digest = self._run_key(here / "in.xyz", cinp)
+        digest = self._run_key(here / "in.xyz", cinp, fixed_atoms)
         done = here / "done.json"
         if done.is_file():
             try:
@@ -265,7 +302,28 @@ class XtbCalculator:
                 if prev.get("key_sha256") == digest:
                     converged = bool(prev["converged"])
                     opt = read_first_frame(here / "xtbopt.xyz", len(els)) if converged else None
-                    return RelaxOutcome(opt, prev["energy_eh"], converged, float(prev["wall_s"]))
+                    if opt is not None and fixed_atoms:
+                        displacement = max(
+                            float(np.linalg.norm(opt[atom.index] - atom.coordinates))
+                            for atom in fixed_atoms
+                        )
+                        if displacement > FIXED_ATOM_TOLERANCE_ANGSTROM:
+                            return RelaxOutcome(
+                                None,
+                                prev.get("energy_eh"),
+                                False,
+                                float(prev["wall_s"]),
+                                f"frozen core displaced by {displacement:.6g} A",
+                                "core_displacement",
+                            )
+                    return RelaxOutcome(
+                        opt,
+                        prev.get("energy_eh"),
+                        converged,
+                        float(prev["wall_s"]),
+                        str(prev.get("detail", "")),
+                        prev.get("failure_kind"),
+                    )
             except (OSError, ValueError, KeyError, TypeError):
                 pass
         env = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1")
@@ -313,8 +371,29 @@ class XtbCalculator:
         ok = proc is not None and proc.returncode == 0 and _CONV in out
         conv = bool(ok) and (here / "xtbopt.xyz").is_file()
         energy = float(found[-1]) if found else None
-        if not self._stop.is_set():  # a cancelled run is not a result: resume must relaunch it
-            payload = {"key_sha256": digest, "energy_eh": energy, "converged": conv, "wall_s": wall}
-            done.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
         opt = read_first_frame(here / "xtbopt.xyz", len(els)) if conv else None
-        return RelaxOutcome(opt, energy, conv, wall)
+        failure_kind = None
+        detail = ""
+        if not conv or opt is None:
+            conv = False
+            failure_kind = "backend_failed"
+        elif fixed_atoms:
+            displacement = max(
+                float(np.linalg.norm(opt[atom.index] - atom.coordinates)) for atom in fixed_atoms
+            )
+            if displacement > FIXED_ATOM_TOLERANCE_ANGSTROM:
+                conv = False
+                opt = None
+                failure_kind = "core_displacement"
+                detail = f"frozen core displaced by {displacement:.6g} A"
+        if not self._stop.is_set():  # a cancelled run is not a result: resume must relaunch it
+            payload = {
+                "key_sha256": digest,
+                "energy_eh": energy,
+                "converged": conv,
+                "wall_s": wall,
+                "detail": detail,
+                "failure_kind": failure_kind,
+            }
+            done.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        return RelaxOutcome(opt, energy, conv, wall, detail, failure_kind)

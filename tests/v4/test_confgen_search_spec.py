@@ -24,6 +24,7 @@ from confflow.science.confgen.search_spec import (
     resolve_search_starts,
 )
 from confflow.science.confgen.topology import build_typed_graph, convert_index
+from confflow.workflow.v4.confgen_schema import ConfgenModelV3
 
 _BASE: dict[str, Any] = {"schema_version": 4, "index_base": 1, "seed": 1}
 
@@ -134,6 +135,42 @@ def test_normalize_converts_one_based_sections_and_drops_search() -> None:
         [4],
     ]
     assert "search" not in spec
+
+
+def test_stable_chemistry_and_reaction_metadata_roundtrip() -> None:
+    model = ConfgenModelV3.model_validate(
+        {
+            "schema_version": 4,
+            "index_base": 1,
+            "seed": 9,
+            "topology": {
+                "bonds": [{"atoms": [1, 2], "kind": "COVALENT", "bond_order": 1.0}],
+                "reaction_pairs": [[2, 3]],
+                "atoms": [
+                    {"index": 1, "formal_charge": 0},
+                    {"index": 2, "formal_charge": -1},
+                    {"index": 3, "formal_charge": 0},
+                ],
+            },
+        }
+    )
+    anionic_chain = StructureRecord(
+        id="anionic-chain",
+        atoms=("C", "C", "C"),
+        coordinates=((0.0, 0.0, 0.0), (1.5, 0.0, 0.0), (3.0, 0.0, 0.0)),
+        charge=-1,
+        multiplicity=1,
+    )
+    context = build_search_context(anionic_chain, model.scientific_native())
+    assert [atom.formal_charge for atom in context.graph.atoms] == [0, -1, 0]
+    assert context.graph.reaction_pairs == ((1, 2),)
+    assert context.graph.pairs_of_kind(EdgeType.COVALENT) == ((0, 1),)
+    assert context.graph.edges[0].bond_order == 1.0
+    assert context.graph.total_charge == -1
+    assert context.graph.multiplicity == 1
+    encoded = context.graph.to_mapping(convention="internal0")
+    restored = type(context.graph).from_mapping(encoded, ("C", "C", "C"), convention="internal0")
+    assert restored == context.graph
 
 
 @pytest.mark.parametrize("tolerances", [None, {}])

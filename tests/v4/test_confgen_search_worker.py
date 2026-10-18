@@ -268,7 +268,7 @@ def test_exit_two_modes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
         summary["totals"]["passed"] == 0 and summary["totals"]["relaxed"] == 0 and not out.exists()
     )
     assert summary["structures"] == []
-    assert summary["search"]["failures"] == {"not_converged": launches}
+    assert summary["search"]["failures"] == {"backend_failed": launches}
     assert worker.main([job]) == 2
     assert (tmp_path / "count.txt").read_text(encoding="utf-8").count("x") == launches
     monkeypatch.setenv("FAKE_XTB_MODE", "crash")
@@ -276,7 +276,7 @@ def test_exit_two_modes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert worker.main([job]) == 2
     crashed = json.loads(summary_path.read_text(encoding="utf-8"))
     assert crashed["totals"]["passed"] == 0 and crashed["structures"] == []
-    assert crashed["search"]["failures"].get("not_converged", 0) == crashed["totals"]["generated"]
+    assert crashed["search"]["failures"].get("backend_failed", 0) == crashed["totals"]["generated"]
     monkeypatch.setenv("FAKE_XTB_MODE", "break")
     job, _, _, summary_path = _job(tmp_path, *base[:5], tag="b")
     assert worker.main([job]) == 2

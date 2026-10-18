@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from functools import reduce
+from typing import Any
 
 import numpy as np
 
@@ -102,6 +103,7 @@ class Topology:
         reference: np.ndarray,
         graph_bonds: set[tuple[int, int]],
         radii: np.ndarray,
+        molecule: Any = None,
     ) -> None:
         self.id = identity
         self.full = identity.full
@@ -119,7 +121,11 @@ class Topology:
         self._excl = excl
         self.rings = self._rings()
         try:
-            mol = perceive_mol(identity.elements, graph_bonds, self.metal, reference)
+            mol = (
+                molecule
+                if molecule is not None
+                else perceive_mol(identity.elements, graph_bonds, self.metal, reference)
+            )
         except Exception:  # perception failure leaves the molecule without torsional moves
             mol = None
         self.rotors: tuple[Rotor, ...] = self._rotors(mol) if mol is not None else ()
@@ -180,9 +186,9 @@ class Topology:
         found: list[Rotor] = []
         for a, b in sorted(self._bridges()):
             kind = full[a][b]
-            if kind not in ("COVALENT", "COORDINATION"):
+            if not kind.startswith("COVALENT") and kind != "COORDINATION":
                 continue
-            if kind == "COVALENT":
+            if kind.startswith("COVALENT"):
                 bond = mol.GetBondBetweenAtoms(a, b)
                 if bond is None or bond.GetBondType() != Chem.BondType.SINGLE:
                     continue

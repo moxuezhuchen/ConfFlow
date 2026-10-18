@@ -123,6 +123,17 @@ def _load_job(path: str) -> dict[str, Any]:
         if atom >= len(els):
             raise _JobError(f"job fragment charge atom {atom!r} is out of range")
         frag.append((atom, _int(entry[1], "settings.fragment_charges charge")))
+    freeze_raw = section.get("freeze_core", [])
+    if not isinstance(freeze_raw, list):
+        raise _JobError("job field 'settings.freeze_core' must be a list")
+    freeze_core: list[int] = []
+    for value in freeze_raw:
+        atom = _int(value, "settings.freeze_core atom", 0)
+        if atom >= len(els):
+            raise _JobError(f"job freeze_core atom {atom!r} is out of range")
+        if atom in freeze_core:
+            raise _JobError(f"job freeze_core repeats atom {atom!r}")
+        freeze_core.append(atom)
     starts = section.get("starts")
     window = section.get("window_kcal")
     if isinstance(window, bool) or not isinstance(window, (int, float)) or not window > 0:
@@ -148,6 +159,11 @@ def _load_job(path: str) -> dict[str, Any]:
         or time_limit <= 0
     ):
         raise _JobError("job field 'time_limit_seconds' must be a finite positive number")
+    ez_policy = section.get("ez_policy", "preserve")
+    if ez_policy != "preserve":
+        raise _JobError(
+            "settings.ez_policy supports 'preserve' only; E/Z enumeration is not implemented"
+        )
     settings = ExploreSettings(
         budget=max(cap, budget),
         adaptive=adaptive,
@@ -163,6 +179,8 @@ def _load_job(path: str) -> dict[str, Any]:
             section.get("embed_timeout_seconds"), "settings.embed_timeout_seconds", 0
         ),
         fragment_charges=tuple(frag),
+        freeze_core=tuple(freeze_core),
+        ez_policy=ez_policy,
         bond_scale=float(scale),
         time_limit_seconds=None if time_limit is None else float(time_limit),
     )

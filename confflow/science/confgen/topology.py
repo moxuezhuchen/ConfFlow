@@ -150,7 +150,7 @@ def validate_atom_declaration(item: Any, *, path: str) -> dict[str, Any]:
     """Validate one topology atom declaration (roles/stereo/labels)."""
     if not isinstance(item, Mapping):
         raise ValueError(f"{path} must be a mapping")
-    unknown = sorted(set(item) - {"index", "label", "role", "stereo"})
+    unknown = sorted(set(item) - {"index", "label", "role", "stereo", "formal_charge"})
     if unknown:
         raise ValueError(f"{path} holds unknown keys {unknown}")
     if "index" not in item:
@@ -167,6 +167,12 @@ def validate_atom_declaration(item: Any, *, path: str) -> dict[str, Any]:
     if stereo is not None and not isinstance(stereo, str):
         raise ValueError(f"{path}.stereo must be a string or null")
     shape["stereo"] = stereo
+    formal_charge = item.get("formal_charge")
+    if formal_charge is not None and (
+        isinstance(formal_charge, bool) or not isinstance(formal_charge, int)
+    ):
+        raise ValueError(f"{path}.formal_charge must be an integer or null")
+    shape["formal_charge"] = formal_charge
     return shape
 
 
@@ -291,12 +297,17 @@ def build_typed_graph(
             _check(second, f"topology.bonds[{index}]")
             if kind is EdgeType.FORMING:
                 forming.append([first, second])
+        declared_reactions = [
+            [int(first), int(second)] for first, second in (topology.get("reaction_pairs") or [])
+        ]
         mapping = {
             "bonds": list(pairs),
             "atoms": list(topology.get("atoms", []) or []),
             "metal_center": metal_center,
-            "reaction_pairs": forming,
+            "reaction_pairs": [*declared_reactions, *forming],
             "source": "v3-spec-explicit",
+            "total_charge": getattr(structure, "charge", None),
+            "multiplicity": getattr(structure, "multiplicity", None),
         }
         graph = TypedGraph.from_mapping(
             mapping, elements, convention="internal0", source="v3-spec-explicit"
@@ -333,7 +344,9 @@ def build_typed_graph(
             if second > first:
                 edge = TypedEdge(a=first, b=second, type=EdgeType.COVALENT)
                 typed[(first, second, EdgeType.COVALENT)] = edge
-    reaction_pairs = []
+    reaction_pairs = [
+        (int(first), int(second)) for first, second in (topology.get("reaction_pairs") or [])
+    ]
     explicit_covalent: set[tuple[int, int]] = set()
     typed_non_covalent: set[tuple[int, int]] = set()
     for key in ("add_bond", "del_bond"):
@@ -408,6 +421,7 @@ def build_typed_graph(
             label=decl.get("label"),
             role=str(decl.get("role", "")),
             stereo=decl.get("stereo"),
+            formal_charge=decl.get("formal_charge"),
         )
     graph = TypedGraph(
         atoms=tuple(atoms),
@@ -415,6 +429,8 @@ def build_typed_graph(
         metal_center=metal_center,
         reaction_pairs=tuple(reaction_pairs),
         source="v3-spec-perceived",
+        total_charge=getattr(structure, "charge", None),
+        multiplicity=getattr(structure, "multiplicity", None),
     )
     resolved_adjacency = [sorted(row) for row in adjacency]
     if _covalent_adjacency(graph) != tuple(tuple(row) for row in resolved_adjacency):

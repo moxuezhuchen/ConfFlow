@@ -282,15 +282,15 @@ def test_budget_expires_before_input_optimization_keeps_no_energy(monkeypatch):
     assert run.input_baseline.final_record is None
 
 
-def test_raw_input_stereo_perception_failure_is_preserved(monkeypatch):
+def test_raw_input_stable_chemistry_failure_is_preserved(monkeypatch):
     graph, ref = _butane()
 
     def cannot_perceive(*args):
-        raise ValueError("cannot establish input stereochemistry")
+        raise explore.dg_seed.DGSeedError("cannot establish input chemistry for stereo audit")
 
-    monkeypatch.setattr(explore, "perceive_mol", cannot_perceive)
+    monkeypatch.setattr(explore.dg_seed, "stable_chemistry_molecule", cannot_perceive)
     calc = BaselineCalculator(ref)
     run = explore.explore(graph, None, ref, None, _settings(budget=1), calc)
     assert run.input_baseline.status == "raw_rejected"
-    assert run.input_baseline.raw_failed_checks == ("stereo_perception",)
+    assert run.input_baseline.raw_failed_checks == ("stable_chemistry",)
     assert all(request.key != "input/reference" for request in calc.requests)

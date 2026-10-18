@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from confflow.execution.confgen_xtb import XtbCalculator, write_xyz_frames, xtb_version
-from confflow.science.confgen.calculator import DistanceRestraint, RelaxRequest
+from confflow.science.confgen.calculator import DistanceRestraint, FixedAtom, RelaxRequest
 
 _ELS = ["H", "H"]
 _COORDS = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.74]])
@@ -83,6 +83,36 @@ def test_changed_restraints_miss_cache(tmp_path: Path) -> None:
     calc.relax_many([RelaxRequest("a", _COORDS, (DistanceRestraint(0, 1, 1.5),))])
     calc.relax_many([RelaxRequest("a", _COORDS, (DistanceRestraint(0, 1, 1.6),))])
     assert _launches(counter) == 2
+
+
+def test_fixed_reference_is_part_of_cache_identity(tmp_path: Path) -> None:
+    counter = tmp_path / "count.txt"
+    calc = _calc(_fake_xtb(tmp_path / "xtb", counter), tmp_path)
+    xyz = tmp_path / "cache-input.xyz"
+    write_xyz_frames(xyz, _ELS, [(_COORDS, "same coordinates")])
+    first = calc._run_key(xyz, None, (FixedAtom(0, (0.0, 0.0, 0.0)),))
+    second = calc._run_key(xyz, None, (FixedAtom(0, (0.0, 0.0, 0.1)),))
+    assert first != second
+
+
+def test_cached_backend_output_is_rechecked_for_fixed_core_drift(tmp_path: Path) -> None:
+    exe = _write_sh(
+        tmp_path / "drift_xtb",
+        "awk 'NR==3 { $2 += 0.001 } { print }' in.xyz > xtbopt.xyz\n"
+        "echo 'TOTAL ENERGY -5.0 Eh'\n"
+        "echo 'GEOMETRY OPTIMIZATION CONVERGED'\n",
+    )
+    counter = tmp_path / "count.txt"
+    exe.write_text(exe.read_text(encoding="utf-8") + f'echo x >> "{counter}"\n')
+    request = RelaxRequest("fixed", _COORDS, fixed_atoms=(FixedAtom(0, (0.0, 0.0, 0.0)),))
+    calc = _calc(exe, tmp_path)
+    for _ in range(2):
+        (outcome,) = calc.relax_many([request])
+        assert not outcome.converged
+        assert outcome.coords is None
+        assert outcome.failure_kind == "core_displacement"
+        assert "0.001" in outcome.detail
+    assert _launches(counter) == 1
 
 
 def test_changed_executable_content_misses_cache(tmp_path: Path) -> None:

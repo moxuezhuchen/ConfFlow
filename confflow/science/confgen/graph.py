@@ -155,6 +155,7 @@ class AtomRef:
     label: str | None = None
     role: str = ""
     stereo: str | None = None
+    formal_charge: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.index, int) or isinstance(self.index, bool) or self.index < 0:
@@ -170,6 +171,10 @@ class AtomRef:
             raise UnsupportedTopologyError("atom role must be a string")
         if self.stereo is not None and not isinstance(self.stereo, str):
             raise UnsupportedTopologyError("atom stereo declaration must be a string or None")
+        if self.formal_charge is not None and (
+            isinstance(self.formal_charge, bool) or not isinstance(self.formal_charge, int)
+        ):
+            raise UnsupportedTopologyError("atom formal_charge must be an integer or None")
 
     def to_mapping(self, *, convention: str = "internal0") -> dict[str, Any]:
         """Return a config-mapping record for this atom."""
@@ -186,6 +191,8 @@ class AtomRef:
             record["role"] = self.role
         if self.stereo is not None:
             record["stereo"] = self.stereo
+        if self.formal_charge is not None:
+            record["formal_charge"] = self.formal_charge
         return record
 
 
@@ -624,6 +631,8 @@ class TypedGraph:
     metal_center: int | None = None
     reaction_pairs: tuple[tuple[int, int], ...] = ()
     source: str = ""
+    total_charge: int | None = None
+    multiplicity: int | None = None
 
     def __post_init__(self) -> None:
         atoms = tuple(self.atoms)
@@ -647,8 +656,25 @@ class TypedGraph:
         if self.metal_center is not None and not 0 <= self.metal_center < count:
             raise UnsupportedTopologyError("metal_center out of range")
         for pair in self.reaction_pairs:
-            if pair[0] == pair[1]:
+            if len(pair) != 2:
+                raise UnsupportedTopologyError("reaction pairs must contain two atom indices")
+            first, second = pair
+            if any(isinstance(value, bool) or not isinstance(value, int) for value in pair):
+                raise UnsupportedTopologyError("reaction pair indices must be integers")
+            if first < 0 or second < 0 or first >= count or second >= count:
+                raise UnsupportedTopologyError("reaction pair index out of range")
+            if first == second:
                 raise UnsupportedTopologyError("reaction self-pair is not supported")
+        if self.total_charge is not None and (
+            isinstance(self.total_charge, bool) or not isinstance(self.total_charge, int)
+        ):
+            raise UnsupportedTopologyError("total_charge must be an integer or None")
+        if self.multiplicity is not None and (
+            isinstance(self.multiplicity, bool)
+            or not isinstance(self.multiplicity, int)
+            or self.multiplicity < 1
+        ):
+            raise UnsupportedTopologyError("multiplicity must be an integer >= 1 or None")
 
     @property
     def natoms(self) -> int:
@@ -723,7 +749,7 @@ class TypedGraph:
         if convention not in INDEX_CONVENTIONS:
             raise UnsupportedTopologyError(f"unknown index convention {convention!r}")
         shift = 1 if convention == "fixture1" else 0
-        return {
+        record = {
             "indexing": convention,
             "atoms": [atom.to_mapping(convention=convention) for atom in self.atoms],
             "bonds": [edge.to_mapping(convention=convention) for edge in self.edges],
@@ -731,6 +757,11 @@ class TypedGraph:
             "reaction_pairs": [[a + shift, b + shift] for a, b in self.reaction_pairs],
             "source": self.source,
         }
+        if self.total_charge is not None:
+            record["total_charge"] = self.total_charge
+        if self.multiplicity is not None:
+            record["multiplicity"] = self.multiplicity
+        return record
 
     @classmethod
     def from_mapping(
@@ -775,6 +806,7 @@ class TypedGraph:
                 label=entry.get("label", current.label),
                 role=str(entry.get("role", current.role or "")),
                 stereo=entry.get("stereo", current.stereo),
+                formal_charge=entry.get("formal_charge", current.formal_charge),
             )
         raw_bonds = mapping.get("bonds", []) or []
         if isinstance(raw_bonds, (str, bytes)):
@@ -830,14 +862,16 @@ class TypedGraph:
             metal_center=metal_center,
             reaction_pairs=reaction_pairs,
             source=str(mapping.get("source", source)),
+            total_charge=mapping.get("total_charge"),
+            multiplicity=mapping.get("multiplicity"),
         )
 
     def validate_witness(self, mapping: Sequence[int]) -> AutomorphismReport:
         """Validate an atom permutation as a typed-graph automorphism.
 
-        Checks element preservation, typed-edge preservation, and involution.
-        Stereo parity and geometric symmetry are *not* claimed here; they need
-        separate stereo labels and :mod:`hgeom` witnesses.
+        Checks element and typed-edge preservation, plus formal-charge, bond-order,
+        and reaction-pair metadata. Stereo parity and geometric symmetry are *not*
+        claimed here; they need separate stereo labels and :mod:`hgeom` witnesses.
         """
         perm = tuple(int(value) for value in mapping)
         complete = len(perm) == self.natoms and sorted(perm) == list(range(self.natoms))
@@ -852,6 +886,39 @@ class TypedGraph:
                 pa, pb = perm[a], perm[b]
                 mapped_edges.add((min(pa, pb), max(pa, pb), kind))
         edges_ok = bool(complete) and mapped_edges == edge_set
+        bond_orders = {(edge.a, edge.b, edge.type): edge.bond_order for edge in self.edges}
+        mapped_orders = (
+            {
+                (
+                    min(perm[edge.a], perm[edge.b]),
+                    max(perm[edge.a], perm[edge.b]),
+                    edge.type,
+                ): edge.bond_order
+                for edge in self.edges
+            }
+            if complete
+            else {}
+        )
+        reaction_pairs = {
+            (min(first, second), max(first, second)) for first, second in self.reaction_pairs
+        }
+        mapped_reaction_pairs = (
+            {
+                (min(perm[first], perm[second]), max(perm[first], perm[second]))
+                for first, second in self.reaction_pairs
+            }
+            if complete
+            else set()
+        )
+        chemical_metadata_ok = (
+            bool(complete)
+            and all(
+                self.atoms[index].formal_charge == self.atoms[perm[index]].formal_charge
+                for index in range(self.natoms)
+            )
+            and mapped_orders == bond_orders
+            and mapped_reaction_pairs == reaction_pairs
+        )
         involutive = bool(complete) and all(
             perm[perm[index]] == index for index in range(self.natoms)
         )
@@ -860,6 +927,7 @@ class TypedGraph:
             is_permutation=bool(complete),
             element_preserving=element_ok,
             typed_edge_preserving=edges_ok,
+            chemical_metadata_preserving=chemical_metadata_ok,
             involutive=involutive,
             stereo_status="UNVERIFIED",
             geometric_status="UNVERIFIED",
@@ -882,7 +950,7 @@ class TypedGraph:
 
 @dataclass(frozen=True, slots=True)
 class AutomorphismReport:
-    """Witness validation outcome (topology level only)."""
+    """Witness validation outcome (typed chemistry; stereochemistry remains unverified)."""
 
     mapping: tuple[int, ...]
     is_permutation: bool
@@ -891,11 +959,17 @@ class AutomorphismReport:
     involutive: bool
     stereo_status: str = "UNVERIFIED"
     geometric_status: str = "UNVERIFIED"
+    chemical_metadata_preserving: bool = True
 
     @property
     def topology_valid(self) -> bool:
         """Return whether the topology-level witness checks pass."""
-        return self.is_permutation and self.element_preserving and self.typed_edge_preserving
+        return (
+            self.is_permutation
+            and self.element_preserving
+            and self.typed_edge_preserving
+            and self.chemical_metadata_preserving
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-compatible summary."""
@@ -903,6 +977,7 @@ class AutomorphismReport:
             "is_permutation": self.is_permutation,
             "element_preserving": self.element_preserving,
             "typed_edge_preserving": self.typed_edge_preserving,
+            "chemical_metadata_preserving": self.chemical_metadata_preserving,
             "involutive": self.involutive,
             "stereo_status": self.stereo_status,
             "geometric_status": self.geometric_status,
