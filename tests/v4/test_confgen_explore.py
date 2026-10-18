@@ -294,14 +294,20 @@ def test_dg_starts_go_out_in_parallel_slices(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(search, "generate_starts", _spy)
     explore.explore(graph, spec, ref, _SHAPE, _settings(starts=10), _FakeCalc(), map)
-    # The requested ten starts are bounded to a small bootstrap batch.
-    assert calls[:4] == [(4, (i, i + 1)) for i in range(4)]
+    # Input uses one slot; the remaining bootstrap starts still use parallel slices.
+    assert calls[:3] == [(3, (i, i + 1)) for i in range(3)]
 
 
 def test_starts_lost_to_timeouts_are_counted(monkeypatch: pytest.MonkeyPatch) -> None:
     graph, spec, ref = _pt_toy()
     monkeypatch.setattr(search, "generate_starts", lambda *a, **k: search.SearchStarts())
-    run = explore.explore(graph, spec, ref, _SHAPE, _settings(budget=40), _FakeCalc(), map)
+
+    class NoInput(_FakeCalc):
+        def relax_many(self, requests):
+            self.requests += list(requests)
+            return [RelaxOutcome() for _ in requests]
+
+    run = explore.explore(graph, spec, ref, _SHAPE, _settings(budget=40), NoInput(), map)
     assert not run.passing
     assert run.stats["stop"] == "no_minima"
     assert run.stats["failures"]["dg_no_start"] > 0
@@ -323,7 +329,8 @@ def test_bootstrap_and_probe_leave_feedback_budget(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(explore._Explorer, "_reembed", reembed)
     run = explore.explore(graph, None, ref, None, _settings(budget=16, starts=132), calc)
     keys = [q.key.split("/")[0] for q in calc.requests]
-    assert keys.count("dg0") == 4
+    assert keys.count("input") == 1
+    assert keys.count("dg0") == 3
     assert keys.count("probe") <= 4
     assert "single" in keys and "reembed" in keys
     assert len(generated) <= len(calc.requests) <= 16
@@ -346,7 +353,7 @@ def test_checkpoint_survives_later_batch_cancellation() -> None:
         )
     assert len(snapshots) == 1
     assert snapshots[0].records
-    assert snapshots[0].stats["relaxations"] == 4
+    assert snapshots[0].stats["relaxations"] == 1
     assert snapshots[0].stats["checkpoint_stage"] == "restrained"
     assert snapshots[0].stats["release"] == "pending"
     assert all(r.passed for r in snapshots[0].records)
@@ -420,3 +427,168 @@ def test_failed_release_checkpoint_preserves_audited_restrained_minima() -> None
     )
     assert snapshots[-1].records
     assert snapshots[-1].stats["checkpoint_stage"] == "restrained"
+
+
+def test_budget_one_optimizes_exact_input_and_checkpoints_without_dg(monkeypatch) -> None:
+    graph, ref = _butane()
+    calc = _FakeCalc()
+    snapshots = []
+
+    def no_dg(args):
+        pytest.fail("budget one must optimize input without generating DG starts")
+
+    monkeypatch.setattr(explore, "_dg_task", no_dg)
+    run = explore.explore(
+        graph, None, ref, None, _settings(budget=1), calc, checkpoint=snapshots.append
+    )
+    assert len(calc.requests) == 1
+    assert calc.requests[0].key == "input/reference"
+    np.testing.assert_array_equal(calc.requests[0].coords, ref)
+    assert len(run.records) == 1
+    np.testing.assert_array_equal(run.records[0].coords, ref)
+    assert run.records[0].energy_eh == _energy(ref)
+    assert run.stats["relaxations"] == 1
+    assert run.stats["input_seed"]["published"] is True
+    assert snapshots[0].stats["input_seed"]["status"] == "accepted"
+    assert snapshots[0].stats["input_seed"]["minimum_id"] == 0
+
+
+def test_lower_input_basin_survives_higher_dg_and_final_release() -> None:
+    graph, spec, ref = _pt_toy()
+
+    class LowInput(_FakeCalc):
+        def relax_many(self, requests):
+            outs = super().relax_many(requests)
+            return [
+                replace(
+                    out,
+                    energy_eh=(
+                        -101.0
+                        if q.key == "input/reference"
+                        or (q.key.startswith("release/") and np.array_equal(q.coords, ref))
+                        else -100.0
+                    ),
+                )
+                for q, out in zip(requests, outs)
+            ]
+
+    calc = LowInput()
+    run = explore.explore(graph, spec, ref, _SHAPE, _settings(budget=8), calc)
+    assert calc.requests[0].key == "input/reference"
+    assert any(q.key.startswith("dg0/") for q in calc.requests)
+    assert any(q.key.startswith("release/") for q in calc.requests)
+    assert len(run.records) == 1 and run.records[0].energy_eh == -101.0
+    np.testing.assert_array_equal(run.records[0].coords, ref)
+    seed = run.stats["input_seed"]
+    assert seed["release_requested"] is True
+    assert seed["final_stage"] == "released"
+    assert seed["final_disposition"] == "published"
+    assert seed["final_minimum_id"] == run.records[0].start
+
+
+def test_raw_input_audit_failure_skips_input_and_falls_back_to_dg(monkeypatch) -> None:
+    graph, ref = _butane()
+    real = search.audit_structure
+
+    def reject_raw(coords, graph, spec, reference, *args, **kw):
+        if coords is reference:
+            return search.AuditRecord(failed_checks=("contacts",))
+        return real(coords, graph, spec, reference, *args, **kw)
+
+    monkeypatch.setattr(search, "audit_structure", reject_raw)
+    calc = _FakeCalc()
+    run = explore.explore(graph, None, ref, None, _settings(budget=4), calc)
+    assert all(q.key != "input/reference" for q in calc.requests)
+    assert calc.requests and calc.requests[0].key.startswith("dg0/")
+    assert run.records
+    assert run.stats["input_seed"]["status"] == "raw_rejected"
+    assert run.stats["input_seed"]["raw_failed_checks"] == ["contacts"]
+
+
+def test_unconverged_input_is_not_inserted_and_dg_can_recover() -> None:
+    graph, ref = _butane()
+
+    class UnconvergedInput(_FakeCalc):
+        def relax_many(self, requests):
+            outs = super().relax_many(requests)
+            return [
+                (
+                    replace(out, converged=False, energy_eh=-1000.0)
+                    if q.key == "input/reference"
+                    else out
+                )
+                for q, out in zip(requests, outs)
+            ]
+
+    run = explore.explore(graph, None, ref, None, _settings(budget=4), UnconvergedInput())
+    assert run.records and all(r.energy_eh > -1000.0 for r in run.records)
+    assert run.stats["relaxations"] == 4
+    assert run.stats["input_seed"]["status"] == "optimization_rejected"
+    assert run.stats["input_seed"]["optimization_failed_checks"] == ["converged"]
+
+
+def test_input_stereocentres_are_checked_before_any_dg() -> None:
+    _, elements, ref = _embed("C[C@H](O)F")
+    graph, _, _ = build_topology(elements, ref, (None, [], [], [], 1.25), None)
+
+    class Mirror(_FakeCalc):
+        def relax_many(self, requests):
+            outs = super().relax_many(requests)
+            return [replace(out, coords=out.coords * np.array([-1.0, 1.0, 1.0])) for out in outs]
+
+    calc = Mirror()
+    run = explore.explore(graph, None, ref, None, _settings(budget=1), calc)
+    assert [q.key for q in calc.requests] == ["input/reference"]
+    assert not run.records
+    assert run.stats["input_seed"]["optimization_failed_checks"] == ["stereo"]
+
+
+def test_input_can_be_excluded_by_a_lower_energy_search_minimum() -> None:
+    graph, ref = _butane()
+
+    class HighInput(_FakeCalc):
+        def relax_many(self, requests):
+            outs = super().relax_many(requests)
+            return [
+                replace(out, energy_eh=-99.0 if q.key == "input/reference" else -100.0)
+                for q, out in zip(requests, outs)
+            ]
+
+    run = explore.explore(graph, None, ref, None, _settings(budget=8), HighInput())
+    assert run.records and run.records[0].energy_eh == -100.0
+    assert run.stats["input_seed"]["status"] == "accepted"
+    assert run.stats["input_seed"]["published"] is False
+    assert run.stats["input_seed"]["final_disposition"] == "outside_energy_window"
+
+
+def test_enumerated_named_shape_inputs_use_actual_class_only() -> None:
+    graph, spec, ref = _pt_toy()
+    calc = _FakeCalc()
+    run = explore.explore(
+        graph, spec, ref, _SHAPE, _settings(budget=1, arrangement="enumerate", release=False), calc
+    )
+    assert [q.key for q in calc.requests] == ["input/reference"]
+    assert len(run.records) == 1
+    allowed = {target.command for target in run.targets}
+    rec = search.audit_structure(ref, graph, spec, ref, _SHAPE, allowed=allowed)
+    actual_ids = {target.id for target in run.targets if target.command == rec.actual_class}
+    assert run.records[0].target in actual_ids
+    assert run.stats["input_seed"]["status"] == "accepted"
+
+
+def test_raw_input_audit_does_not_require_optimized_restraint_residual(monkeypatch) -> None:
+    from confflow.science.confgen.calculator import DistanceRestraint
+
+    graph, ref = _butane()
+    # A target can differ from a valid raw distance (as with symmetry-averaged restraints).
+    target = float(np.linalg.norm(ref[0] - ref[1])) + 0.1
+    monkeypatch.setattr(
+        explore._Explorer, "_restraints", lambda self: (DistanceRestraint(0, 1, target),)
+    )
+    calc = _FakeCalc()
+    run = explore.explore(graph, None, ref, None, _settings(budget=1), calc)
+    assert [q.key for q in calc.requests] == ["input/reference"]
+    assert run.stats["input_seed"]["raw_failed_checks"] == []
+    # The fake optimizer did not satisfy the target, so its optimized result is rejected.
+    assert run.stats["input_seed"]["optimization_failed_checks"] == ["restraint"]
+    assert not run.records

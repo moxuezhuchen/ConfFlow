@@ -251,6 +251,12 @@ class _Explorer:
         self.stop = "budget"  # why the search loop ended: budget | saturated | no_moves | no_minima
         self.release_status = "off"  # off | not_needed | done | failed
         self.dg_round = 0
+        self.input_seed: dict[str, Any] = {
+            "status": "pending",
+            "raw_failed_checks": [],
+            "optimization_failed_checks": [],
+            "minimum_id": None,
+        }
 
     # -- setup -----------------------------------------------------------------------------
     def _donor_perms(self) -> list[tuple[int, ...]]:
@@ -376,6 +382,66 @@ class _Explorer:
             out.append(DistanceRestraint(r.i, r.j, float(np.mean(groups[(a, b)]))))
         return tuple(out)
 
+    def _seed_input(self) -> None:
+        """Audit and optimize the actual reference before any generated search starts.
+
+        The reference defines stereo and restraints, but has no usable energy until its
+        charged relaxation succeeds. Raw audit deliberately excludes averaged restraints:
+        symmetry-equivalent reference distances need not equal their averaged targets yet.
+        """
+        from rdkit import Chem
+
+        self._poll()
+        if not self._left():
+            self.input_seed["status"] = "not_started_time_limit"
+            return
+        try:
+            mol = perceive_mol(self.elements, self.bonds, self.metal, self.ref)
+            conf = Chem.Conformer(len(self.elements))
+            for i, point in enumerate(self.ref):
+                conf.SetAtomPosition(i, tuple(map(float, point)))
+            mol.AddConformer(conf, assignId=True)
+            Chem.AssignStereochemistryFrom3D(mol)
+            self.centers = tuple(
+                atom.GetIdx()
+                for atom in mol.GetAtoms()
+                if atom.GetChiralTag()
+                in (
+                    Chem.rdchem.ChiralType.CHI_TETRAHEDRAL_CW,
+                    Chem.rdchem.ChiralType.CHI_TETRAHEDRAL_CCW,
+                )
+            )
+        except Exception as exc:
+            self.input_seed.update(
+                status="raw_rejected", raw_failed_checks=["stereo_perception"], detail=str(exc)
+            )
+            self.fail["input_stereo_perception"] += 1
+            return
+        rec = search.audit_structure(
+            self.ref,
+            self.graph,
+            self.spec,
+            self.ref,
+            self.shape,
+            (),
+            self.centers,
+            True,
+            self.st.bond_scale,
+            allowed=self.allowed if self.shape else None,
+        )
+        bad = list(rec.failed_checks)
+        if self.shape and not self._same_arrangement(self.ref):
+            bad.append("arrangement")
+        self.input_seed["raw_failed_checks"] = bad
+        if bad:
+            self.input_seed["status"] = "raw_rejected"
+            self.fail.update("input_" + check for check in bad)
+            return
+        self.input_seed["status"] = "optimizing"
+        self._relax([("input/reference", self.ref.copy(), "input")], self.pool, self.restraints)
+        if self.input_seed["status"] == "optimizing":
+            self.input_seed["status"] = "not_started_time_limit"
+
     # -- bookkeeping -------------------------------------------------------------------------
     def _poll(self) -> None:
         if self.should_cancel is not None and self.should_cancel():
@@ -497,17 +563,46 @@ class _Explorer:
             else:
                 self.released += len(batch)
             rows = []
+            input_bad: tuple[str, ...] = ()
+            input_release_bad: tuple[str, ...] = ()
+            input_release_origin = f"release:{self.input_seed['minimum_id']}"
             for (key, _, origin), out in zip(batch, outs):
                 if out.coords is None or out.energy_eh is None:
                     self.fail["not_converged"] += 1
+                    if origin == "input":
+                        input_bad = ("not_converged",)
+                    if origin == input_release_origin:
+                        input_release_bad = ("not_converged",)
                     continue
                 label, bad = self._audit(out.coords, out.converged, free, key, origin)
                 if label is None:
                     self.fail.update(bad)
+                    if origin == "input":
+                        input_bad = bad
+                    if origin == input_release_origin:
+                        input_release_bad = bad
                     continue
                 cell = label + "#" + self.topo.ring_signature(out.coords)
                 rows.append((float(out.energy_eh), out.coords, label, origin, cell))
             ids.extend(mid for mid in pool.add_many(rows, self.pmap) if mid is not None)
+            if any(origin == "input" for _, _, origin in batch):
+                minimum = next((m for m in pool.minima if m.origin == "input"), None)
+                self.input_seed.update(
+                    status="accepted" if minimum is not None else "optimization_rejected",
+                    optimization_failed_checks=list(input_bad),
+                    minimum_id=minimum.id if minimum is not None else None,
+                    energy_eh=minimum.energy if minimum is not None else None,
+                )
+            if free and any(origin == input_release_origin for _, _, origin in batch):
+                released_row = next((row for row in rows if row[3] == input_release_origin), None)
+                self.input_seed.update(
+                    release_failed_checks=list(input_release_bad),
+                    release_minimum_id=(
+                        pool.match(released_row[0], released_row[1])
+                        if released_row is not None
+                        else None
+                    ),
+                )
             if pool is not self.pool and not free:
                 self.pool.add_many(rows, self.pmap)
             self._checkpoint(pool if free else self.pool, free)
@@ -802,6 +897,9 @@ class _Explorer:
             return self.pool
         near = self.pool.within(self.st.window_kcal + 2.0)
         out = MinimaPool(self.id)
+        self.input_seed["release_requested"] = any(
+            m.id == self.input_seed["minimum_id"] for m in near
+        )
         items = [(f"release/m{m.id:05d}", m.coords, f"release:{m.id}") for m in near]
         self._relax(items, out, self.free_restraints, free=True)
         if len(out):
@@ -813,8 +911,10 @@ class _Explorer:
 
     def run(self) -> tuple[MinimaPool, dict[str, Any]]:
         st = self.st
-        # One small bootstrap batch; distribute it across targets before repeats.
-        initial = min(self._left(), max(1, min(st.relaxation_batch, st.budget // 4)))
+        self._seed_input()
+        # Input is part of the small bootstrap allowance, leaving feedback its share.
+        allowance = max(1, min(st.relaxation_batch, st.budget // 4))
+        initial = min(self._left(), max(0, allowance - self.nopt))
         targets = list(self.targets)
         if len(targets) > initial:
             targets = self.rng.sample(targets, initial)
@@ -826,7 +926,8 @@ class _Explorer:
             if st.starts is None or counts[k] < st.starts:
                 counts[k] += 1
         plan = [(target, count) for target, count in zip(targets, counts) if count]
-        self._relax(self._dg(plan, "dg0"), self.pool, self.restraints)
+        if plan:
+            self._relax(self._dg(plan, "dg0"), self.pool, self.restraints)
         for m in self.pool.minima:
             self.yields[m.label] += 1
         tries = 0
@@ -870,6 +971,7 @@ class _Explorer:
             "template": template,
             "arrangement_scope": scope,
             "relaxations": self.nopt,
+            "input_seed": dict(self.input_seed),
             "adaptive": self.st.adaptive,
             "stop": self.stop,
             "release": self.release_status,
@@ -897,6 +999,30 @@ class _Explorer:
 
     def _result(self, final: MinimaPool, stats: dict[str, Any]) -> search.SearchRun:
         rows = final.within(self.st.window_kcal)
+        seed = dict(self.input_seed)
+        if seed["minimum_id"] is not None:
+            seed["in_search_window"] = any(
+                m.id == seed["minimum_id"] for m in self.pool.within(self.st.window_kcal)
+            )
+            released = final is not self.pool and (
+                stats.get("checkpoint_stage") == "released"
+                or self.release_status in {"done", "partial"}
+            )
+            final_id = seed.get("release_minimum_id") if released else seed["minimum_id"]
+            published = any(m.id == final_id for m in rows) if final_id is not None else False
+            seed["published"] = published
+            seed["final_minimum_id"] = final_id if published else None
+            seed["final_stage"] = "released" if released else "restrained"
+            seed["final_disposition"] = (
+                "published"
+                if published
+                else (
+                    "release_not_accepted"
+                    if released and final_id is None
+                    else "outside_energy_window"
+                )
+            )
+        stats["input_seed"] = seed
         records = tuple(
             search.SearchRecord(
                 m.label,
@@ -950,6 +1076,11 @@ def explore(
     checkpoint: Callable[[search.SearchRun], None] | None = None,
 ) -> search.SearchRun:
     """Run the iterative search and return the published minima as a ``SearchRun``.
+
+    The raw input is audited and optimized first, charged to ``budget``. Its accepted
+    minimum follows the same deduplication, energy-window and release rules as DG minima;
+    it can be excluded by a genuinely lower minimum or rejected release, never assigned an
+    unoptimized reference energy. ``stats.input_seed`` records its initial disposition.
 
     ``checkpoint`` receives audited, windowed snapshots after each completed backend batch.
     Snapshot stats distinguish restrained and released coordinates; these snapshots are

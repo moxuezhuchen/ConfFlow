@@ -179,3 +179,29 @@ def test_input_audit_rejects_new_coordination_and_accepts_input() -> None:
     assert label is None
     assert "coordination_class" in reasons
     assert ex._audit(xyz, True, False) == ("t00", ())
+
+
+@pytest.mark.parametrize("name", ["ti7_salan", "zr8_onn"])
+def test_budget_one_keeps_actual_input_core_without_embedding(name, monkeypatch) -> None:
+    graph, spec, ref = _build(name)
+    snapshots = []
+    requests = []
+
+    class Recording(_FakeCalc):
+        def relax_many(self, batch):
+            requests.extend(batch)
+            return super().relax_many(batch)
+
+    def no_dg(args):
+        pytest.fail("input-only budget must not invoke embedding")
+
+    monkeypatch.setattr(explore, "_dg_task", no_dg)
+    run = explore.explore(
+        graph, spec, ref, INPUT_SHAPE, _settings(budget=1), Recording(), checkpoint=snapshots.append
+    )
+    assert [request.key for request in requests] == ["input/reference"]
+    np.testing.assert_array_equal(requests[0].coords, ref)
+    assert len(run.records) == 1 and run.records[0].target == "t00"
+    np.testing.assert_array_equal(run.records[0].coords, ref)
+    assert run.stats["input_seed"]["status"] == "accepted"
+    assert snapshots[0].stats["input_seed"]["published"] is True

@@ -194,6 +194,38 @@ def test_metal_free_real_dg(tmp_path: Path) -> None:
     assert all(r["passed"] is True and r["failed_checks"] == [] for r in summary["structures"])
 
 
+def test_one_call_budget_optimizes_input_and_persists_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A seeded worker retains the submitted input even when DG has no budget."""
+    els, ref = _toy()
+
+    def no_dg(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("a one-call search must spend its budget on the input")
+
+    monkeypatch.setattr(search, "generate_starts", no_dg)
+    job, work, out, summary_path = _job(
+        tmp_path,
+        *_metal_parts(tmp_path),
+        settings_over={"budget": 1, "release": False},
+        cores=1,
+    )
+    assert worker.main([job]) == 0
+    summary = json.loads(summary_path.read_text())
+    checkpoint = json.loads((work / "checkpoint.json").read_text())
+    assert summary["search"]["relaxations"] == 1
+    assert summary["totals"]["passed"] == 1
+    assert checkpoint["search"]["checkpoint_stage"] == "restrained"
+    assert checkpoint["structures"][0]["passed"]
+    assert np.allclose(checkpoint["coordinates"][0], ref, atol=2e-5)
+    assert out.exists()
+    inputs = list(work.rglob("in.xyz"))
+    assert len(inputs) == 1
+    rows = inputs[0].read_text().splitlines()[2:]
+    submitted = np.array([[float(v) for v in row.split()[1:4]] for row in rows])
+    assert np.allclose(submitted, ref, atol=1e-6)
+
+
 def test_resume_skips_xtb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     els, ref = _toy()
     _stub(monkeypatch, ref)
@@ -405,8 +437,10 @@ def test_sigterm_subprocess(tmp_path: Path) -> None:
     assert any(item["converged"] is True for item in finished)
 
 
-def test_broken_starts_publish_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every DG start violates the topology: nothing is published (exit 2, no xyz)."""
+def test_broken_generated_starts_preserve_valid_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Broken DG starts are rejected while the valid optimized input remains publishable."""
     els, ref = _toy()
     broken = np.array(ref, copy=True)
     broken[5] += (3.0, 0.0, 0.0)
@@ -417,9 +451,10 @@ def test_broken_starts_publish_nothing(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.setattr(search, "generate_dg_seeds", _broken)
     # one core: DG runs in this process, so the patched seeder is the one used
     job, _, out, summary_path = _job(tmp_path, *_metal_parts(tmp_path), cores=1)
-    assert worker.main([job]) == 2
+    assert worker.main([job]) == 0
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    assert summary["totals"]["passed"] == 0 and not out.exists()
+    assert summary["totals"]["passed"] >= 1 and out.exists()
+    assert summary["search"]["input_seed"]["status"] == "accepted"
     assert summary["totals"]["generated"] >= 1
     assert summary["search"]["failures"].get("topology", 0) >= 1
 
