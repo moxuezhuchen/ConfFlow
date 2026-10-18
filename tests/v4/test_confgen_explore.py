@@ -294,8 +294,8 @@ def test_dg_starts_go_out_in_parallel_slices(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(search, "generate_starts", _spy)
     explore.explore(graph, spec, ref, _SHAPE, _settings(starts=10), _FakeCalc(), map)
-    # one kept target, ten first-round starts: one slice of the same request per start
-    assert calls[:10] == [(10, (i, i + 1)) for i in range(10)]
+    # The requested ten starts are bounded to a small bootstrap batch.
+    assert calls[:4] == [(4, (i, i + 1)) for i in range(4)]
 
 
 def test_starts_lost_to_timeouts_are_counted(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -305,3 +305,118 @@ def test_starts_lost_to_timeouts_are_counted(monkeypatch: pytest.MonkeyPatch) ->
     assert not run.passing
     assert run.stats["stop"] == "no_minima"
     assert run.stats["failures"]["dg_no_start"] > 0
+
+
+def test_bootstrap_and_probe_leave_feedback_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    graph, ref = _butane()
+    calc = _FakeCalc()
+    generated = []
+
+    def dg_task(args):
+        generated.append(1)
+        return args[4].id, [ref.copy()], None, ()
+
+    def reembed(self, quota):
+        return [(f"reembed/test{i}", ref.copy(), "reembed:0") for i in range(quota)]
+
+    monkeypatch.setattr(explore, "_dg_task", dg_task)
+    monkeypatch.setattr(explore._Explorer, "_reembed", reembed)
+    run = explore.explore(graph, None, ref, None, _settings(budget=16, starts=132), calc)
+    keys = [q.key.split("/")[0] for q in calc.requests]
+    assert keys.count("dg0") == 4
+    assert keys.count("probe") <= 4
+    assert "single" in keys and "reembed" in keys
+    assert len(generated) <= len(calc.requests) <= 16
+    assert run.stats["spent"]["single"] > 0
+
+
+def test_checkpoint_survives_later_batch_cancellation() -> None:
+    graph, ref = _butane()
+    snapshots = []
+
+    class Interrupted(_FakeCalc):
+        def relax_many(self, requests):
+            if self.requests:
+                raise search.SearchCancelled("backend interrupted")
+            return super().relax_many(requests)
+
+    with pytest.raises(search.SearchCancelled):
+        explore.explore(
+            graph, None, ref, None, _settings(), Interrupted(), checkpoint=snapshots.append
+        )
+    assert len(snapshots) == 1
+    assert snapshots[0].records
+    assert snapshots[0].stats["relaxations"] == 4
+    assert snapshots[0].stats["checkpoint_stage"] == "restrained"
+    assert snapshots[0].stats["release"] == "pending"
+    assert all(r.passed for r in snapshots[0].records)
+
+
+def test_soft_wall_budget_trims_batches_and_returns_audited_results(monkeypatch) -> None:
+    graph, ref = _butane()
+    clock = [0.0]
+    snapshots = []
+    monkeypatch.setattr(explore.time, "monotonic", lambda: clock[0])
+
+    class Slow(_FakeCalc):
+        def relax_many(self, requests):
+            clock[0] += 10 * len(requests)
+            return super().relax_many(requests)
+
+    calc = Slow()
+    run = explore.explore(
+        graph,
+        None,
+        ref,
+        None,
+        _settings(budget=48, time_limit_seconds=95),
+        calc,
+        checkpoint=snapshots.append,
+    )
+    assert run.stats["stop"] == "time_limit"
+    assert clock[0] < 95
+    assert run.records and snapshots
+    assert len(calc.requests) < 10
+    assert any(q.key.startswith("single/") for q in calc.requests)
+
+
+@pytest.mark.parametrize("limit", [0, -1, float("nan"), float("inf")])
+def test_invalid_time_limit_is_refused(limit) -> None:
+    graph, ref = _butane()
+    with pytest.raises(search.SearchError):
+        explore.explore(graph, None, ref, None, _settings(time_limit_seconds=limit), _FakeCalc())
+
+
+def test_count_budget_with_ample_wall_budget_still_releases(monkeypatch) -> None:
+    graph, spec, ref = _pt_toy()
+    clock = [0.0]
+    monkeypatch.setattr(explore.time, "monotonic", lambda: clock[0])
+
+    class Timed(_FakeCalc):
+        def relax_many(self, requests):
+            clock[0] += len(requests)
+            return super().relax_many(requests)
+
+    calc = Timed()
+    run = explore.explore(
+        graph, spec, ref, _SHAPE, _settings(budget=8, time_limit_seconds=10000), calc
+    )
+    assert run.stats["stop"] == "budget"
+    assert run.stats["release"] == "done"
+    assert any(q.key.startswith("release/") for q in calc.requests)
+
+
+def test_failed_release_checkpoint_preserves_audited_restrained_minima() -> None:
+    graph, spec, ref = _pt_toy()
+    snapshots = []
+    explore.explore(
+        graph,
+        spec,
+        ref,
+        _SHAPE,
+        _settings(budget=8),
+        _FailingReleaseCalc(),
+        checkpoint=snapshots.append,
+    )
+    assert snapshots[-1].records
+    assert snapshots[-1].stats["checkpoint_stage"] == "restrained"

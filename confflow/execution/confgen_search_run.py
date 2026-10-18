@@ -309,6 +309,8 @@ def _run(
     settings_doc["starts"] = starts
     settings_doc["seed"] = int(seed)
     settings_doc["fragment_charges"] = [[a, q] for a, q in frag]
+    walltime: float | None = binding.walltime_seconds if binding is not None else None
+    walltime = float(walltime) if walltime else None
     job_path = os.path.join(attempt, "search_job.json")
     job_doc = {
         "atoms": list(driving.atoms),
@@ -325,11 +327,12 @@ def _run(
         "workdir": os.path.join(rundir, "starts"),
         "structures_file": os.path.join(rundir, "structures.xyz"),
         "summary_file": os.path.join(rundir, "summary.json"),
+        "checkpoint_file": os.path.join(rundir, "checkpoint.json"),
+        # Leave time for worker setup/final serialization before the outer hard deadline.
+        "time_limit_seconds": None if walltime is None else max(0.001, walltime * 0.9),
     }
     with open(job_path, "w", encoding="utf-8") as handle:
         handle.write(json.dumps(job_doc, sort_keys=True, indent=2) + "\n")
-    walltime: float | None = binding.walltime_seconds if binding is not None else None
-    walltime = float(walltime) if walltime else None
     request = NativeExecutionRequest(
         sys.executable,
         (sys.executable, "-m", "confflow.execution.confgen_search_worker", job_path),
@@ -401,6 +404,7 @@ def _run(
         refs: list[ArtifactRef] = []
         roles = (
             ("summary.json", "search_summary"),
+            ("checkpoint.json", "search_checkpoint"),
             ("structures.xyz", "search_structures"),
             ("stdout.log", "search_log"),
             ("stderr.log", "search_log"),
@@ -506,6 +510,20 @@ def _run(
             ),
         )
         diagnostics = [diagnostic]
+        if release in {"deferred", "partial"}:
+            diagnostics.append(
+                Diagnostic(
+                    "confgen_release_incomplete",
+                    "time budget limited release: deferred results retain search restraints; "
+                    "partial results contain only the successfully released subset",
+                    DiagnosticSeverity.WARNING,
+                    context.step_id,
+                    work_item.id,
+                    work_item.logical_key,
+                    None,
+                    FrozenDict({"release": release}),
+                )
+            )
         if release == "failed":
             diagnostics.append(
                 Diagnostic(

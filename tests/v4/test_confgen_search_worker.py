@@ -506,3 +506,39 @@ def test_failed_release_is_warned(
     assert worker.main([job]) == 0
     assert json.loads(summary_path.read_text(encoding="utf-8"))["search"]["release"] == "failed"
     assert "warning: every release relaxation failed" in capsys.readouterr().err
+
+
+def test_checkpoint_survives_interrupted_search(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cancelled search retains one coherent audited snapshot, without publishing a final set."""
+    els, ref = _toy()
+    record = search.SearchRecord("t00", 1, False, -1.0, True, coords=ref)
+    snapshot = search.SearchRun(
+        records=(record,),
+        passing=(record,),
+        stats={"checkpoint": True, "release": "pending", "relaxations": 1},
+    )
+
+    def interrupted(*args: Any, **kwargs: Any) -> Any:
+        kwargs["checkpoint"](snapshot)
+        raise search.SearchCancelled("test interruption")
+
+    monkeypatch.setattr(worker, "explore", interrupted)
+    job, work, out, summary = _job(tmp_path, *_metal_parts(tmp_path))
+    assert worker.main([job]) == 143
+    saved = json.loads((work / "checkpoint.json").read_text())
+    assert saved["final"] is False
+    assert saved["search"]["release"] == "pending"
+    assert saved["structures"][0]["passed"] is True
+    assert saved["coordinates"] == [ref.tolist()]
+    assert saved["atoms"] == els
+    assert not out.exists() and not summary.exists()
+    assert not (work / "checkpoint.json.tmp").exists()
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, float("nan"), "240"])
+def test_worker_rejects_invalid_time_limit(tmp_path: Path, limit: Any) -> None:
+    job, *_ = _job(tmp_path, *_metal_parts(tmp_path), time_limit_seconds=limit)
+    with pytest.raises(worker._JobError, match="time_limit_seconds"):
+        worker._load_job(job)

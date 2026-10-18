@@ -13,6 +13,7 @@ import concurrent.futures as futures
 import contextlib
 import json
 import multiprocessing
+import os
 import signal
 import sys
 import threading
@@ -139,6 +140,14 @@ def _load_job(path: str) -> dict[str, Any]:
         raise _JobError(f"job field 'settings.adaptive' must be a boolean, got {adaptive!r}")
     budget = _int(section.get("budget"), "settings.budget", 1)
     cap = _int(section.get("budget_cap", budget), "settings.budget_cap", 1) if adaptive else budget
+    time_limit = raw.get("time_limit_seconds")
+    if time_limit is not None and (
+        isinstance(time_limit, bool)
+        or not isinstance(time_limit, (int, float))
+        or not np.isfinite(time_limit)
+        or time_limit <= 0
+    ):
+        raise _JobError("job field 'time_limit_seconds' must be a finite positive number")
     settings = ExploreSettings(
         budget=max(cap, budget),
         adaptive=adaptive,
@@ -155,6 +164,7 @@ def _load_job(path: str) -> dict[str, Any]:
         ),
         fragment_charges=tuple(frag),
         bond_scale=float(scale),
+        time_limit_seconds=None if time_limit is None else float(time_limit),
     )
     job = dict(raw)
     job["reference"] = ref
@@ -175,6 +185,29 @@ def _comment(r: search.SearchRecord, low: float) -> str:
     energy = float(r.energy_eh or 0.0)
     text = f"target={r.target} start={r.start} energy_eh={energy:.6f} rel_kcal={(energy - low) * HARTREE_TO_KCAL:.3f}"
     return text if r.actual_target is None else f"{text} actual={r.actual_target}"
+
+
+def _write_checkpoint(path: Path, run: search.SearchRun, atoms: list[str]) -> None:
+    """Atomically publish audited search minima, separately from final released output."""
+    document = {
+        "schema_version": 1,
+        "kind": "confgen_search_checkpoint",
+        "final": False,
+        "atoms": atoms,
+        **run.summary(),
+        "coordinates": [r.coords.tolist() if r.coords is not None else None for r in run.records],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as handle:
+            json.dump(document, handle, sort_keys=True, allow_nan=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _run(job_path: str) -> int:
@@ -220,6 +253,9 @@ def _run(job_path: str) -> int:
                 calc,
                 pmap,
                 should_cancel=_STOP.is_set,
+                checkpoint=lambda snapshot: _write_checkpoint(
+                    Path(job.get("checkpoint_file", work / "checkpoint.json")), snapshot, els
+                ),
             )
     except Cancelled as exc:
         raise search.SearchCancelled(str(exc)) from exc
@@ -234,6 +270,11 @@ def _run(job_path: str) -> int:
     if (run.stats or {}).get("release") == "failed":
         sys.stderr.write(
             "warning: every release relaxation failed; the published structures keep all search restraints\n"
+        )
+    elif (run.stats or {}).get("release") in {"deferred", "partial"}:
+        sys.stderr.write(
+            "warning: time budget limited release; inspect search.release and checkpoint_stage "
+            "before using the published structures\n"
         )
     if not run.passing:
         sys.stderr.write("error: no structure passed all audit checks\n")
