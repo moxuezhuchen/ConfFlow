@@ -4,6 +4,22 @@ The October 2026 paper diagnostic exposed two independent problems: initializati
 consume an entire short search, and the metal radius screen could reject ordinary Rb–C/H
 proximity as extra coordination.
 
+## Input seed lifecycle
+
+The follow-up DILQAQ regression found that using the reference for constraints did not
+submit it to optimization. Explore now audits the actual input and optimizes it before
+generated starts. This optimization counts toward the search budget and the small bootstrap
+allowance; with a budget of one, the input gets the sole search optimization. Stereo centers
+are established before this call, independently of DG generation.
+
+Only a converged, audited result with an evaluated energy enters the minima pool. It then
+uses the same deduplication, window and release rules as generated minima. There is no
+unoptimized input mixed into the ranked output. A valid input basin can legitimately fall
+outside the final energy window if search finds lower minima; a failed input optimization
+does not prevent generated starts from using the remaining budget. `search.input_seed`
+records raw audit, optimization outcome and subsequent publication disposition, so a
+missing input can be distinguished from a rejected or window-excluded one.
+
 ## Search scheduling
 
 `ExploreSettings` now bootstraps a small batch instead of performing a fixed second DG
