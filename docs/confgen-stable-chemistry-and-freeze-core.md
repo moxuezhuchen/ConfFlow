@@ -75,6 +75,11 @@ in the coordinator; lowmode wall time includes Hessian waiting while its backend
 outside this CPU counter. Existing `spent` counters continue to count round optimization calls.
 Zero `spent.reembed` therefore does not mean zero re-embedding cost.
 
+For zero-output failures, the public diagnostic code remains
+`confgen_no_passing_structures`. Its details carry `outcome_class` and a specific `reason_code`
+for backend failure, chemical rejection, core displacement or truncation; existing callers
+can keep using the general code without losing the more precise audit reason.
+
 Local re-embedding allocation is reduced by measured generation success and CPU cost relative
 to global DG. Four consecutive failed attempts trigger exponential round backoff, with one
 task per recovery probe; successful generation resets the backoff. Four failed backoff levels

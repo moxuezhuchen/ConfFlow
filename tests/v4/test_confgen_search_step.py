@@ -392,7 +392,9 @@ def test_zero_passing_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     out, _ = _run(_native(), _driving_metal(), _write_fake(tmp_path), tmp_path)
     assert out.status.value == "failed"
     errors = [d for d in out.diagnostics if d.is_error]
-    assert len(errors) == 1 and errors[0].code == "confgen_backend_failure"
+    assert len(errors) == 1 and errors[0].code == "confgen_no_passing_structures"
+    assert errors[0].details["reason_code"] == "confgen_backend_failure"
+    assert errors[0].details["outcome_class"] == "backend_failure"
     assert "backend relaxations failed" in errors[0].message
     summary = _summary(out, tmp_path)
     assert summary["totals"]["passed"] == 0
@@ -434,7 +436,8 @@ def test_exit_two_reports_search_failures(tmp_path: Path, monkeypatch: pytest.Mo
     monkeypatch.setattr(WorkItemExecutor, "launch_and_wait", _launch)
     out = ConfgenExecutor().execute(item, ctx)
     assert out.status.value == "failed"
-    assert out.diagnostics[0].code == "confgen_core_displacement"
+    assert out.diagnostics[0].code == "confgen_no_passing_structures"
+    assert out.diagnostics[0].details["reason_code"] == "confgen_core_displacement"
     assert "backend moved one or more frozen core atoms" in out.diagnostics[0].message
     assert "failed checks: stereo=4, topology=2" in out.diagnostics[0].message
     assert dict(out.diagnostics[0].details["failed_checks"]) == {"stereo": 4, "topology": 2}

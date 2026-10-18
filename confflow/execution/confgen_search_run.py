@@ -628,14 +628,15 @@ def _run(
         keep_diag = _keep_scope_diagnostic(search_stats, context.step_id, work_item)
         extra_diagnostics = (keep_diag,) if keep_diag is not None else ()
         return _failed(
-            f"confgen search ran {generated} relaxations; {outcome_message} "
+            f"confgen search ran {generated} relaxations; none passed all audit checks; {outcome_message} "
             f"(failed checks: {', '.join(f'{k}={v}' for k, v in counts.items()) or 'none'})",
-            diagnostic_code,
+            "confgen_no_passing_structures",
             artifacts,
             {
                 "failed_checks": counts,
                 "generated": generated,
                 "outcome_class": outcome_class,
+                "reason_code": diagnostic_code,
                 "dg_errors": search_stats.get("dg_errors"),
             },
             extra_diagnostics,
