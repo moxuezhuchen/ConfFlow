@@ -304,6 +304,43 @@ def test_metal_search_completed(tmp_path: Path) -> None:
     assert not [d for d in out.diagnostics if d.code == "confgen_release_failed"]
 
 
+def test_widened_keep_scope_is_reported_with_template_and_searched_targets(
+    tmp_path: Path,
+) -> None:
+    native = _native(
+        coordination={
+            "metal_center": 1,
+            "binding_sites": _SITES,
+            "shapes": ["tetrahedral"],
+        }
+    )
+    out, _ = _run(native, _driving_metal(), _write_fake(tmp_path), tmp_path)
+
+    assert out.status.value == "completed", [str(d.message) for d in out.diagnostics]
+    summary = _summary(out, tmp_path)
+    search_stats = summary["search"]
+    assert search_stats["template"] == "tetrahedral"
+    assert search_stats["arrangement_scope"] == "all_classes_input_unclassified"
+    assert search_stats["targets_searched"] == [target["id"] for target in summary["targets"]]
+
+    info = next(d for d in out.diagnostics if d.code == "confgen_completed")
+    details = dict(info.details)
+    assert details["template"] == "tetrahedral"
+    assert details["arrangement_scope"] == "all_classes_input_unclassified"
+    assert details["targets_searched"] == tuple(search_stats["targets_searched"])
+
+    warnings = [d for d in out.diagnostics if d.code == "confgen_keep_scope_widened"]
+    assert len(warnings) == 1
+    warning = warnings[0]
+    assert "tetrahedral" in warning.message
+    assert "targets: " + ", ".join(search_stats["targets_searched"]) in warning.message
+    assert dict(warning.details) == {
+        "template": "tetrahedral",
+        "arrangement_scope": "all_classes_input_unclassified",
+        "targets_searched": tuple(search_stats["targets_searched"]),
+    }
+
+
 def test_metal_free_search_completed(tmp_path: Path) -> None:
     driving = _driving_free()
     scope = _scope(seed=5, coordination=None)
@@ -314,6 +351,14 @@ def test_metal_free_search_completed(tmp_path: Path) -> None:
     assert all(tuple(r.atoms) == tuple(driving.atoms) for r in out.structures)
     assert all(dict(r.metadata)["search_target"] == "t00" for r in out.structures)
     assert all(dict(r.metadata)["search_actual_target"] == "t00" for r in out.structures)
+    summary = _summary(out, tmp_path)
+    assert summary["search"]["template"] is None
+    assert summary["search"]["arrangement_scope"] is None
+    assert summary["search"]["targets_searched"] == ["t00"]
+    info = next(d for d in out.diagnostics if d.code == "confgen_completed")
+    details = dict(info.details)
+    assert details["template"] is None and details["arrangement_scope"] is None
+    assert details["targets_searched"] == ("t00",)
 
 
 def test_release_status_reaches_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -347,8 +392,15 @@ def test_zero_passing_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_exit_two_reports_search_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Exit 2 with no published rows: the item fails and reports ``search.failures``."""
-    native, driving = _native(), _driving_metal()
+    """Exit 2 reports failed checks and the keep scope that was searched."""
+    native = _native(
+        coordination={
+            "metal_center": 1,
+            "binding_sites": _SITES,
+            "shapes": ["tetrahedral"],
+        }
+    )
+    driving = _driving_metal()
     item = _item("cg-item", [driving])
     ctx = _ctx(_sci(native), str(tmp_path), _write_fake(tmp_path))
     rundir = Path(ctx.attempt_dir(item)) / "search_run"
@@ -356,7 +408,13 @@ def test_exit_two_reports_search_failures(tmp_path: Path, monkeypatch: pytest.Mo
     def _launch(*args: Any, **kwargs: Any) -> Any:
         rundir.mkdir(parents=True, exist_ok=True)
         totals = {"targets": 3, "generated": 6, "relaxed": 6, "passed": 0, "reference_passed": 0}
-        search = {"relaxations": 6, "failures": {"stereo": 4, "topology": 2}}
+        search = {
+            "relaxations": 6,
+            "failures": {"stereo": 4, "topology": 2},
+            "template": "tetrahedral",
+            "arrangement_scope": "all_classes_input_unclassified",
+            "targets_searched": ["t00", "t01"],
+        }
         summary = {"targets": [], "structures": [], "fragment_charges": [], "totals": totals,
                    "search": search}  # fmt: skip
         (rundir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
@@ -369,6 +427,17 @@ def test_exit_two_reports_search_failures(tmp_path: Path, monkeypatch: pytest.Mo
     assert "ran 6 relaxations but none passed" in out.diagnostics[0].message
     assert "failed checks: stereo=4, topology=2" in out.diagnostics[0].message
     assert dict(out.diagnostics[0].details["failed_checks"]) == {"stereo": 4, "topology": 2}
+    warnings = [d for d in out.diagnostics if d.code == "confgen_keep_scope_widened"]
+    assert len(warnings) == 1
+    warning = warnings[0]
+    assert warning.severity.value == "warning"
+    assert "tetrahedral" in warning.message
+    assert "targets: t00, t01" in warning.message
+    assert dict(warning.details) == {
+        "template": "tetrahedral",
+        "arrangement_scope": "all_classes_input_unclassified",
+        "targets_searched": ("t00", "t01"),
+    }
     assert not (rundir / "structures.xyz").exists()
 
 

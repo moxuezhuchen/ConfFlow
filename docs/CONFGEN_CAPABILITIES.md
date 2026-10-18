@@ -36,7 +36,7 @@
 2. 全局出发：用 RDKit ETKDG 距离几何（`confflow/science/confgen/dg_seed.py`）生成出发构象。
    首轮每个配位类取 `starts` 个出发；`starts` 为 `null` 时把 60 个出发分摊到搜索范围内的类（每类至少 2 个）；
    无金属时整体取 60 个。`arrangement: keep` 只对输入所属的类做 DG；输入不能归入任何理想多面体时
-   保留全部类。`enumerate` 对所有类做 DG（按配体图自同构合并等价类）。第二轮只补有产出的类。
+   保留全部类（此时发出 WARNING `confgen_keep_scope_widened`，见第 6 节）。`enumerate` 对所有类做 DG（按配体图自同构合并等价类）。第二轮只补有产出的类。
 3. 势阱探测：在至多 3 个“环状态×类别”格子的最低构象上，测出每个转子实际弛豫到的扭转偏移，
    作为转子移动，并保留与任何实测偏移都相差 30° 以上的网格移动（探测父结构上不存在的阱仍可到达）。
 4. 反馈轮次，搜索阶段的预算按固定份额分配：全局 DG 30 %、单键转动 55 %、局部重嵌入 15 %。
@@ -105,9 +105,18 @@ ConfFlow 不给出 DFT 能量。
 - `metal_center`：金属原子索引；
 - `binding_sites`：4 至 6 个位点，每个 `{id, kind: atom, atoms: [i], hapticity: 1}`，位点 id 唯一；
 - `shapes`：恰好一个已注册形状（`confflow/science/confgen/graph.py` 的 `SUPPORTED_SHAPES`），
-  配位数必须与形状相容（4–6，`CN_SHAPES`）；
+  配位数必须与形状相容（4–6，`CN_SHAPES`），或 `input`（见下）；
 - `constraints`：可选的 `FORBIDDEN_TRANS` 策略声明（`classification` 固定为 `REJECTED_BY_POLICY`），
   是策略而非证明。
+
+`shapes: [input]`（任意配位数 ≥2，仅与 `arrangement: keep` 搭配）：不套用理想多面体，模板取输入自身的金属–给体核心
+（给体相对金属的向量），即输入的配位排布本身。DG 边界放宽 0.25 Å 以容纳输入几何（去掉金属后 RDKit 的自由配体先验，
+如 s-trans 共轭螯合环，可能排除真实结构）。新配位以输入为参照：非给体原子距金属小于共价半径和的 1.25 倍、且比参考近 0.3 Å 以上，
+即判 `coordination_class` 失败。
+
+`arrangement: keep` 保留的内容：配体的给体集合与共价拓扑；给体排布，即按图等价的给体置换取最优的给体–金属–给体夹角，
+偏差 ≤45° 才算同一排布，排布有手性时还比较其手性（镜像排布不通过）；几何弛豫。`release: true` 时，最终极小在去掉
+金属–给体约束后重新弛豫（第 5 节），保留的是排布与手性，而不是搜索阶段的坐标。
 
 `search`（可选）与默认值：
 
@@ -116,7 +125,7 @@ ConfFlow 不给出 DFT 能量。
 | `starts` | `null` | 首轮 DG 出发数：有 `coordination` 时每个配位类的出发数；`null` 时把 60 个出发分摊到搜索范围内的类（每类至少 2 个），无金属时为 60 |
 | `budget` | `null`（自适应） | 不设时：至少 1500 次优化，之后只要低能区仍在增长（最近 max(500, 已花费 25 %) 次里 3 kcal/mol 内新极小多于每 250 次 1 个，或最低能量又降了 0.1 kcal/mol 以上）就继续，上限 8000。设为整数时：搜索阶段的固定上限。收尾（release）对最低能量以上 `window_kcal + 2` 内的每个极小再加一次，Hessian 不计 |
 | `window_kcal` | `6.0` | 发布与父结构选择的能量窗口（kcal/mol，须 >0） |
-| `arrangement` | `keep` | `keep`：保持输入的配位排布（输入不可归类时搜索全部类别）；`enumerate`：枚举所有配位类 |
+| `arrangement` | `keep` | `keep`：保持输入的配位排布（输入不能归入任何理想形状时搜索全部类别，并发出 WARNING `confgen_keep_scope_widened`）；`enumerate`：枚举所有配位类；`shapes: [input]` 同样保持输入排布，且不扩大范围 |
 | `release` | `true` | 是否做去约束收尾 |
 | `small_ring_torsions` | `both` | 小环扭转开关：`both` 时每批 DG 出发约一半开、一半关；`on`/`off` 全局开或关 |
 | `embed_timeout_seconds` | `120` | 逐起点的 DG 嵌入超时（秒）：每个出发单独一次 RDKit 调用；超时或无法嵌入的出发被跳过（计入 `search.failures.dg_no_start`），其余出发保留。每个出发单独作为一个并行任务（种子与整次请求相同，结果不变）。局部重嵌入另用 10 s 上限（与本值取较小者）：实测成功的重嵌入都在 4 s 内，失败的会一直跑到上限 |
@@ -190,7 +199,9 @@ worker 记录 xTB 的 `xtb version … (commit)` 行到 `summary.json`。已完�
     `release`（去约束收尾状态：`done`；`off` 未开启；`not_needed` 没有可去掉的约束；`failed` 收尾全部失败，
     此时发布的是仍带全部搜索约束的构象，worker 在 stderr 给出 warning）、`release_relaxations`（收尾次数）、`hessians`、
     `rotors`（转子数）、`targets_searched`、`unique_minima`、`spent`（各移动的花费）、
-    `found_in_window`（各移动在窗口内的产出）、`failures`（失败原因计数）。
+    `found_in_window`（各移动在窗口内的产出）、`failures`（失败原因计数）、`template`（`input`、理想形状名，或无金属时为 None）、
+    `arrangement_scope`（搜索范围：`input_arrangement` 只搜索输入所属的类；`all_classes_input_unclassified` keep 下输入不能归类，
+    扩大到全部类；`all_classes` 搜索全部类（`enumerate`）；无金属时为 None）。
   逐起点的失败记录不再列出（几千条），失败原因统一计入 `search.failures`。
 - worker 的 `stdout.log`、`stderr.log`（均为制品）。
 - 成员的 `role` 为 `conformer`，`ordinal` 为能量名次（0-based），id 按 `conformer_output_id`；
@@ -202,7 +213,8 @@ worker 记录 xTB 的 `xtb version … (commit)` 行到 `summary.json`。已完�
 
 退出：至少一个构象通过审计并发布为 `COMPLETED`，附 INFO `confgen_completed`（生成、松弛、发布的数量，
 失败审计项直方图、`release` 与 `stop`）；去约束收尾全部失败时仍为 `COMPLETED`，另附 WARNING
-`confgen_release_failed`；没有任何构象通过审计为 `FAILED`，错误码 `confgen_no_passing_structures`，
+`confgen_release_failed`；keep 因输入不能归类而扩大到全部类时另附 WARNING `confgen_keep_scope_widened`
+（`details` 含 `template`、`arrangement_scope` 与 `targets_searched`，建议改用 `shapes: [input]`）；没有任何构象通过审计为 `FAILED`，错误码 `confgen_no_passing_structures`，
 错误信息为 `confgen search ran N relaxations but none passed all audit checks`，并附失败审计项直方图。
 此时 worker 以退出码 2 结束、不写 `structures.xyz`。
 worker 异常（包括 job 非法或 xTB 缺失）为 `FAILED`，附 stderr 尾部。

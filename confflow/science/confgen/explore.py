@@ -60,6 +60,10 @@ _RESTRAINT_TOL = 0.03  # Angstrom
 _PROBE_MAX_KCAL = 12.0
 _LM_KIDS_MODES, _LM_AMPS = 6, (1.2, 2.2)
 _SEED_MOD = 2_000_003  # x 1000 stays below 2**31
+#: unit-vector RMSD above which a donor arrangement counts as chiral (mirror not superimposable)
+_HAND_TOL = 0.1
+#: numerical tie tolerance for comparing proper and mirror fits of one candidate
+_HAND_FIT_EPS = 1.0e-8
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +118,16 @@ def _dg_task(args: tuple[Any, ...]) -> tuple[str, list[np.ndarray], str | None, 
     return target.id, [s.coords for s in found.starts], err, tuple(found.stereo_centers)
 
 
+def _fit_rmsd(p: np.ndarray, q: np.ndarray, proper: bool) -> float:
+    """RMSD of unit-vector rows ``p`` onto ``q`` under the best rotation (or rotation-reflection)."""
+    u, s, vt = np.linalg.svd(p.T @ q)
+    sign = np.ones(3)
+    if (np.linalg.det(u @ vt) < 0) == proper:  # force det +1 (proper) or -1 (improper)
+        sign[2] = -1.0
+    best = float(np.sum(s * sign))
+    return math.sqrt(max(2.0 * len(p) - 2.0 * best, 0.0) / len(p))
+
+
 def _reembed_limit(st: ExploreSettings) -> int:
     """Return the local re-embedding timeout: the smaller positive limit, 0 for none."""
     limits = [t for t in (st.reembed_timeout, st.embed_timeout) if t > 0]
@@ -158,6 +172,10 @@ def _reembed_task(args: tuple[Any, ...]) -> tuple[np.ndarray | None, str | None]
         params.useRandomCoords, params.embedFragmentsSeparately, params.numThreads = True, False, 1
         params.randomSeed, params.timeout = int(seed), int(timeout)
         params.SetBoundsMat(bounds)
+        # Tight distance bounds alone cannot distinguish a structure from its mirror image.
+        # Pinning the non-free atoms to their coordinates keeps the core's hand and avoids
+        # reversing a rigid core around stereocentres in a free ligand region.
+        params.SetCoordMap({i: Point3D(*map(float, xyz[i])) for i in fixed})
         cid = rdDistGeom.EmbedMolecule(mol, params)
         if cid < 0:
             return None, "embed"
@@ -192,6 +210,9 @@ class _Explorer:
         self._reduce_targets()
         self.arr_ref: np.ndarray | None = None
         self.arr_perms: list[list[int]] = []
+        self.arr_vec: np.ndarray = np.empty((0, 3))  # reference donor unit vectors (metal->donor)
+        self.arr_chiral = False  # the reference arrangement has no mirror-superimposable relabel
+        self.unclassified_keep = False  # keep requested, but the input fits no class
         if st.arrangement == "keep" and self.donors:
             self._keep_arrangement()
         self.restraints = self._restraints()
@@ -274,6 +295,11 @@ class _Explorer:
         v /= np.linalg.norm(v, axis=1)[:, None]
         return np.degrees(np.arccos(np.clip(v @ v.T, -1.0, 1.0)))
 
+    def _donor_vectors(self, xyz: np.ndarray) -> np.ndarray:
+        assert self.metal is not None
+        v = np.array([xyz[d] - xyz[self.metal] for d in self.donors])
+        return v / np.linalg.norm(v, axis=1)[:, None]
+
     def _keep_arrangement(self) -> None:
         """Search and accept only the input structure's donor arrangement.
 
@@ -285,22 +311,46 @@ class _Explorer:
         except Exception:
             self.arr_perms = [list(range(len(self.donors)))]
         if self.shape == INPUT_SHAPE:  # the input is the arrangement: no class to classify
-            self.arr_ref = self._angles(self.ref)
+            self._set_arrangement()
             return
         rec = search.audit_structure(self.ref, self.graph, self.spec, self.ref, self.shape, (), (),
                                      True, self.st.bond_scale, allowed=self.allowed)  # fmt: skip
         if "coordination_class" in rec.failed_checks or rec.actual_class not in self.tid:
+            self.unclassified_keep = True
             return  # the input fits no ideal polyhedron: it has no arrangement to keep
         want = self.tid[rec.actual_class]
         self.targets = tuple(t for t in self.targets if self.tid[t.command] == want)
+        self._set_arrangement()
+
+    def _set_arrangement(self) -> None:
+        """Store the reference angles, donor vectors and whether the arrangement is chiral."""
         self.arr_ref = self._angles(self.ref)
+        vec = self._donor_vectors(self.ref)
+        self.arr_vec = vec
+        # chiral unless some relabelling of the reference is mirror-superimposable on itself
+        self.arr_chiral = min(_fit_rmsd(vec[pm], vec, proper=False)
+                              for pm in self.arr_perms) > _HAND_TOL  # fmt: skip
 
     def _same_arrangement(self, xyz: np.ndarray) -> bool:
+        """Return whether some admissible relabelling keeps the donor angles and the hand.
+
+        The angle test alone is mirror-invariant; for a chiral reference the donor vectors must
+        also fit by a proper rotation no worse than by a reflection.
+        """
         if self.arr_ref is None:
             return True
         a = self._angles(xyz)
-        return any(float(np.abs(a[np.ix_(pm, pm)] - self.arr_ref).max()) <= _ARR_TOL
-                   for pm in self.arr_perms)  # fmt: skip
+        vec = self._donor_vectors(xyz) if self.arr_chiral else None
+        for pm in self.arr_perms:
+            if float(np.abs(a[np.ix_(pm, pm)] - self.arr_ref).max()) > _ARR_TOL:
+                continue
+            if vec is None:
+                return True
+            proper = _fit_rmsd(vec[pm], self.arr_vec, proper=True)
+            mirror = _fit_rmsd(vec[pm], self.arr_vec, proper=False)
+            if proper <= mirror + _HAND_FIT_EPS:
+                return True
+        return False
 
     def _restraints(self) -> tuple[DistanceRestraint, ...]:
         """Return the reference restraints averaged over graph-equivalent atom pairs."""
@@ -691,8 +741,24 @@ class _Explorer:
                 break
         return self._release(), self._stats()
 
+    def _scope(self) -> tuple[str | None, str | None]:
+        """Return (template, arrangement scope) as reported in the stats."""
+        if self.metal is None or self.spec is None:
+            return None, None
+        template = self.shape  # the input template is named by INPUT_SHAPE itself
+        if self.st.arrangement == "enumerate":
+            return template, "all_classes"
+        if self.arr_ref is not None:
+            return template, "input_arrangement"
+        if self.unclassified_keep:
+            return template, "all_classes_input_unclassified"
+        return template, None
+
     def _stats(self) -> dict[str, Any]:
+        template, scope = self._scope()
         return {
+            "template": template,
+            "arrangement_scope": scope,
             "relaxations": self.nopt,
             "adaptive": self.st.adaptive,
             "stop": self.stop,
