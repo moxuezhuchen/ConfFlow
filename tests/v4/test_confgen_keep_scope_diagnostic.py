@@ -18,7 +18,11 @@ def _item() -> SimpleNamespace:
 
 
 def _stats(scope: str | None, template: str | None = "square_planar") -> dict[str, Any]:
-    return {"template": template, "arrangement_scope": scope}
+    return {
+        "template": template,
+        "arrangement_scope": scope,
+        "targets_searched": ["t00", "t01"],
+    }
 
 
 def test_keep_scope_warns_when_input_fits_no_class() -> None:
@@ -29,11 +33,13 @@ def test_keep_scope_warns_when_input_fits_no_class() -> None:
     assert warn.severity is DiagnosticSeverity.WARNING
     assert "tetrahedral" in warn.message
     assert "coordination.shapes: [input]" in warn.message
-    assert "every coordination class" in warn.message
+    assert "all admissible coordination classes" in warn.message
+    assert "targets: t00, t01" in warn.message
     details = dict(warn.details)
     assert details == {
         "template": "tetrahedral",
         "arrangement_scope": "all_classes_input_unclassified",
+        "targets_searched": ("t00", "t01"),
     }
 
 

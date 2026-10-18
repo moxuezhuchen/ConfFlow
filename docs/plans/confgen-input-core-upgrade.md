@@ -96,3 +96,14 @@ PR #167 合并后，对照外部评审意见核查了代码和数据，结论如
 - **C，搜索范围透明：** stats 记录 `template`（`input`、理想形状名，或无金属时为 None）和 `arrangement_scope`（`input_arrangement`、`all_classes_input_unclassified`、`all_classes`，或 None）。keep 实际扩大到全部类别时，confgen 步骤发出 warning 诊断 `confgen_keep_scope_widened`，并建议改用 `shapes: [input]`。行为不变，只是不再静默。
 - **D，测试：** 重嵌入在多个种子下保持核心手性；Cd(bpy)3 整体镜像被 keep 拒绝，原结构被接受；无手性排布跳过手性检查；release 开启时 keep 发布的结构保持排布与手性；扩大范围的诊断。
 - **暂缓：** 让 input 成为默认、自动选择模式、enumerate 使用输入核心。enumerate 依赖本节的构型身份（排布类别 + 金属手性）。
+
+### 6.3 接续核验（2026-10-18，Codex；luna max 子代理）
+
+- 工作区为 `/opt/ConfFlow`，分支 `refactor/confgen-configuration-hand-20261018`，继续 PR #168；保留 Claude 的两个 worktree 与无关未跟踪文档。
+- **A 的方案复核：** 遗留未提交的六次重试方案已撤回，保留单次 `SetCoordMap`。每体系 24 个局部任务的本机对照：Cd(bpy)3 两方案均 24/24 成功，Ti salan 均 12/24 成功，成功产物均无核心镜像；合计耗时坐标固定约 1.77 s、重试约 4.00 s。这里不重新声称所有输入成功率不变，结论仅限这些任务。
+- **测试审计：** 原手性测试的行向量 Kabsch 公式错误，已从 `vt.T @ d @ u.T` 改为 `u @ d @ vt`，并补充等价给体的自镜像与平面退化用例。参考是否近似无手性仍用 0.1 单位向量 RMSD 阈值；候选真旋转/镜像比较只允许 1e-8 数值误差。
+- **兼容边界：** 未分类理想形状 keep 仍沿用全部类别、无原角度/手性限制的旧 fallback，避免跨类别手性误判；warning 明确建议 `shapes: [input]`。完成诊断与 warning 均携带模板、范围和实际 target IDs；零结构通过的失败路径也发出范围 warning。
+- **真实 release 验证：** xTB 6.7.1、GFN2、单核、150 cycles；Cd(bpy)3 与 Ti salan 使用生产等价平均距离约束优化，通过 release 前审计后进入真实 `_Explorer._release()`。两例零约束 release 均收敛并通过发布审计，各返回一个 release 结构；给体角最大偏差分别 10.9492°、3.5514°，真旋转/镜像单位向量 RMSD 分别 0.076142/0.713780、0.030321/0.601617，手性保持。release 请求中约束数为零且未写 `c.inp`。这验证解除约束与状态审计，不证明搜索覆盖率或任意输入均能保持构型。
+- **拒收对照：** Cd–NTB 的真实无约束优化收敛但给体角偏差 49.4511°，超过 keep 的 45° 阈值，且未通过 donor 审计；没有作为 release 结构发布。其受约束优化本身未通过审计，故该例只用显式标记、占位能量的参考输入触发 release 集成路径，不能计为生产搜索成功或有效受约束最小值。另有镜像优化器回归验证 release 镜像拒收与 `failed` fallback 原手性。
+- 原始脚本、JSON 报告与 xTB 日志：`/tmp/confflow-hand-release-20261018/`。
+- **搜索到发布连通测试：** Ti salan 真实 `explore`（budget=4、starts=1、probes=0、release=True），4 次搜索优化、2 次无约束 release 优化，`release=done`，发布 2 条且均保持输入排布与手性。为限制验证成本，DG 每批只允许第 0 个窗口，122 个窗口请求中跳过 119 个；因此仅为真实计算器的管线冒烟，不能当作生产调度/覆盖率比较。

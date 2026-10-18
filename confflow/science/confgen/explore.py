@@ -62,6 +62,8 @@ _LM_KIDS_MODES, _LM_AMPS = 6, (1.2, 2.2)
 _SEED_MOD = 2_000_003  # x 1000 stays below 2**31
 #: unit-vector RMSD above which a donor arrangement counts as chiral (mirror not superimposable)
 _HAND_TOL = 0.1
+#: numerical tie tolerance for comparing proper and mirror fits of one candidate
+_HAND_FIT_EPS = 1.0e-8
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,7 +172,9 @@ def _reembed_task(args: tuple[Any, ...]) -> tuple[np.ndarray | None, str | None]
         params.useRandomCoords, params.embedFragmentsSeparately, params.numThreads = True, False, 1
         params.randomSeed, params.timeout = int(seed), int(timeout)
         params.SetBoundsMat(bounds)
-        # bounds alone cannot tell a structure from its mirror image: pin the hand by coordinates
+        # Tight distance bounds alone cannot distinguish a structure from its mirror image.
+        # Pinning the non-free atoms to their coordinates keeps the core's hand and avoids
+        # reversing a rigid core around stereocentres in a free ligand region.
         params.SetCoordMap({i: Point3D(*map(float, xyz[i])) for i in fixed})
         cid = rdDistGeom.EmbedMolecule(mol, params)
         if cid < 0:
@@ -343,7 +347,8 @@ class _Explorer:
             if vec is None:
                 return True
             proper = _fit_rmsd(vec[pm], self.arr_vec, proper=True)
-            if proper <= _fit_rmsd(vec[pm], self.arr_vec, proper=False):
+            mirror = _fit_rmsd(vec[pm], self.arr_vec, proper=False)
+            if proper <= mirror + _HAND_FIT_EPS:
                 return True
         return False
 

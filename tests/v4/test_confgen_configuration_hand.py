@@ -38,7 +38,7 @@ def _kabsch(p: np.ndarray, q: np.ndarray, proper: bool) -> float:
     u, s, vt = np.linalg.svd(p.T @ q)
     d = np.eye(3)
     d[2, 2] = np.sign(np.linalg.det(u @ vt)) if proper else -np.sign(np.linalg.det(u @ vt))
-    rot = vt.T @ d @ u.T  # minimises |p @ rot - q|
+    rot = u @ d @ vt  # row-vector Kabsch rotation minimising |p @ rot - q|
     fitted = p @ rot
     return float(np.sqrt(np.mean(np.sum((fitted - q) ** 2, axis=1))))
 
@@ -101,6 +101,43 @@ def test_achiral_arrangement_skips_the_hand_test() -> None:
     assert ex.arr_chiral is False
     assert ex._same_arrangement(xyz)
     assert ex._same_arrangement(_mirror(xyz))
+
+
+def test_mirror_related_by_donor_self_isomorphism_is_accepted() -> None:
+    """A tetrahedral MCl4 core has no distinct hand when all donor sites are equivalent."""
+    atoms = (AtomRef(0, "Pt"),) + tuple(AtomRef(i, "Cl") for i in range(1, 5))
+    edges = tuple(TypedEdge(a=0, b=i, type=EdgeType.COORDINATION) for i in range(1, 5))
+    graph = TypedGraph(atoms, edges, 0, (), "pt_cl4_tetrahedral")
+    sites = tuple(BindingSite(id=f"D{i}", atoms=(i,)) for i in range(1, 5))
+    spec = CoordinationSpec(metal_center=0, binding_sites=sites, shapes=(INPUT_SHAPE,))
+    xyz = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.3, 1.3, 1.3],
+            [1.3, -1.3, -1.3],
+            [-1.3, 1.3, -1.3],
+            [-1.3, -1.3, 1.3],
+        ]
+    )
+    ex = explore._Explorer(graph, spec, xyz, INPUT_SHAPE, _settings(), _FakeCalc(), map, None)
+    assert ex.arr_chiral is False
+    assert ex._same_arrangement(_mirror(xyz))
+
+
+def test_unclassified_keep_keeps_the_existing_all_class_scope() -> None:
+    graph, spec, xyz = _build("cd6_bpy3")
+    octa = replace(spec, shapes=("octahedral",))
+    ex = explore._Explorer(graph, octa, xyz, "octahedral", _settings(), _FakeCalc(), map, None)
+    assert ex.unclassified_keep is True
+    assert ex.arr_ref is None
+    assert ex._stats()["arrangement_scope"] == "all_classes_input_unclassified"
+    # There is no classified arrangement to compare, so the legacy fallback keeps all classes
+    # and does not acquire an angle or handedness filter.
+    assert ex._same_arrangement(xyz)
+    assert ex._same_arrangement(_mirror(xyz))
+    distorted = xyz.copy()
+    distorted[ex.donors[0]] += np.array([0.0, 1.5, -0.5])
+    assert ex._same_arrangement(distorted)
 
 
 # ----------------------------------------------------------------------------- C: stats scope

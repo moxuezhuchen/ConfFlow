@@ -214,7 +214,7 @@ worker 记录 xTB 的 `xtb version … (commit)` 行到 `summary.json`。已完�
 退出：至少一个构象通过审计并发布为 `COMPLETED`，附 INFO `confgen_completed`（生成、松弛、发布的数量，
 失败审计项直方图、`release` 与 `stop`）；去约束收尾全部失败时仍为 `COMPLETED`，另附 WARNING
 `confgen_release_failed`；keep 因输入不能归类而扩大到全部类时另附 WARNING `confgen_keep_scope_widened`
-（`details` 含 `template` 与 `arrangement_scope`，建议改用 `shapes: [input]`）；没有任何构象通过审计为 `FAILED`，错误码 `confgen_no_passing_structures`，
+（`details` 含 `template`、`arrangement_scope` 与 `targets_searched`，建议改用 `shapes: [input]`）；没有任何构象通过审计为 `FAILED`，错误码 `confgen_no_passing_structures`，
 错误信息为 `confgen search ran N relaxations but none passed all audit checks`，并附失败审计项直方图。
 此时 worker 以退出码 2 结束、不写 `structures.xyz`。
 worker 异常（包括 job 非法或 xTB 缺失）为 `FAILED`，附 stderr 尾部。
