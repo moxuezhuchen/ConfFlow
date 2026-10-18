@@ -8,7 +8,7 @@ names an engine.
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
 import numpy as np
@@ -22,11 +22,11 @@ from confflow.science.confgen.calculator import (
 )
 from confflow.science.confgen.coordination import enumeration, perception, shapes
 from confflow.science.confgen.dg_seed import DGSeedError, DGSeedSettings, generate_dg_seeds
-from confflow.science.confgen.graph import INPUT_SHAPE, CoordinationSpec, TypedGraph
+from confflow.science.confgen.graph import INPUT_SHAPE, CoordinationSpec, EdgeType, TypedGraph
 from confflow.science.data import get_atomic_number
 
 __all__ = (
-    "CHECKS AuditRecord RelaxOutcome SearchCancelled SearchError SearchRecord "
+    "CHECKS AuditRecord CoordinationContact RelaxOutcome SearchCancelled SearchError SearchRecord "
     "SearchRun SearchSettings SearchStart SearchStarts SearchTarget audit_structure "
     "distance_restraints generate_starts plan_targets"
 ).split()
@@ -121,10 +121,29 @@ class SearchStarts:
 
 
 @dataclass(frozen=True, slots=True)
+class CoordinationContact:
+    """Reference-relative near-contact evidence (internal, zero-based atom indices).
+
+    ``changed`` is a conservative audit decision, not a bond-order assignment.
+    """
+
+    metal: int
+    atom: int
+    element: str
+    distance: float
+    reference_distance: float
+    cutoff: float
+    neighbors: tuple[int, ...]
+    mode: str
+    changed: bool
+
+
+@dataclass(frozen=True, slots=True)
 class AuditRecord:
     failed_checks: tuple[str, ...] = ()
     skipped_checks: tuple[str, ...] = ()
     actual_class: tuple[int, ...] | None = None
+    coordination_contacts: tuple[CoordinationContact, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +158,7 @@ class SearchRecord:
     wall_s: float = 0.0
     coords: np.ndarray | None = None
     actual_target: str | None = None
+    coordination_contacts: tuple[CoordinationContact, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -146,6 +166,7 @@ class SearchRecord:
             "start": int(self.start),
             "energy_eh": self.energy_eh,
             "passed": bool(self.passed),
+            "coordination_contacts": [asdict(c) for c in self.coordination_contacts],
             "failed_checks": [str(n) for n in self.failed_checks],
             "wall_s": float(self.wall_s),
             "small_ring_torsions": bool(self.small_ring_torsions),
@@ -305,23 +326,88 @@ def _dist(xyz: np.ndarray, i: int, j: int) -> float:
     return float(np.linalg.norm(xyz[i] - xyz[j]))
 
 
-def _new_coordination(
+def _coordination_contacts(
     new: np.ndarray,
     ref: np.ndarray,
-    elements: Sequence[str],
-    metal: int,
+    graph: TypedGraph,
     donors: Sequence[int],
-) -> bool:
-    """Return whether a non-donor atom has moved into metal coordination since the reference."""
+) -> tuple[CoordinationContact, ...]:
+    """Explain new near contacts using the fixed covalent graph and local geometry.
+
+    The radius screen alone is particularly permissive for alkali metals. A saturated
+    carbon or its hydrogen is not an extra donor to an alkali/alkaline-earth center merely
+    because it enters that screen. Very short contacts still fail conservatively; unknown
+    valence and possible organometallic modes retain the conservative distance decision.
+    This is an audit heuristic, not electronic-structure perception.
+    """
+    metal = graph.metal_center
+    if metal is None:
+        return ()
+    elements = [atom.element for atom in graph.atoms]
+    ionic_metal = elements[metal] in {
+        "Li",
+        "Na",
+        "K",
+        "Rb",
+        "Cs",
+        "Fr",
+        "Be",
+        "Mg",
+        "Ca",
+        "Sr",
+        "Ba",
+        "Ra",
+    }
     declared = set(donors) | {metal}
+    result = []
     for j, element in enumerate(elements):
         if j in declared:
             continue
         d_new, d_ref = _dist(new, metal, j), _dist(ref, metal, j)
-        close = d_new < _NEW_CONTACT_SCALE * (_radius(elements[metal]) + _radius(element))
-        if close and d_new < d_ref - _NEW_CONTACT_DROP:
-            return True
-    return False
+        radius_sum = _radius(elements[metal]) + _radius(element)
+        cutoff = _NEW_CONTACT_SCALE * radius_sum
+        if not (d_new < cutoff and d_new < d_ref - _NEW_CONTACT_DROP):
+            continue
+        neighbors = tuple(graph.neighbors(j, EdgeType.COVALENT))
+        changed, mode = True, "additional_donor"
+        if element == "C":
+            edges = [e for e in graph.edges if e.type == EdgeType.COVALENT and j in (e.a, e.b)]
+            saturated = len(neighbors) == 4 and all(e.bond_order in (None, 1.0) for e in edges)
+            if saturated:
+                # A full valence shell cannot acquire a normal sigma bond without a
+                # topology change. Short transition-metal contacts can still be agostic.
+                limit = (0.70 if ionic_metal else 1.0) * radius_sum
+                changed = d_new < limit
+                mode = "short_saturated_carbon" if changed else "saturated_carbon_proximity"
+            else:
+                mode = "possible_sigma_or_pi_carbon"
+        elif element == "H":
+            if len(neighbors) == 1 and elements[neighbors[0]] == "C":
+                carbon = neighbors[0]
+                mh, ch = new[metal] - new[j], new[carbon] - new[j]
+                cosine = float(np.dot(mh, ch) / max(np.linalg.norm(mh) * np.linalg.norm(ch), 1e-12))
+                angle = float(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
+                # C-H donation to transition metals needs a short, bent M-H-C
+                # arrangement. Ionic metals lack this ordinary agostic binding mode.
+                agostic = (
+                    not ionic_metal
+                    and d_new < min(2.3, 1.15 * radius_sum)
+                    and 80.0 <= angle <= 140.0
+                )
+                changed = d_new < 0.70 * radius_sum or agostic
+                mode = (
+                    "possible_agostic_hydrogen"
+                    if agostic
+                    else (
+                        "short_hydrogen_contact" if changed else "carbon_bound_hydrogen_proximity"
+                    )
+                )
+            else:
+                mode = "possible_hydride_or_other_hydrogen"
+        result.append(
+            CoordinationContact(metal, j, element, d_new, d_ref, cutoff, neighbors, mode, changed)
+        )
+    return tuple(result)
 
 
 def _perceive_bonds(
@@ -436,13 +522,15 @@ def audit_structure(
     if _topology_changed(new, elements, metal, pairs, ref_bonds, donors):
         failed.append("topology")
     actual: tuple[int, ...] | None = None
+    coordination_contacts: tuple[CoordinationContact, ...] = ()
     if metal is not None:
         if spec is None or shape is None:
             raise SearchError("metal-bearing audit needs a coordination spec and shape")
         if shape == INPUT_SHAPE:
             # the donor arrangement is checked by the explorer; here only new coordination counts
             actual = tuple(range(spec.coordination_number))
-            if _new_coordination(new, ref, elements, metal, donors):
+            coordination_contacts = _coordination_contacts(new, ref, graph, donors)
+            if any(contact.changed for contact in coordination_contacts):
                 failed.append("coordination_class")
         else:
             sites = [site.id for site in spec.binding_sites]
@@ -507,4 +595,6 @@ def audit_structure(
     if clash:
         failed.append("contacts")
     skipped = () if metal is not None else _SKIPPED_FREE
-    return AuditRecord(tuple(n for n in CHECKS if n in failed), tuple(skipped), actual)
+    return AuditRecord(
+        tuple(n for n in CHECKS if n in failed), tuple(skipped), actual, coordination_contacts
+    )

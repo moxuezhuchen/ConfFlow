@@ -24,9 +24,10 @@ from __future__ import annotations
 
 import math
 import random
+import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal
 
 import numpy as np
@@ -103,6 +104,9 @@ class ExploreSettings:
     reembed_timeout: int = 10
     fragment_charges: tuple[tuple[int, int], ...] = ()
     bond_scale: float = 1.25
+    #: Soft wall limit, checked between bounded backend calls.
+    time_limit_seconds: float | None = None
+    relaxation_batch: int = 4
 
 
 # ----------------------------------------------------------------------------- worker tasks
@@ -188,9 +192,14 @@ def _reembed_task(args: tuple[Any, ...]) -> tuple[np.ndarray | None, str | None]
 class _Explorer:
     def __init__(self, graph: TypedGraph, spec: CoordinationSpec | None, reference: np.ndarray,
                  shape: str | None, st: ExploreSettings, calc: Calculator, pmap: ParallelMap,
-                 should_cancel: Callable[[], bool] | None) -> None:  # fmt: skip
+                 should_cancel: Callable[[], bool] | None,
+                 checkpoint: Callable[[search.SearchRun], None] | None = None) -> None:  # fmt: skip
         self.graph, self.spec, self.ref, self.shape, self.st = graph, spec, reference, shape, st
         self.calc, self.pmap, self.should_cancel = calc, pmap, should_cancel
+        self.checkpoint = checkpoint
+        self.started = time.monotonic()
+        self.relax_wall = 0.0
+        self.audit_evidence: list[dict[str, Any]] = []
         self.rng = random.Random(f"explore-{st.seed}")
         self.metal = graph.metal_center
         if shape == INPUT_SHAPE and st.arrangement != "keep":
@@ -229,6 +238,7 @@ class _Explorer:
         self.centers: tuple[int, ...] = ()
         self.pool = MinimaPool(self.id)
         self.marks: dict[str, set[int]] = {}
+        self.pending_moves: dict[str, list[tuple[str, np.ndarray, str]]] = {}
         self.nopt = 0
         self.fail: Counter[str] = Counter()
         self.yields: Counter[str] = Counter()
@@ -372,15 +382,57 @@ class _Explorer:
             raise search.SearchCancelled("search cancelled")
 
     def _left(self) -> int:
-        return max(0, self.st.budget - self.nopt)
+        left = max(0, self.st.budget - self.nopt)
+        if self.st.time_limit_seconds is not None:
+            remaining = self.st.time_limit_seconds - (time.monotonic() - self.started)
+            estimate = self.relax_wall / self.nopt if self.nopt else 0.0
+            if remaining <= max(0.05, estimate):
+                self.stop = "time_limit"
+                return 0
+            if estimate > 0:
+                slots = max(0, math.floor(remaining / estimate) - 1)
+                left = min(left, slots)
+                if not slots:
+                    self.stop = "time_limit"
+        return left
+
+    def _checkpoint(self, pool: MinimaPool | None = None, free: bool = False) -> None:
+        # Failed release attempts must not erase a useful restrained recovery artifact.
+        if free and pool is not None and not len(pool):
+            pool, free = self.pool, False
+        if self.checkpoint is not None:
+            stats = self._stats()
+            stats.update(
+                checkpoint=True,
+                checkpoint_stage="released" if free else "restrained",
+                release="pending" if self.st.release else "off",
+            )
+            self.checkpoint(self._result(self.pool if pool is None else pool, stats))
 
     def _rel(self, m: Minimum) -> float:
         return (m.energy - self.pool.lowest()) * HARTREE_TO_KCAL
 
-    def _audit(self, xyz: np.ndarray, conv: bool, free: bool) -> tuple[str | None, tuple[str, ...]]:
+    def _audit(
+        self,
+        xyz: np.ndarray,
+        conv: bool,
+        free: bool,
+        audit_key: str | None = None,
+        origin: str | None = None,
+    ) -> tuple[str | None, tuple[str, ...]]:
         """Return (label, ()) for an accepted structure, else (None, failed checks)."""
         rec = search.audit_structure(xyz, self.graph, self.spec, self.ref, self.shape, (), self.centers,
                                      conv, self.st.bond_scale, allowed=self.allowed if self.shape else None)  # fmt: skip
+        if rec.coordination_contacts:
+            self.audit_evidence.append(
+                {
+                    "key": audit_key,
+                    "origin": origin,
+                    "free": free,
+                    "failed_checks": list(rec.failed_checks),
+                    "contacts": [asdict(c) for c in rec.coordination_contacts],
+                }
+            )
         bad = [c for c in rec.failed_checks if c != "metal_donor_distance"]
         if not free:
             for r in self.restraints:
@@ -393,7 +445,12 @@ class _Explorer:
             if self.metal is None or rec.actual_class is None:
                 return "t00", ()
             return self.tid.get(rec.actual_class, "unclassified"), ()
-        if bad == ["coordination_class"] and self.metal is not None and self.shape != INPUT_SHAPE:
+        if (
+            bad == ["coordination_class"]
+            and self.metal is not None
+            and self.shape != INPUT_SHAPE
+            and not any(c.changed for c in rec.coordination_contacts)
+        ):
             ok = all(
                 np.linalg.norm(xyz[d] - xyz[self.metal])
                 <= _DONOR_SLACK * np.linalg.norm(self.ref[d] - self.ref[self.metal])
@@ -409,24 +466,52 @@ class _Explorer:
     def _relax(self, items: list[tuple[str, np.ndarray, str]], pool: MinimaPool,
                restraints: tuple[DistanceRestraint, ...], free: bool = False) -> list[int]:  # fmt: skip
         """Relax (key, coords, origin) items within budget; add accepted minima; return new ids."""
-        self._poll()
+        ids: list[int] = []
         items = items[: self._left()] if not free else items
-        reqs = [RelaxRequest(key, x, restraints) for key, x, _ in items]
-        outs = self.calc.relax_many(reqs)
-        if not free:
-            self.nopt += len(items)
-        rows = []
-        for (_, _, origin), out in zip(items, outs):
-            if out.coords is None or out.energy_eh is None:
-                self.fail["not_converged"] += 1
-                continue
-            label, bad = self._audit(out.coords, out.converged, free)
-            if label is None:
-                self.fail.update(bad)
-                continue
-            cell = label + "#" + self.topo.ring_signature(out.coords)
-            rows.append((float(out.energy_eh), out.coords, label, origin, cell))
-        return [mid for mid in pool.add_many(rows, self.pmap) if mid is not None]
+        start = 0
+        while start < len(items):
+            self._poll()
+            if not self._left() and (not free or self.stop == "time_limit"):
+                break
+            size = self.st.relaxation_batch
+            if not free:
+                size = min(size, self._left())
+            elif self.st.time_limit_seconds is not None and self.nopt:
+                remaining = self.st.time_limit_seconds - (time.monotonic() - self.started)
+                estimate = self.relax_wall / self.nopt
+                if estimate > 0:
+                    size = min(size, max(0, math.floor(remaining / estimate) - 1))
+            if size < 1:
+                self.stop = "time_limit"
+                break
+            batch = items[start : start + size]
+            start += len(batch)
+            reqs = [RelaxRequest(key, x, restraints) for key, x, _ in batch]
+            began = time.monotonic()
+            outs = self.calc.relax_many(reqs)
+            if len(outs) != len(reqs):
+                raise search.SearchError("calculator returned an incomplete relaxation batch")
+            if not free:
+                self.relax_wall += time.monotonic() - began
+                self.nopt += len(batch)
+            else:
+                self.released += len(batch)
+            rows = []
+            for (key, _, origin), out in zip(batch, outs):
+                if out.coords is None or out.energy_eh is None:
+                    self.fail["not_converged"] += 1
+                    continue
+                label, bad = self._audit(out.coords, out.converged, free, key, origin)
+                if label is None:
+                    self.fail.update(bad)
+                    continue
+                cell = label + "#" + self.topo.ring_signature(out.coords)
+                rows.append((float(out.energy_eh), out.coords, label, origin, cell))
+            ids.extend(mid for mid in pool.add_many(rows, self.pmap) if mid is not None)
+            if pool is not self.pool and not free:
+                self.pool.add_many(rows, self.pmap)
+            self._checkpoint(pool if free else self.pool, free)
+        return ids
 
     def _take(self, arm: str, k: int, cells: bool = False) -> list[Minimum]:
         """Lowest unused parents of ``arm`` inside the window.
@@ -457,6 +542,15 @@ class _Explorer:
 
     # -- generators ----------------------------------------------------------------------------
     def _dg(self, plan: list[tuple[Any, int]], tag: str) -> list[tuple[str, np.ndarray, str]]:
+        self._poll()
+        remaining = self._left()
+        bounded = []
+        for target, count in plan:
+            count = min(count, remaining)
+            if count:
+                bounded.append((target, count))
+                remaining -= count
+        plan = bounded
         self.dg_round += 1
         # generate_starts derives RDKit seeds as seed * 1000 + small offsets: keep it 32-bit
         base = self.st.seed * 100003 + 7919 * self.dg_round
@@ -511,7 +605,7 @@ class _Explorer:
 
     def _moves(self, arm: str, quota: int) -> list[tuple[str, np.ndarray, str]]:
         kids = self._single_kids if arm == "single" else self._lowmode_kids
-        items: list[tuple[str, np.ndarray, str]] = []
+        items = self.pending_moves.pop(arm, [])
         while len(items) < quota:
             ps = self._take(arm, 1, cells=arm == "single")
             if not ps:
@@ -522,7 +616,8 @@ class _Explorer:
                         self.fail["move_clash"] += 1
                     else:
                         items.append((f"{arm}/m{p.id:05d}_{tag}", x, f"{arm}:{p.id}"))
-        return items
+        self.pending_moves[arm] = items[quota:]
+        return items[:quota]
 
     def _free_sets(self, n: int = 12) -> list[set[int]]:
         pinned = set(self.donors) | ({self.metal} if self.metal is not None else set())
@@ -550,9 +645,10 @@ class _Explorer:
 
     def _reembed(self, quota: int) -> list[tuple[str, np.ndarray, str]]:
         ps = self._take("reembed", max(1, math.ceil(quota / 10)))
-        tasks, names = [], []
+        tasks: list[tuple[Any, ...]] = []
+        names: list[tuple[str, str]] = []
         for m in ps:
-            for k, s in enumerate(self._free_sets()):
+            for k, s in enumerate(self._free_sets(min(12, quota - len(tasks)))):
                 tasks.append((self.elements, self.bonds, self.metal, m.coords, frozenset(s),
                               self.re_pairs, self.rng.randrange(1, 2**30), _reembed_limit(self.st)))  # fmt: skip
                 names.append((f"reembed/m{m.id:05d}_{k:02d}", f"reembed:{m.id}"))
@@ -567,13 +663,15 @@ class _Explorer:
     def _dg_more(self, quota: int) -> list[tuple[str, np.ndarray, str]]:
         labels = {m.label for m in self.pool.minima}
         good = [t for t in self.targets if t.id in labels] or list(self.targets)
-        per = max(1, round(quota / max(1, len(good))))
-        if per * len(good) > 1.5 * quota:
-            good = self.rng.sample(good, max(1, quota // per))
-        return self._dg([(t, per) for t in good], f"dgm{self.dg_round + 1}")
+        if len(good) > quota:
+            good = self.rng.sample(good, quota)
+        if not good:
+            return []
+        counts = [quota // len(good) + (i < quota % len(good)) for i in range(len(good))]
+        return self._dg(list(zip(good, counts)), f"dgm{self.dg_round + 1}")
 
     # -- phases ----------------------------------------------------------------------------------
-    def _probe_wells(self) -> None:
+    def _probe_wells(self, quota: int) -> None:
         best: dict[str, Minimum] = {}
         for m in self.pool.minima:
             c = m.cell
@@ -594,7 +692,7 @@ class _Explorer:
                             )
                         )
         scratch = MinimaPool(self.id)
-        self._relax_into(items, scratch)
+        self._relax_into(items[:quota], scratch)
         keep: dict[int, list[float]] = {ri: [] for ri in range(len(self.rotors))}
         byid = {m.id: m for m in refs}
         for m in scratch.minima:
@@ -625,9 +723,7 @@ class _Explorer:
 
     def _relax_into(self, items: list[tuple[str, np.ndarray, str]], scratch: MinimaPool) -> None:
         """Relax probe items: charged to the budget, accepted minima go to both pools."""
-        new = [scratch.minima[k] for k in self._relax(items, scratch, self.restraints)]
-        rows = [(m.energy, m.coords, m.label, m.origin, m.cell) for m in new]
-        self.pool.add_many(rows, self.pmap)
+        self._relax(items, scratch, self.restraints)
 
     def _round(self) -> bool:
         st = self.st
@@ -640,12 +736,14 @@ class _Explorer:
             share["single"] = max(0.0, share["single"] - st.share_lowmode)
             share["lowmode"] = st.share_lowmode
         norm = sum(share.values())
-        batch = min(st.batch, self._left())
+        batch = min(st.batch, max(4, st.relaxation_batch), self._left())
+        remaining = batch
         items: list[tuple[str, np.ndarray, str]] = []
         for arm, s in share.items():
-            if s <= 0:
+            if s <= 0 or remaining <= 0:
                 continue
-            q = max(1, int(batch * s / norm))
+            q = min(remaining, max(1, int(batch * s / norm)))
+            remaining -= q
             if arm == "dg":
                 items += self._dg_more(q)
             elif arm == "reembed":
@@ -657,7 +755,9 @@ class _Explorer:
         self.rng.shuffle(items)  # budget truncation must not favour one arm
         items = items[: self._left()]
         before = len(self.pool)
+        before_nopt = self.nopt
         self._relax(items, self.pool, self.restraints)
+        items = items[: self.nopt - before_nopt]
         lo = self.pool.lowest()
         new = [
             m
@@ -691,6 +791,9 @@ class _Explorer:
 
     def _release(self) -> MinimaPool:
         """Re-relax the minima near the lowest with only reaction-pair restraints."""
+        if not self._left() and self.stop == "time_limit":
+            self.release_status = "deferred"
+            return self.pool
         if not self.st.release:
             self.release_status = "off"
             return self.pool
@@ -701,9 +804,8 @@ class _Explorer:
         out = MinimaPool(self.id)
         items = [(f"release/m{m.id:05d}", m.coords, f"release:{m.id}") for m in near]
         self._relax(items, out, self.free_restraints, free=True)
-        self.released = len(items)
         if len(out):
-            self.release_status = "done"
+            self.release_status = "partial" if self.released < len(items) else "done"
             return out
         # every release failed: publish the restrained minima, flagged in the summary
         self.release_status = "failed"
@@ -711,26 +813,34 @@ class _Explorer:
 
     def run(self) -> tuple[MinimaPool, dict[str, Any]]:
         st = self.st
-        ntar = max(1, len(self.targets))
-        first = st.starts or (max(2, math.ceil(60 / ntar)) if self.spec is not None else 60)
-        self._relax(self._dg([(t, first) for t in self.targets], "dg0"), self.pool, self.restraints)
+        # One small bootstrap batch; distribute it across targets before repeats.
+        initial = min(self._left(), max(1, min(st.relaxation_batch, st.budget // 4)))
+        targets = list(self.targets)
+        if len(targets) > initial:
+            targets = self.rng.sample(targets, initial)
+        counts = [0] * len(targets)
+        for i in range(initial):
+            if not targets:
+                break
+            k = i % len(targets)
+            if st.starts is None or counts[k] < st.starts:
+                counts[k] += 1
+        plan = [(target, count) for target, count in zip(targets, counts) if count]
+        self._relax(self._dg(plan, "dg0"), self.pool, self.restraints)
         for m in self.pool.minima:
             self.yields[m.label] += 1
-        if self.spec is not None:
-            good = [t for t in self.targets if self.yields.get(t.id)] or list(self.targets)
-            more = max(2, math.ceil(120 / max(1, len(good))))
-            self._relax(self._dg([(t, more) for t in good], "dg1"), self.pool, self.restraints)
         tries = 0
         while not len(self.pool) and self._left() > 0 and tries < 3:
-            tries += 1  # nothing accepted yet (e.g. every embedding failed): more global starts
-            plan = [(t, max(first, 8) * 2**tries) for t in self.targets]
-            self._relax(self._dg(plan, f"dgr{tries}"), self.pool, self.restraints)
+            tries += 1
+            self._relax(
+                self._dg_more(min(st.relaxation_batch, self._left())), self.pool, self.restraints
+            )
         if not len(self.pool):
-            self.stop = "no_minima"
+            if self.stop != "time_limit":
+                self.stop = "no_minima"
             return self.pool, self._stats()
         if self.rotors and st.probes > 0:
-            self._probe_wells()
-        self.stop = "budget"
+            self._probe_wells(min(st.relaxation_batch, max(0, self._left() // 4)))
         while self._left() > 0:
             self._poll()
             if not self._round():
@@ -768,9 +878,13 @@ class _Explorer:
             "rotors": len(self.rotors),
             "targets_searched": [t.id for t in self.targets],
             "input_shape_fit": (
-                perception.shape_fit(self.ref, self.metal, self.donors,
-                                     self.spec.site_ids, self.shape)
-                if self.metal is not None and self.donors and self.shape and self.spec is not None
+                perception.shape_fit(
+                    self.ref, self.metal, self.donors, self.spec.site_ids, self.shape
+                )
+                if self.metal is not None
+                and self.donors
+                and self.shape
+                and self.spec is not None
                 and self.shape != INPUT_SHAPE
                 else None
             ),  # fmt: skip
@@ -778,7 +892,50 @@ class _Explorer:
             "spent": dict(self.spent),
             "found_in_window": dict(self.found),
             "failures": dict(sorted(self.fail.items())),
+            "coordination_evidence": list(self.audit_evidence),
         }
+
+    def _result(self, final: MinimaPool, stats: dict[str, Any]) -> search.SearchRun:
+        rows = final.within(self.st.window_kcal)
+        records = tuple(
+            search.SearchRecord(
+                m.label,
+                m.id,
+                False,
+                m.energy,
+                True,
+                (),
+                (),
+                0.0,
+                m.coords,
+                m.label,
+                coordination_contacts=search.audit_structure(
+                    m.coords,
+                    self.graph,
+                    self.spec,
+                    self.ref,
+                    self.shape,
+                    (),
+                    self.centers,
+                    True,
+                    self.st.bond_scale,
+                    allowed=self.allowed if self.shape else None,
+                ).coordination_contacts,
+            )
+            for m in rows
+        )
+        per = Counter(m.label for m in rows)
+        targets = tuple(replace(t, generated=0, relaxed=0, passed=per.get(t.id, 0), realized=per.get(t.id, 0))
+                        for t in self.targets)  # fmt: skip
+        totals = {
+            "targets": len(targets),
+            "generated": self.nopt + self.released,
+            "relaxed": self.nopt + self.released - self.fail["not_converged"],
+            "passed": len(records),
+        }
+        return search.SearchRun(
+            targets, records, records, tuple(self.st.fragment_charges), totals, stats
+        )
 
 
 def explore(
@@ -790,8 +947,14 @@ def explore(
     calculator: Calculator,
     parallel_map: ParallelMap = map,  # type: ignore[assignment]
     should_cancel: Callable[[], bool] | None = None,
+    checkpoint: Callable[[search.SearchRun], None] | None = None,
 ) -> search.SearchRun:
     """Run the iterative search and return the published minima as a ``SearchRun``.
+
+    ``checkpoint`` receives audited, windowed snapshots after each completed backend batch.
+    Snapshot stats distinguish restrained and released coordinates; these snapshots are
+    recovery artifacts, not resumable random-state snapshots. A running backend call may
+    exceed the soft time limit; execution owns hard cancellation.
 
     Published records are the unique minima within ``settings.window_kcal`` of the lowest
     (after release), lowest first; each record's ``target`` is the coordination class it
@@ -800,27 +963,17 @@ def explore(
     """
     if settings.budget < 1:
         raise search.SearchError(f"budget must be positive, got {settings.budget!r}")
+    if settings.batch < 1 or settings.relaxation_batch < 1:
+        raise search.SearchError("batch sizes must be positive")
+    if settings.time_limit_seconds is not None and (
+        not math.isfinite(settings.time_limit_seconds) or settings.time_limit_seconds <= 0
+    ):
+        raise search.SearchError("time_limit_seconds must be positive")
     if settings.reembed_timeout < 0:
         raise search.SearchError(
             f"reembed_timeout must be non-negative, got {settings.reembed_timeout!r}"
         )
     ex = _Explorer(graph, spec, np.asarray(reference, dtype=float), shape, settings, calculator,
-                   parallel_map, should_cancel)  # fmt: skip
+                   parallel_map, should_cancel, checkpoint)  # fmt: skip
     final, stats = ex.run()
-    rows = final.within(settings.window_kcal)
-    records = tuple(
-        search.SearchRecord(m.label, m.id, False, m.energy, True, (), (), 0.0, m.coords, m.label)
-        for m in rows
-    )
-    per = Counter(m.label for m in rows)
-    targets = tuple(replace(t, generated=0, relaxed=0, passed=per.get(t.id, 0), realized=per.get(t.id, 0))
-                    for t in ex.targets)  # fmt: skip
-    totals = {
-        "targets": len(targets),
-        "generated": ex.nopt + ex.released,
-        "relaxed": ex.nopt + ex.released - ex.fail["not_converged"],
-        "passed": len(records),
-    }
-    return search.SearchRun(
-        targets, records, records, tuple(settings.fragment_charges), totals, stats
-    )
+    return ex._result(final, stats)
