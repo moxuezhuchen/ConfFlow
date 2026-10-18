@@ -328,6 +328,7 @@ def _run(
         "structures_file": os.path.join(rundir, "structures.xyz"),
         "summary_file": os.path.join(rundir, "summary.json"),
         "checkpoint_file": os.path.join(rundir, "checkpoint.json"),
+        "input_baseline_file": os.path.join(rundir, "input_baseline.json"),
         # Leave time for worker setup/final serialization before the outer hard deadline.
         "time_limit_seconds": None if walltime is None else max(0.001, walltime * 0.9),
     }
@@ -405,6 +406,7 @@ def _run(
         roles = (
             ("summary.json", "search_summary"),
             ("checkpoint.json", "search_checkpoint"),
+            ("input_baseline.json", "search_input_baseline"),
             ("structures.xyz", "search_structures"),
             ("stdout.log", "search_log"),
             ("stderr.log", "search_log"),

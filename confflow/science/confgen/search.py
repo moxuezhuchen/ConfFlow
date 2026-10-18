@@ -8,7 +8,7 @@ names an engine.
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal
 
 import numpy as np
@@ -26,7 +26,7 @@ from confflow.science.confgen.graph import INPUT_SHAPE, CoordinationSpec, EdgeTy
 from confflow.science.data import get_atomic_number
 
 __all__ = (
-    "CHECKS AuditRecord CoordinationContact RelaxOutcome SearchCancelled SearchError SearchRecord "
+    "CHECKS AuditRecord CoordinationContact InputBaseline RelaxOutcome SearchCancelled SearchError SearchRecord "
     "SearchRun SearchSettings SearchStart SearchStarts SearchTarget audit_structure "
     "distance_restraints generate_starts plan_targets"
 ).split()
@@ -176,6 +176,66 @@ class SearchRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class InputBaseline:
+    """Independent input optimization evidence, including candidates outside publication windows.
+
+    Coordinate arrays are copied and read-only, so mutable pool representatives and backend
+    request buffers cannot rewrite a completed baseline or an earlier checkpoint.
+    """
+
+    status: str = "pending"
+    search_record: SearchRecord | None = None
+    final_record: SearchRecord | None = None
+    search_restraints: tuple[DistanceRestraint, ...] = ()
+    final_restraints: tuple[DistanceRestraint, ...] = ()
+    raw_failed_checks: tuple[str, ...] = ()
+    failed_checks: tuple[str, ...] = ()
+    release_relaxations: int = 0
+    comparable_to_final: bool = False
+    search_origin: str = "input/reference"
+    final_origin: str | None = None
+    disposition: str = "unavailable"
+    published: bool = False
+    final_pool_id: int | None = None
+    lowest_final_delta_kcal: float | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("search_record", "final_record"):
+            record = getattr(self, name)
+            if record is not None and record.coords is not None:
+                coords = np.array(record.coords, dtype=float, copy=True)
+                coords.setflags(write=False)
+                object.__setattr__(self, name, replace(record, coords=coords))
+
+    def to_dict(self) -> dict[str, Any]:
+        def record_dict(record: SearchRecord | None) -> dict[str, Any] | None:
+            if record is None:
+                return None
+            return {
+                **record.to_dict(),
+                "coordinates": record.coords.tolist() if record.coords is not None else None,
+            }
+
+        return {
+            "status": self.status,
+            "search_record": record_dict(self.search_record),
+            "final_record": record_dict(self.final_record),
+            "search_restraints": [asdict(r) for r in self.search_restraints],
+            "final_restraints": [asdict(r) for r in self.final_restraints],
+            "raw_failed_checks": list(self.raw_failed_checks),
+            "failed_checks": list(self.failed_checks),
+            "release_relaxations": self.release_relaxations,
+            "comparable_to_final": self.comparable_to_final,
+            "search_origin": self.search_origin,
+            "final_origin": self.final_origin,
+            "disposition": self.disposition,
+            "published": self.published,
+            "final_pool_id": self.final_pool_id,
+            "lowest_final_delta_kcal": self.lowest_final_delta_kcal,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class SearchRun:
     targets: tuple[SearchTarget, ...] = ()
     records: tuple[SearchRecord, ...] = ()
@@ -185,8 +245,12 @@ class SearchRun:
     #: Strategy statistics of an iterative search (budget use, failures); ``None`` otherwise.
     stats: dict[str, Any] | None = None
 
+    input_baseline: InputBaseline | None = None
+
     def summary(self) -> dict[str, Any]:
         extra = {} if self.stats is None else {"search": dict(self.stats)}
+        if self.input_baseline is not None:
+            extra["input_baseline"] = self.input_baseline.to_dict()
         return {
             **extra,
             "targets": [t.to_dict() for t in self.targets],

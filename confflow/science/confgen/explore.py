@@ -251,6 +251,10 @@ class _Explorer:
         self.stop = "budget"  # why the search loop ended: budget | saturated | no_moves | no_minima
         self.release_status = "off"  # off | not_needed | done | failed
         self.dg_round = 0
+        self.baseline = search.InputBaseline(
+            search_restraints=self.restraints,
+            final_restraints=(self.free_restraints if st.release else self.restraints),
+        )
         self.input_seed: dict[str, Any] = {
             "status": "pending",
             "raw_failed_checks": [],
@@ -394,6 +398,7 @@ class _Explorer:
         self._poll()
         if not self._left():
             self.input_seed["status"] = "not_started_time_limit"
+            self.baseline = replace(self.baseline, status="search_deferred")
             return
         try:
             mol = perceive_mol(self.elements, self.bonds, self.metal, self.ref)
@@ -415,6 +420,9 @@ class _Explorer:
             self.input_seed.update(
                 status="raw_rejected", raw_failed_checks=["stereo_perception"], detail=str(exc)
             )
+            self.baseline = replace(
+                self.baseline, status="raw_rejected", raw_failed_checks=("stereo_perception",)
+            )
             self.fail["input_stereo_perception"] += 1
             return
         rec = search.audit_structure(
@@ -433,14 +441,17 @@ class _Explorer:
         if self.shape and not self._same_arrangement(self.ref):
             bad.append("arrangement")
         self.input_seed["raw_failed_checks"] = bad
+        self.baseline = replace(self.baseline, raw_failed_checks=tuple(bad))
         if bad:
             self.input_seed["status"] = "raw_rejected"
+            self.baseline = replace(self.baseline, status="raw_rejected")
             self.fail.update("input_" + check for check in bad)
             return
         self.input_seed["status"] = "optimizing"
         self._relax([("input/reference", self.ref.copy(), "input")], self.pool, self.restraints)
         if self.input_seed["status"] == "optimizing":
             self.input_seed["status"] = "not_started_time_limit"
+            self.baseline = replace(self.baseline, status="search_deferred")
 
     # -- bookkeeping -------------------------------------------------------------------------
     def _poll(self) -> None:
@@ -557,34 +568,72 @@ class _Explorer:
             outs = self.calc.relax_many(reqs)
             if len(outs) != len(reqs):
                 raise search.SearchError("calculator returned an incomplete relaxation batch")
+            elapsed = time.monotonic() - began
             if not free:
-                self.relax_wall += time.monotonic() - began
+                self.relax_wall += elapsed
                 self.nopt += len(batch)
             else:
                 self.released += len(batch)
             rows = []
             input_bad: tuple[str, ...] = ()
-            input_release_bad: tuple[str, ...] = ()
-            input_release_origin = f"release:{self.input_seed['minimum_id']}"
+            baseline_bad: tuple[str, ...] = ()
             for (key, _, origin), out in zip(batch, outs):
                 if out.coords is None or out.energy_eh is None:
                     self.fail["not_converged"] += 1
                     if origin == "input":
                         input_bad = ("not_converged",)
-                    if origin == input_release_origin:
-                        input_release_bad = ("not_converged",)
+                    if origin == "baseline:input":
+                        baseline_bad = ("not_converged",)
                     continue
                 label, bad = self._audit(out.coords, out.converged, free, key, origin)
                 if label is None:
                     self.fail.update(bad)
                     if origin == "input":
                         input_bad = bad
-                    if origin == input_release_origin:
-                        input_release_bad = bad
+                    if origin == "baseline:input":
+                        baseline_bad = bad
                     continue
                 cell = label + "#" + self.topo.ring_signature(out.coords)
                 rows.append((float(out.energy_eh), out.coords, label, origin, cell))
             ids.extend(mid for mid in pool.add_many(rows, self.pmap) if mid is not None)
+            for energy, coords, label, origin, _ in rows:
+                if origin in {"input", "baseline:input"}:
+                    evidence = search.audit_structure(
+                        coords,
+                        self.graph,
+                        self.spec,
+                        self.ref,
+                        self.shape,
+                        (),
+                        self.centers,
+                        True,
+                        self.st.bond_scale,
+                        allowed=self.allowed if self.shape else None,
+                    )
+                    rec = search.SearchRecord(
+                        label,
+                        0,
+                        False,
+                        energy,
+                        True,
+                        coords=coords,
+                        actual_target=label,
+                        wall_s=elapsed,
+                        coordination_contacts=evidence.coordination_contacts,
+                    )
+                    if origin == "input":
+                        self.baseline = replace(
+                            self.baseline, status="search_accepted", search_record=rec
+                        )
+                    else:
+                        self.baseline = replace(
+                            self.baseline,
+                            status="released",
+                            final_record=rec,
+                            final_origin="baseline/input",
+                            failed_checks=(),
+                            comparable_to_final=True,
+                        )
             if any(origin == "input" for _, _, origin in batch):
                 minimum = next((m for m in pool.minima if m.origin == "input"), None)
                 self.input_seed.update(
@@ -593,10 +642,23 @@ class _Explorer:
                     minimum_id=minimum.id if minimum is not None else None,
                     energy_eh=minimum.energy if minimum is not None else None,
                 )
-            if free and any(origin == input_release_origin for _, _, origin in batch):
-                released_row = next((row for row in rows if row[3] == input_release_origin), None)
+            if (
+                any(origin == "input" for _, _, origin in batch)
+                and self.input_seed["status"] == "optimization_rejected"
+            ):
+                self.baseline = replace(
+                    self.baseline, status="optimization_rejected", failed_checks=input_bad
+                )
+            if free and any(origin == "baseline:input" for _, _, origin in batch):
+                released_row = next((row for row in rows if row[3] == "baseline:input"), None)
+                self.baseline = replace(
+                    self.baseline,
+                    release_relaxations=self.baseline.release_relaxations + 1,
+                    status="released" if released_row is not None else "release_failed",
+                    failed_checks=baseline_bad,
+                )
                 self.input_seed.update(
-                    release_failed_checks=list(input_release_bad),
+                    release_failed_checks=list(baseline_bad),
                     release_minimum_id=(
                         pool.match(released_row[0], released_row[1])
                         if released_row is not None
@@ -885,28 +947,55 @@ class _Explorer:
         return found <= st.saturation_rate * span and gain < 0.1
 
     def _release(self) -> MinimaPool:
-        """Re-relax the minima near the lowest with only reaction-pair restraints."""
+        """Release the independent input first, then the ordinary search-window minima."""
+        baseline = self.baseline.search_record
+        if not self.st.release or self.free_restraints == self.restraints:
+            self.release_status = "off" if not self.st.release else "not_needed"
+            if baseline is not None:
+                self.baseline = replace(
+                    self.baseline,
+                    status="reused",
+                    final_record=baseline,
+                    comparable_to_final=True,
+                    final_origin="input/reference",
+                )
+            return self.pool
         if not self._left() and self.stop == "time_limit":
             self.release_status = "deferred"
-            return self.pool
-        if not self.st.release:
-            self.release_status = "off"
-            return self.pool
-        if self.free_restraints == self.restraints:
-            self.release_status = "not_needed"
+            if baseline is not None:
+                self.baseline = replace(self.baseline, status="release_deferred")
             return self.pool
         near = self.pool.within(self.st.window_kcal + 2.0)
         out = MinimaPool(self.id)
-        self.input_seed["release_requested"] = any(
-            m.id == self.input_seed["minimum_id"] for m in near
-        )
+        before = self.released
+        planned = 0
+        if baseline is not None and baseline.coords is not None:
+            self.input_seed["release_requested"] = True
+            self.baseline = replace(self.baseline, status="release_pending")
+            planned += 1
+            try:
+                self._relax(
+                    [("baseline/input", self.ref.copy(), "baseline:input")],
+                    out,
+                    self.free_restraints,
+                    free=True,
+                )
+            except search.SearchCancelled:
+                self.baseline = replace(self.baseline, status="release_cancelled")
+                self._checkpoint(out, free=True)
+                raise
+            if self.baseline.status == "release_pending":
+                self.baseline = replace(self.baseline, status="release_deferred")
+            # The raw input was already attempted in the final state. A changed search
+            # representative is a distinct starting point and is released separately.
+            near = [m for m in near if not np.array_equal(m.coords, self.ref)]
         items = [(f"release/m{m.id:05d}", m.coords, f"release:{m.id}") for m in near]
+        planned += len(items)
         self._relax(items, out, self.free_restraints, free=True)
         if len(out):
-            self.release_status = "partial" if self.released < len(items) else "done"
+            self.release_status = "partial" if self.released - before < planned else "done"
             return out
-        # every release failed: publish the restrained minima, flagged in the summary
-        self.release_status = "failed"
+        self.release_status = "deferred" if self.stop == "time_limit" else "failed"
         return self.pool
 
     def run(self) -> tuple[MinimaPool, dict[str, Any]]:
@@ -976,6 +1065,7 @@ class _Explorer:
             "stop": self.stop,
             "release": self.release_status,
             "release_relaxations": self.released,
+            "baseline_release_relaxations": self.baseline.release_relaxations,
             "hessians": self.hessians,
             "rotors": len(self.rotors),
             "targets_searched": [t.id for t in self.targets],
@@ -1023,6 +1113,29 @@ class _Explorer:
                 )
             )
         stats["input_seed"] = seed
+        baseline = self.baseline
+        if (
+            baseline.final_record is not None
+            and baseline.final_record.coords is not None
+            and baseline.final_record.energy_eh is not None
+        ):
+            record = baseline.final_record
+            energy = float(baseline.final_record.energy_eh)
+            pool_id = final.match(energy, record.coords)
+            published = any(m.id == pool_id for m in rows) if pool_id is not None else False
+            baseline = replace(
+                baseline,
+                final_pool_id=pool_id,
+                published=published,
+                disposition="published" if published else "outside_energy_window",
+                lowest_final_delta_kcal=(
+                    (final.lowest() - energy) * HARTREE_TO_KCAL
+                    if len(final) and baseline.comparable_to_final
+                    else None
+                ),
+            )
+        else:
+            baseline = replace(baseline, disposition="no_comparable_final_baseline")
         records = tuple(
             search.SearchRecord(
                 m.label,
@@ -1060,7 +1173,7 @@ class _Explorer:
             "passed": len(records),
         }
         return search.SearchRun(
-            targets, records, records, tuple(self.st.fragment_charges), totals, stats
+            targets, records, records, tuple(self.st.fragment_charges), totals, stats, baseline
         )
 
 
@@ -1078,9 +1191,10 @@ def explore(
     """Run the iterative search and return the published minima as a ``SearchRun``.
 
     The raw input is audited and optimized first, charged to ``budget``. Its accepted
-    minimum follows the same deduplication, energy-window and release rules as DG minima;
-    it can be excluded by a genuinely lower minimum or rejected release, never assigned an
-    unoptimized reference energy. ``stats.input_seed`` records its initial disposition.
+    minimum is also copied into ``input_baseline``, independently of pool representatives.
+    Its release is prioritized even outside the restrained search window. A valid baseline
+    in the final constraint state participates in normal final deduplication/windowing and
+    remains available separately if excluded. Unoptimized coordinates never acquire energy.
 
     ``checkpoint`` receives audited, windowed snapshots after each completed backend batch.
     Snapshot stats distinguish restrained and released coordinates; these snapshots are

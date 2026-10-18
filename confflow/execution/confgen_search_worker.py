@@ -169,6 +169,7 @@ def _load_job(path: str) -> dict[str, Any]:
     job = dict(raw)
     job["reference"] = ref
     job["graph"] = graph
+    job["graph_doc"] = raw["graph"]
     job["spec"] = spec
     job["settings"] = settings
     job["settings_doc"] = section
@@ -187,16 +188,8 @@ def _comment(r: search.SearchRecord, low: float) -> str:
     return text if r.actual_target is None else f"{text} actual={r.actual_target}"
 
 
-def _write_checkpoint(path: Path, run: search.SearchRun, atoms: list[str]) -> None:
-    """Atomically publish audited search minima, separately from final released output."""
-    document = {
-        "schema_version": 1,
-        "kind": "confgen_search_checkpoint",
-        "final": False,
-        "atoms": atoms,
-        **run.summary(),
-        "coordinates": [r.coords.tolist() if r.coords is not None else None for r in run.records],
-    }
+def _write_json(path: Path, document: dict[str, Any]) -> None:
+    """Atomically replace one coherent JSON artifact."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
     try:
@@ -210,16 +203,71 @@ def _write_checkpoint(path: Path, run: search.SearchRun, atoms: list[str]) -> No
         temporary.unlink(missing_ok=True)
 
 
+def _write_checkpoint(path: Path, run: search.SearchRun, atoms: list[str]) -> None:
+    """Atomically publish audited search minima, separately from final released output."""
+    _write_json(
+        path,
+        {
+            "schema_version": 1,
+            "kind": "confgen_search_checkpoint",
+            "final": False,
+            "atoms": atoms,
+            **run.summary(),
+            "coordinates": [
+                r.coords.tolist() if r.coords is not None else None for r in run.records
+            ],
+        },
+    )
+
+
+def _write_input_baseline(
+    path: Path,
+    job: dict[str, Any],
+    version: str | None,
+    run: search.SearchRun | None = None,
+    execution_status: str = "running",
+) -> None:
+    """Preserve the original input and independently evaluated baseline, outside energy windows."""
+    _write_json(
+        path,
+        {
+            "schema_version": 1,
+            "kind": "confgen_input_baseline",
+            "execution_status": execution_status,
+            "atoms": job["atoms"],
+            "reference": {"coordinates": job["reference"].tolist(), "energy_eh": None},
+            "graph": job["graph_doc"],
+            "coordination": job.get("coordination"),
+            "shape": job["shape"],
+            "parameters": {
+                "charge": job["charge"],
+                "uhf": job["uhf"],
+                "max_cycles": job["max_cycles"],
+                "settings": job["settings_doc"],
+            },
+            "backend": {"executable": job["xtb"], "version": version, "method": "GFN2-xTB"},
+            "baseline": (
+                None if run is None or run.input_baseline is None else run.input_baseline.to_dict()
+            ),
+            "input_seed": None if run is None else (run.stats or {}).get("input_seed"),
+        },
+    )
+
+
 def _run(job_path: str) -> int:
     """Run one job file; return the worker exit code."""
     job = _load_job(job_path)
     els: list[str] = job["atoms"]
     ref: np.ndarray = job["reference"]
-    if (exe := resolve_xtb(job["xtb"])) is None:
-        raise _JobError(f"xTB executable not found: {job['xtb']!r}")
-    version = xtb_version(exe)
     work = Path(job["workdir"])
     work.mkdir(parents=True, exist_ok=True)
+    baseline_path = Path(job.get("input_baseline_file", work / "input_baseline.json"))
+    _write_input_baseline(baseline_path, job, None)
+    if (exe := resolve_xtb(job["xtb"])) is None:
+        _write_input_baseline(baseline_path, job, None, execution_status="failed")
+        raise _JobError(f"xTB executable not found: {job['xtb']!r}")
+    version = xtb_version(exe)
+    _write_input_baseline(baseline_path, job, version)
     settings: ExploreSettings = job["settings"]
     calc = XtbCalculator(
         exe, work, els, job["charge"], job["uhf"], job["max_cycles"], job["cores"], version
@@ -228,6 +276,7 @@ def _run(job_path: str) -> int:
     if _STOP.is_set():
         calc.cancel()
 
+    last_snapshot: search.SearchRun | None = None
     try:
         # spawn, not fork: the xTB calculator runs threads, and forking a threaded process can
         # deadlock the children; one core needs no pool at all
@@ -244,6 +293,14 @@ def _run(job_path: str) -> int:
                 def pmap(fn: Any, items: Any) -> Any:
                     return pool.map(fn, items, chunksize=1)
 
+            def publish(snapshot: search.SearchRun) -> None:
+                nonlocal last_snapshot
+                last_snapshot = snapshot
+                _write_input_baseline(baseline_path, job, version, snapshot)
+                _write_checkpoint(
+                    Path(job.get("checkpoint_file", work / "checkpoint.json")), snapshot, els
+                )
+
             run = explore(
                 job["graph"],
                 job["spec"],
@@ -253,17 +310,19 @@ def _run(job_path: str) -> int:
                 calc,
                 pmap,
                 should_cancel=_STOP.is_set,
-                checkpoint=lambda snapshot: _write_checkpoint(
-                    Path(job.get("checkpoint_file", work / "checkpoint.json")), snapshot, els
-                ),
+                checkpoint=publish,
             )
     except Cancelled as exc:
+        _write_input_baseline(baseline_path, job, version, last_snapshot, "cancelled")
         raise search.SearchCancelled(str(exc)) from exc
     except search.SearchCancelled:
+        _write_input_baseline(baseline_path, job, version, last_snapshot, "cancelled")
         raise
     except search.SearchError as exc:
+        _write_input_baseline(baseline_path, job, version, last_snapshot, "failed")
         raise _JobError(f"search failed: {exc}") from exc
     settings_doc = {"max_cycles": job["max_cycles"], "xtb": job["xtb"], **job["settings_doc"]}
+    _write_input_baseline(baseline_path, job, version, run, "completed")
     summary = {"settings": settings_doc, **run.summary()}
     summary["xtb"] = {"executable": exe, "version": version}
     Path(job["summary_file"]).write_text(json.dumps(summary, sort_keys=True, indent=2) + "\n")

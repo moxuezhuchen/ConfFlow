@@ -146,8 +146,8 @@ def test_release_false_publishes_from_restrained_pool() -> None:
     off, on = _FakeCalc(), _FakeCalc()
     run_off = explore.explore(graph, spec, ref, _SHAPE, _settings(release=False), off, map)
     run_on = explore.explore(graph, spec, ref, _SHAPE, _settings(release=True), on, map)
-    assert not any(q.key.startswith("release/") for q in off.requests)
-    assert any(q.key.startswith("release/") for q in on.requests)
+    assert not any(q.key.startswith(("release/", "baseline/")) for q in off.requests)
+    assert any(q.key.startswith(("release/", "baseline/")) for q in on.requests)
     assert run_off.records
     assert run_on.records
     assert run_off.stats["relaxations"] <= 40
@@ -170,7 +170,7 @@ def test_budget_caps_search_and_release_is_reported() -> None:
     calc = _FakeCalc()
     run = explore.explore(graph, spec, ref, _SHAPE, _settings(budget=40), calc, map)
     keys = [r.key for r in calc.requests]
-    released = [k for k in keys if k.startswith("release/")]
+    released = [k for k in keys if k.startswith(("release/", "baseline/"))]
     assert len(keys) - len(released) <= 40
     assert run.stats["release_relaxations"] == len(released)
     assert run.totals["generated"] == len(keys)
@@ -258,7 +258,7 @@ class _FailingReleaseCalc(_FakeCalc):
         return [
             (
                 RelaxOutcome(coords=o.coords, energy_eh=o.energy_eh, converged=False)
-                if q.key.startswith("release/")
+                if q.key.startswith(("release/", "baseline/"))
                 else o
             )
             for q, o in zip(requests, out)
@@ -410,7 +410,7 @@ def test_count_budget_with_ample_wall_budget_still_releases(monkeypatch) -> None
     )
     assert run.stats["stop"] == "budget"
     assert run.stats["release"] == "done"
-    assert any(q.key.startswith("release/") for q in calc.requests)
+    assert any(q.key.startswith(("release/", "baseline/")) for q in calc.requests)
 
 
 def test_failed_release_checkpoint_preserves_audited_restrained_minima() -> None:
@@ -465,7 +465,10 @@ def test_lower_input_basin_survives_higher_dg_and_final_release() -> None:
                     energy_eh=(
                         -101.0
                         if q.key == "input/reference"
-                        or (q.key.startswith("release/") and np.array_equal(q.coords, ref))
+                        or (
+                            q.key.startswith(("release/", "baseline/"))
+                            and np.array_equal(q.coords, ref)
+                        )
                         else -100.0
                     ),
                 )
@@ -476,7 +479,7 @@ def test_lower_input_basin_survives_higher_dg_and_final_release() -> None:
     run = explore.explore(graph, spec, ref, _SHAPE, _settings(budget=8), calc)
     assert calc.requests[0].key == "input/reference"
     assert any(q.key.startswith("dg0/") for q in calc.requests)
-    assert any(q.key.startswith("release/") for q in calc.requests)
+    assert any(q.key.startswith(("release/", "baseline/")) for q in calc.requests)
     assert len(run.records) == 1 and run.records[0].energy_eh == -101.0
     np.testing.assert_array_equal(run.records[0].coords, ref)
     seed = run.stats["input_seed"]
