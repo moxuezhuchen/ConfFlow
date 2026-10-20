@@ -134,6 +134,22 @@ def _load_job(path: str) -> dict[str, Any]:
         if atom in freeze_core:
             raise _JobError(f"job freeze_core repeats atom {atom!r}")
         freeze_core.append(atom)
+    fixed_raw = section.get("fixed_states", [])
+    if not isinstance(fixed_raw, list):
+        raise _JobError("job field 'settings.fixed_states' must be a list")
+    fixed_states: list[tuple[int, int, int, int]] = []
+    for quad in fixed_raw:
+        if not isinstance(quad, list) or len(quad) != 4:
+            raise _JobError(f"job fixed state {quad!r} must hold 4 atom indices")
+        a, b, c, d = (_int(value, "settings.fixed_states atom", 0) for value in quad)
+        for atom in (a, b, c, d):
+            if atom >= len(els):
+                raise _JobError(f"job fixed_states atom {atom!r} is out of range")
+        if len({a, b, c, d}) != 4:
+            raise _JobError(f"job fixed state {quad!r} repeats an atom")
+        if (a, b, c, d) in fixed_states or (d, c, b, a) in fixed_states:
+            raise _JobError(f"job fixed state {quad!r} is duplicated")
+        fixed_states.append((a, b, c, d))
     starts = section.get("starts")
     window = section.get("window_kcal")
     if isinstance(window, bool) or not isinstance(window, (int, float)) or not window > 0:
@@ -180,6 +196,7 @@ def _load_job(path: str) -> dict[str, Any]:
         ),
         fragment_charges=tuple(frag),
         freeze_core=tuple(freeze_core),
+        fixed_states=tuple(fixed_states),
         ez_policy=ez_policy,
         bond_scale=float(scale),
         time_limit_seconds=None if time_limit is None else float(time_limit),

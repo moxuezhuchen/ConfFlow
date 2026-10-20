@@ -26,8 +26,10 @@ from confflow.science.confgen.graph import INPUT_SHAPE, CoordinationSpec, EdgeTy
 from confflow.science.confgen.stereo import (
     DoubleBondState,
     TetrahedralState,
+    TorsionState,
     preserves_double_bonds,
     preserves_tetrahedra,
+    preserves_torsions,
 )
 from confflow.science.confgen.stereo import (
     double_bond_states as perceive_double_bond_states,
@@ -44,7 +46,7 @@ __all__ = (
 ).split()
 
 CHECKS = tuple(
-    "converged topology coordination_class stereo double_bond_stereo reaction_distance metal_donor_distance "
+    "converged topology coordination_class stereo double_bond_stereo fixed_state reaction_distance metal_donor_distance "
     "donor_orientation contacts".split()
 )
 _SKIPPED_FREE = ("coordination_class", "metal_donor_distance", "donor_orientation")
@@ -590,6 +592,7 @@ def audit_structure(
     allowed: Collection[tuple[int, ...]] | None = None,
     double_bond_states: Sequence[DoubleBondState] | None = None,
     tetrahedral_states: Sequence[TetrahedralState] | None = None,
+    torsion_states: Sequence[TorsionState] = (),
 ) -> AuditRecord:
     ref = np.asarray(reference, dtype=float)
     new = np.asarray(coords, dtype=float)
@@ -660,6 +663,8 @@ def audit_structure(
                 failed.append("double_bond_stereo")
     if not preserves_double_bonds(new, tuple(double_bond_states)):
         failed.append("double_bond_stereo")
+    if not preserves_torsions(new, tuple(torsion_states)):
+        failed.append("fixed_state")
     for i, j in pairs:
         if abs(_dist(new, i, j) - _dist(ref, i, j)) > _R_TOL:
             failed.append("reaction_distance")

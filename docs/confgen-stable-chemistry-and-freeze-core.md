@@ -83,6 +83,40 @@ states fail `double_bond_stereo`. E/Z states also remain distinct during serial 
 minimum deduplication, regardless of the geometric RMSD threshold. An `enumerate` request is
 rejected; exhaustive E/Z state enumeration is not implemented or implied.
 
+`search.fixed_states` declares torsions whose reference side every structure keeps. Each entry
+is four distinct atoms in bonding order, using the step's `index_base`:
+
+```yaml
+schema_version: 4
+index_base: 1
+search:
+  fixed_states:
+    - [5, 2, 3, 9]    # e.g. three arm torsions of a tripod ligand
+    - [6, 2, 4, 10]
+    - [7, 2, 1, 11]
+```
+
+The reference dihedral θ0 of each entry sets its kind. If `|sin θ0| >= 0.5` it is a `hand`
+state (helix, atropisomer, gauche±) and its sign of sin is kept, so a mirror image fails. Otherwise
+it is a `side` state (amide or ester s-cis/s-trans) and its sign of cos is kept, which a mirror
+image does not change. A candidate exactly on the boundary fails, and a degenerate reference
+(coincident or collinear atoms) is refused. The explorer filters generated starts and moves
+before xTB (`generated_fixed_state`), audits every relaxed structure (`fixed_state`, release
+outputs included), and so publishes only structures that keep the declared states. ETKDG cannot
+generate a declared torsion state directly, so each declared element roughly halves the usable DG
+starts. Undeclared torsions are still explored freely. Stats appear under `fixed_states`
+(`states`, `generated_rejected`, `audit_rejected`, `lowest_audit_rejected_kcal`).
+
+The reminder layer is advisory. `stats["state_changes"]` lists heavy-atom torsions that the final
+minima hold on the other side of the same rule, scanned over every final minimum including those
+outside the energy window. A unit is a discrete two-state torsion: some minima flip, and every
+minimum stays at least 20° from the boundary. Units that flip in identical sets of minima are
+grouped, and atom labels are relabelled by graph automorphisms. The WARNING
+`confgen_conformational_states` lists the units with ready-to-paste `search.fixed_states` entries,
+shifted by `index_base`. Geometry cannot tell barriers, so fast rotors (methoxy gauche±) may be
+reported, and a unit only appears when the other state was sampled. Metal-centred Δ/Λ is handled
+by `arrangement: keep`, not by this scan.
+
 Search statistics distinguish generation from optimization. For each arm, `generation` reports
 actual generation `attempts`, `generated` raw candidates, `failures`, worker CPU seconds,
 summed worker wall seconds, map wall seconds and the number sent to optimization (`optimized`).

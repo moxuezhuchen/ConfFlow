@@ -113,6 +113,65 @@ def _keep_scope_diagnostic(stats: Any, step_id: str, work_item: WorkItem) -> Dia
     )
 
 
+def _state_change_diagnostic(
+    stats: Any, step_id: str, work_item: WorkItem, base: int
+) -> Diagnostic | None:
+    """Warn that torsions left their input state and were explored freely (declare to fix)."""
+    if not isinstance(stats, Mapping):
+        return None
+    changes: Any = stats.get("state_changes")
+    units_raw: Any = changes.get("units") if isinstance(changes, Mapping) else None
+    if not isinstance(units_raw, list) or not units_raw:
+        return None
+    units: list[dict[str, Any]] = []
+    try:
+        for unit in units_raw:
+            if not isinstance(unit, Mapping):
+                continue
+            atoms = unit.get("atoms")
+            if (
+                not isinstance(atoms, (list, tuple))
+                or len(atoms) != 4
+                or any(isinstance(a, bool) or not isinstance(a, int) for a in atoms)
+            ):
+                continue
+            same = unit.get("lowest_same_kcal")
+            units.append(
+                {
+                    "atoms": [int(a) + base for a in atoms],
+                    "kind": str(unit.get("kind")),
+                    "structures": int(unit["structures"]),
+                    "lowest_changed_kcal": float(unit["lowest_changed_kcal"]),
+                    "lowest_same_kcal": None if same is None else float(same),
+                }
+            )
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not units:
+        return None
+    lines = [
+        f"{unit['atoms']} ({unit['kind']}): {unit['structures']} structures in the other state, "
+        f"lowest {unit['lowest_changed_kcal']:.2f} kcal/mol above the lowest scanned structure"
+        for unit in units[:5]
+    ]
+    paste = ", ".join(str(unit["atoms"]) for unit in units)
+    more = f" (first 5 of {len(units)} shown)" if len(units) > 5 else ""
+    return Diagnostic(
+        "confgen_conformational_states",
+        f"{len(units)} torsion state(s) changed from the input state during the search and were "
+        f"explored freely{more}: " + "; ".join(lines) + ". To keep them fixed, declare: "
+        f"search.fixed_states: [{paste}]",
+        DiagnosticSeverity.WARNING,
+        step_id,
+        work_item.id,
+        work_item.logical_key,
+        None,
+        FrozenDict(
+            {"aligned": changes.get("aligned"), "units": tuple(FrozenDict(u) for u in units)}
+        ),
+    )
+
+
 def _histogram(payload: Any) -> dict[str, int]:
     """Return the failure-reason counts of a summary (iterative search: ``search.failures``)."""
     counts: dict[str, int] = {}
@@ -276,6 +335,32 @@ def _run(
         if index in freeze_core:
             raise DomainError(f"confgen search freeze_core repeats atom {value}")
         freeze_core.append(index)
+    raw_fixed_states = section.get("fixed_states", []) if isinstance(section, Mapping) else []
+    if not isinstance(raw_fixed_states, (list, tuple)):
+        raise DomainError("confgen search fixed_states must be a list of 4-atom lists")
+    fixed_states: list[list[int]] = []
+    for quad in raw_fixed_states:
+        if not isinstance(quad, (list, tuple)) or len(quad) != 4:
+            raise DomainError(
+                f"confgen search fixed_states entry {quad!r} must hold 4 atom indices"
+            )
+        atoms: list[int] = []
+        for value in quad:
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise DomainError(
+                    f"confgen search fixed_states atom must be an integer, got {value!r}"
+                )
+            index = value - base
+            if index < 0 or index >= natoms:
+                raise DomainError(
+                    f"confgen search fixed_states atom {value} is out of range for {natoms} atoms"
+                )
+            atoms.append(index)
+        if len(set(atoms)) != 4:
+            raise DomainError(f"confgen search fixed_states entry {quad!r} repeats an atom")
+        if atoms in fixed_states or atoms[::-1] in fixed_states:
+            raise DomainError(f"confgen search fixed_states entry {quad!r} is duplicated")
+        fixed_states.append(atoms)
     charge, multiplicity = driving.charge, driving.multiplicity
     defaults = getattr(context, "scientific_defaults", None)
     if charge is None and defaults is not None:
@@ -325,6 +410,7 @@ def _run(
     settings_doc["seed"] = int(seed)
     settings_doc["fragment_charges"] = [[a, q] for a, q in frag]
     settings_doc["freeze_core"] = freeze_core
+    settings_doc["fixed_states"] = fixed_states
     walltime: float | None = binding.walltime_seconds if binding is not None else None
     walltime = float(walltime) if walltime else None
     job_path = os.path.join(attempt, "search_job.json")
@@ -568,6 +654,9 @@ def _run(
         keep_diag = _keep_scope_diagnostic(search_stats, context.step_id, work_item)
         if keep_diag is not None:
             diagnostics.append(keep_diag)
+        state_diag = _state_change_diagnostic(search_stats, context.step_id, work_item, base)
+        if state_diag is not None:
+            diagnostics.append(state_diag)
         structures = StructureSet(tuple(members))
         return _result(WorkItemStatus.COMPLETED, structures, tuple(diagnostics), artifacts)
 

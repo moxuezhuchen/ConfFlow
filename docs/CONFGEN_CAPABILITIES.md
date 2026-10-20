@@ -132,6 +132,7 @@ ConfFlow 不给出 DFT 能量。
 | `max_cycles` | `1000` | xTB 松弛最大循环数 |
 | `bond_scale` | `1.25` | 审计阶段重新感知键时的尺度（与 `tolerances.bond_scale` 独立） |
 | `fragment_charges` | `[]` | DG 片段电荷覆盖：`{atom, charge}`，`atom` 使用本步骤的 `index_base` |
+| `fixed_states` | `[]` | 需保持侧别的二面角，每项为 4 个不同原子（有顺序，使用本步骤的 `index_base`），判定规则见第 5 节 |
 
 `starts` 为 `null`（或缺省）时按上表规则在搜索内解析。不设 `budget` 时预算自适应：低能区很快饱和的体系停得早（axurer 约 2100 次），
 低能构象多的体系继续（cnetpa 约 4000 次；奥司他韦、四条正丁基链到 8000 上限），耗时可达固定 1500 次的 3 倍以上，覆盖显著提高
@@ -187,7 +188,13 @@ worker 记录 xTB 的 `xtb version … (commit)` 行到 `summary.json`。已完�
 8. `contacts`：相隔 3 根键以上、且不含金属的原子对，距离不短于共价半径和的 0.70 倍。
    仓内没有独立 vdW 半径表，沿用 `confflow/science/bonding.py` 的共价半径表；
 9. `restraint`：搜索阶段，金属–给体与反应对的距离偏离约束目标超过 0.03 Å 即拒绝；
-10. `arrangement`：保持排布时，配体–金属–配体夹角（按图等价的给体置换取最优）相对输入的偏差超过 45° 即拒绝。
+10. `arrangement`：保持排布时，配体–金属–配体夹角（按图等价的给体置换取最优）相对输入的偏差超过 45° 即拒绝；
+11. `fixed_state`：`search.fixed_states` 声明的二面角须保持参考侧别（收尾阶段同样检查）。
+
+声明的二面角按参考二面角 θ0 分类：|sin θ0| ≥ 0.5 为 `hand`（螺旋、阻转异构、gauche±），保持 sin θ 的符号，镜像即判失败；
+否则为 `side`（酰胺、酯的 s-cis/s-trans），保持 cos θ 的符号，镜像不改变它。恰在边界（sin 或 cos 为零）的候选判失败，
+参考中的退化几何（原子重合或共线）直接报错。生成端在 xTB 之前过滤（计入 `generated_fixed_state`）。ETKDG 不能直接生成声明的状态，
+每声明一个二面角，可用的 DG 出发大致减半；未声明的二面角仍自由探索。
 
 ## 6. 输出与退出语义
 
@@ -210,6 +217,8 @@ worker 记录 xTB 的 `xtb version … (commit)` 行到 `summary.json`。已完�
   - `tetrahedral_stereo`（构型保持统计）：`states`（受保护的中心数）、`embedding_enforced`（DG 嵌入时加了输入手性标签的数）、
     `filter_only`（仅生成后过滤的数）、`flat_reference`（参考中近共面、未受保护的原子，0 基内部索引）。
     生成后被过滤的计数为 `generated_tetrahedral_stereo`，reembed 失败原因为 `tetrahedral_stereo`。
+  - `fixed_states`（声明的二面角）：`states`、`generated_rejected`、`audit_rejected`、`lowest_audit_rejected_kcal`（被拒结构中最低者相对最低构象的 kcal/mol）；
+    `state_changes`（提示层）：扫描全部最终极小（含窗口外）中的离散两态二面角，远离边界 20° 以上，按相同结构集合合并，按图自同构换标。
   逐起点的失败记录不再列出（几千条），失败原因统一计入 `search.failures`。
 - worker 的 `stdout.log`、`stderr.log`（均为制品）。
 - 成员的 `role` 为 `conformer`，`ordinal` 为能量名次（0-based），id 按 `conformer_output_id`；
@@ -226,6 +235,10 @@ worker 记录 xTB 的 `xtb version … (commit)` 行到 `summary.json`。已完�
 错误信息为 `confgen search ran N relaxations but none passed all audit checks`，并附失败审计项直方图。
 此时 worker 以退出码 2 结束、不写 `structures.xyz`。
 worker 异常（包括 job 非法或 xTB 缺失）为 `FAILED`，附 stderr 尾部。
+
+WARNING `confgen_conformational_states`：`state_changes` 中的单元存在时发出，列出各二面角（已按 `index_base` 换算）及可粘贴的
+`search.fixed_states: [...]`。这只是提示：几何无法判断势垒，快速转子（如甲氧基 gauche±）也可能被报告，且只有另一态也被采样到才会出现；
+金属中心的 Δ/Λ 由 `arrangement: keep` 处理，不在此扫描范围。
 
 续跑：出发目录内已有相同内容的 `done.json` 时自动跳过该出发。
 

@@ -183,3 +183,80 @@ def tag_tetrahedra(
     result = tagged.GetMol()
     result.UpdatePropertyCache(strict=False)
     return result
+
+
+#: |sin| of the reference dihedral at or above which a declared torsion is a "hand" state
+TORSION_HAND_SIN = 0.5
+#: squared-length floor below which atoms are treated as collinear (dihedral undefined)
+_TORSION_EPS = 1e-10
+
+
+@dataclass(frozen=True, slots=True)
+class TorsionState:
+    """A declared dihedral (four atoms in the given order) and the reference side it must keep.
+
+    ``kind`` is ``"hand"`` (sign of sin, chirality-type: helix, atropisomer, gauche +/-) when the
+    reference has ``|sin| >= TORSION_HAND_SIN``, else ``"side"`` (sign of cos, cis/trans-type:
+    amide, ester s-cis/s-trans). ``theta0`` is the reference dihedral in degrees.
+    """
+
+    atoms: tuple[int, int, int, int]
+    kind: str  # "hand" or "side"
+    sign: int
+    theta0: float
+
+
+def torsion_angle(coords: np.ndarray, atoms: tuple[int, int, int, int]) -> float:
+    """Return the dihedral of four atoms in degrees, in (-180, 180].
+
+    Raises ``ValueError`` when the dihedral is undefined (coincident or collinear atoms).
+    """
+    a, b, c, d = atoms
+    x = np.asarray(coords, dtype=float)
+    b0 = x[a] - x[b]
+    b1 = x[c] - x[b]
+    b2 = x[d] - x[c]
+    length = float(np.linalg.norm(b1))
+    if length < _TORSION_EPS:
+        raise ValueError(f"dihedral {tuple(atoms)} is undefined: atoms {b} and {c} coincide")
+    b1 = b1 / length
+    v = b0 - np.dot(b0, b1) * b1
+    w = b2 - np.dot(b2, b1) * b1
+    if float(np.linalg.norm(v)) < _TORSION_EPS or float(np.linalg.norm(w)) < _TORSION_EPS:
+        raise ValueError(f"dihedral {tuple(atoms)} is undefined: atoms are collinear")
+    angle = float(np.degrees(np.arctan2(np.dot(np.cross(b1, v), w), np.dot(v, w))))
+    return angle + 360.0 if angle <= -180.0 else angle
+
+
+def torsion_states(reference: np.ndarray, quads: Any) -> tuple[TorsionState, ...]:
+    """Classify each declared quad by its reference dihedral (raises on undefined geometry)."""
+    ref = np.asarray(reference, dtype=float)
+    states = []
+    for quad in quads:
+        atoms = tuple(int(i) for i in quad)
+        theta0 = torsion_angle(ref, atoms)  # type: ignore[arg-type]
+        radians = np.radians(theta0)
+        if abs(np.sin(radians)) >= TORSION_HAND_SIN:
+            kind, sign = "hand", 1 if np.sin(radians) > 0 else -1
+        else:
+            kind, sign = "side", 1 if np.cos(radians) > 0 else -1
+        states.append(TorsionState(atoms, kind, sign, float(theta0)))  # type: ignore[arg-type]
+    return tuple(states)
+
+
+def torsion_state_kept(coords: np.ndarray, state: TorsionState) -> bool:
+    """Return whether a candidate keeps the declared side; undefined or on-boundary fails."""
+    try:
+        angle = torsion_angle(coords, state.atoms)
+    except ValueError:
+        return False
+    radians = np.radians(angle)
+    value = float(np.sin(radians)) if state.kind == "hand" else float(np.cos(radians))
+    if value == 0.0:
+        return False
+    return (1 if value > 0.0 else -1) == state.sign
+
+
+def preserves_torsions(coords: np.ndarray, states: tuple[TorsionState, ...]) -> bool:
+    """Require every declared torsion state (vacuously true when none are declared)."""
+    return all(torsion_state_kept(coords, state) for state in states)
