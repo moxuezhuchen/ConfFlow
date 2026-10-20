@@ -58,6 +58,23 @@ neighbors are exactly frozen. The stable molecule, other stereocenters, ETKDG ch
 and the independent output stereo audit remain in force. DG results report the affected atom
 indices in `embedding_relaxed_centers`. This is not permission to invert a reaction center.
 
+Tetrahedral configuration preservation is always on and needs no CIP or RDKit stereo perception.
+Every non-metal atom with exactly four neighbours in the transition-state bonding graph (stable
+bonds plus declared reaction pairs) keeps the signed volume of its input neighbour tetrahedron,
+keyed by atom index. This covers new reactive centres and existing stereocentres alike, and
+conformational changes that do not break bonds cannot invert it. Skipped: atoms with two or more
+same-element terminal neighbours (CH2, CH3, CF2), metal centres (governed by `arrangement`), and
+reference centres whose neighbours are nearly coplanar (unit volume below 0.1; reported only as
+`flat_reference`). DG embedding (global and local) labels the remaining centres with their input
+chirality, so only the input configuration is generated. A reactive centre lying outside its
+neighbour tetrahedron, which ETKDG cannot satisfy, is not labelled and is only filtered after
+generation (`filter_only`). Stats appear under `tetrahedral_stereo` (`states`, `embedding_enforced`,
+`filter_only`, `flat_reference`, 0-based indices); post-generation rejections are counted as
+`generated_tetrahedral_stereo` and re-embedding failures carry the reason `tetrahedral_stereo`.
+Audit failures count under the existing `stereo` check. Atoms with more than four neighbours,
+three-neighbour invertible atoms (phosphines, sulfoxides) and conformational chirality are outside
+this rule. Run with an input structure of the other configuration to obtain it.
+
 `search.ez_policy: preserve` is the default and currently the only supported double-bond state
 policy. Genuinely stereogenic stable double bonds acquire indexed substituent quartets from
 the stable molecule and reference coordinates. Global/local generated candidates and optimized
@@ -65,6 +82,40 @@ search/release outputs must retain their reference side relationship. Opposite o
 states fail `double_bond_stereo`. E/Z states also remain distinct during serial and parallel
 minimum deduplication, regardless of the geometric RMSD threshold. An `enumerate` request is
 rejected; exhaustive E/Z state enumeration is not implemented or implied.
+
+`search.fixed_states` declares torsions whose reference side every structure keeps. Each entry
+is four distinct atoms in bonding order, using the step's `index_base`:
+
+```yaml
+schema_version: 4
+index_base: 1
+search:
+  fixed_states:
+    - [5, 2, 3, 9]    # e.g. three arm torsions of a tripod ligand
+    - [6, 2, 4, 10]
+    - [7, 2, 1, 11]
+```
+
+The reference dihedral θ0 of each entry sets its kind. If `|sin θ0| >= 0.5` it is a `hand`
+state (helix, atropisomer, gauche±) and its sign of sin is kept, so a mirror image fails. Otherwise
+it is a `side` state (amide or ester s-cis/s-trans) and its sign of cos is kept, which a mirror
+image does not change. A candidate exactly on the boundary fails, and a degenerate reference
+(coincident or collinear atoms) is refused. The explorer filters generated starts and moves
+before xTB (`generated_fixed_state`), audits every relaxed structure (`fixed_state`, release
+outputs included), and so publishes only structures that keep the declared states. ETKDG cannot
+generate a declared torsion state directly, so each declared element roughly halves the usable DG
+starts. Undeclared torsions are still explored freely. Stats appear under `fixed_states`
+(`states`, `generated_rejected`, `audit_rejected`, `lowest_audit_rejected_kcal`).
+
+The reminder layer is advisory. `stats["state_changes"]` lists heavy-atom torsions that the final
+minima hold on the other side of the same rule, scanned over every final minimum including those
+outside the energy window. A unit is a discrete two-state torsion: some minima flip, and every
+minimum stays at least 20° from the boundary. Units that flip in identical sets of minima are
+grouped, and atom labels are relabelled by graph automorphisms. The WARNING
+`confgen_conformational_states` lists the units with ready-to-paste `search.fixed_states` entries,
+shifted by `index_base`. Geometry cannot tell barriers, so fast rotors (methoxy gauche±) may be
+reported, and a unit only appears when the other state was sampled. Metal-centred Δ/Λ is handled
+by `arrangement: keep`, not by this scan.
 
 Search statistics distinguish generation from optimization. For each arm, `generation` reports
 actual generation `attempts`, `generated` raw candidates, `failures`, worker CPU seconds,

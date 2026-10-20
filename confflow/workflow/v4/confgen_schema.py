@@ -159,7 +159,9 @@ class ConfgenSearchModel(ConfgenSpecModel):
     ``release`` re-relaxes the final minima with only reaction-pair restraints.  ``starts``
     counts first-round DG starts per coordination class (in total without a metal); ``None``
     spreads 60 over the classes in scope (at least 2 each), or 60 without a metal.
-    ``fragment_charges`` atoms use the model's ``index_base``.
+    ``fragment_charges`` and ``freeze_core`` atoms use the model's ``index_base``.
+    ``fixed_states`` lists torsions (four distinct atoms each) whose state is kept; the search
+    still explores the other states of undeclared torsions.
     """
 
     budget: StrictInt | None = Field(default=None, ge=1)
@@ -173,12 +175,27 @@ class ConfgenSearchModel(ConfgenSpecModel):
     bond_scale: StrictFloat = Field(default=1.25, gt=0)
     fragment_charges: list[FragmentChargeModel] = Field(default_factory=list)
     freeze_core: list[Index] = Field(default_factory=list)
+    fixed_states: list[list[Index]] = Field(default_factory=list)
     ez_policy: Literal["preserve"] = "preserve"
 
     @model_validator(mode="after")
     def check_freeze_core(self) -> ConfgenSearchModel:
         if len(set(self.freeze_core)) != len(self.freeze_core):
             raise ValueError("search.freeze_core holds duplicate atom indices")
+        return self
+
+    @model_validator(mode="after")
+    def check_fixed_states(self) -> ConfgenSearchModel:
+        seen: set[tuple[int, ...]] = set()
+        for quad in self.fixed_states:
+            if len(quad) != 4:
+                raise ValueError("search.fixed_states entries must hold exactly 4 atom indices")
+            if len(set(quad)) != 4:
+                raise ValueError(f"search.fixed_states entry {quad} repeats an atom")
+            key = tuple(quad)
+            if key in seen or key[::-1] in seen:
+                raise ValueError(f"search.fixed_states entry {quad} is duplicated")
+            seen.add(key)
         return self
 
 

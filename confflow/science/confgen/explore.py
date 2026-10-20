@@ -32,7 +32,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-from confflow.science.confgen import dg_seed, search
+from confflow.science.confgen import dg_seed, search, state_scan
 from confflow.science.confgen.calculator import (
     CAP_FIXED_ATOMS,
     CAP_HESSIAN,
@@ -53,8 +53,15 @@ from confflow.science.confgen.identity import (
 from confflow.science.confgen.rotors import Rotor, Topology, rotate
 from confflow.science.confgen.stereo import (
     DoubleBondState,
+    TetrahedralState,
     double_bond_states,
     preserves_double_bonds,
+    preserves_tetrahedra,
+    preserves_torsions,
+    torsion_states,
+)
+from confflow.science.confgen.stereo import (
+    tetrahedral_states as perceive_tetrahedral_states,
 )
 
 __all__ = ["ExploreSettings", "ParallelMap", "explore"]
@@ -116,6 +123,8 @@ class ExploreSettings:
     relaxation_batch: int = 4
     freeze_core: tuple[int, ...] = ()
     ez_policy: Literal["preserve"] = "preserve"
+    #: declared 4-atom dihedrals (0-based, in order) whose reference side every structure keeps
+    fixed_states: tuple[tuple[int, int, int, int], ...] = ()
 
 
 # ----------------------------------------------------------------------------- worker tasks
@@ -199,15 +208,38 @@ def _reembed_task(args: tuple[Any, ...]) -> tuple[np.ndarray | None, str | None]
         params.SetCoordMap({i: Point3D(*map(float, xyz[i])) for i in fixed})
         states = double_bond_states(mol, xyz)
         mol, _relaxed = dg_seed.embedding_molecule(graph, mol, xyz, fixed)
+        tet, _flat = perceive_tetrahedral_states(mol, xyz, (), graph.metal_center)
         cid = rdDistGeom.EmbedMolecule(mol, params)
         if cid < 0:
             return None, "embed"
         coords = np.array(mol.GetConformer(cid).GetPositions(), dtype=float)
         if not preserves_double_bonds(coords, states):
             return None, "double_bond_stereo"
+        if not preserves_tetrahedra(coords, tet):
+            return None, "tetrahedral_stereo"
         return coords, None
     except Exception as exc:  # RDKit raises plain RuntimeErrors on hopeless inputs
         return None, f"error: {str(exc)[:40]}"
+
+
+def _validated_quads(
+    quads: Sequence[Sequence[int]], natoms: int
+) -> tuple[tuple[int, int, int, int], ...]:
+    """Return ``fixed_states`` as int 4-tuples, rejecting out-of-range or repeated atoms."""
+    out = []
+    for quad in quads:
+        atoms = tuple(quad)
+        if len(atoms) != 4:
+            raise search.SearchError(f"fixed_states entry {atoms!r} must hold four atom indices")
+        for index in atoms:
+            if isinstance(index, bool) or not isinstance(index, int):
+                raise search.SearchError(f"fixed_states index {index!r} is not an integer")
+            if not 0 <= index < natoms:
+                raise search.SearchError(f"fixed_states index {index!r} is out of range")
+        if len(set(atoms)) != 4:
+            raise search.SearchError(f"fixed_states entry {atoms!r} needs four distinct atoms")
+        out.append((int(atoms[0]), int(atoms[1]), int(atoms[2]), int(atoms[3])))
+    return tuple(out)
 
 
 # ----------------------------------------------------------------------------- the search
@@ -227,6 +259,13 @@ class _Explorer:
                 raise search.SearchError(f"freeze_core index {index!r} is not an integer")
             if not 0 <= index < graph.natoms:
                 raise search.SearchError(f"freeze_core index {index!r} is out of range")
+        self.fixed_quads = _validated_quads(st.fixed_states, graph.natoms)
+        try:
+            self.torsion_states = torsion_states(ref, self.fixed_quads)
+        except ValueError as exc:
+            raise search.SearchError(f"fixed_states: {exc}") from exc
+        self.fixed_state_rejected = 0
+        self.fixed_state_lowest_eh: float | None = None
         self.graph, self.spec, self.ref, self.shape, self.st = graph, spec, ref, shape, st
         self.calc, self.pmap, self.should_cancel = calc, pmap, should_cancel
         if st.freeze_core and not calc.info.supports(CAP_FIXED_ATOMS):
@@ -254,6 +293,10 @@ class _Explorer:
         self.chemistry_note = ""
         self.fragment_charges: tuple[tuple[tuple[int, ...], int], ...] = ()
         self.double_bond_states: tuple[DoubleBondState, ...] = ()
+        self.tetrahedral_states: tuple[TetrahedralState, ...] = ()
+        self.flat_tetrahedra: tuple[int, ...] = ()
+        # precomputed audit states; empty (the audit's own fallback) when chemistry is rejected
+        self.audit_states: dict[str, Any] = {}
         try:
             (
                 self.stable_molecule,
@@ -263,10 +306,18 @@ class _Explorer:
             ) = dg_seed.stable_chemistry_molecule(graph, ref, st.fragment_charges)
             self.double_bond_states = double_bond_states(self.stable_molecule, ref)
             self.id.double_bond_states = self.double_bond_states
+            self.tetrahedral_states, self.flat_tetrahedra = perceive_tetrahedral_states(
+                self.stable_molecule, ref, graph.reaction_pairs, graph.metal_center
+            )
+            self.audit_states = {
+                "double_bond_states": self.double_bond_states,
+                "tetrahedral_states": self.tetrahedral_states,
+            }
         except ValueError as exc:
             self.stable_chemistry_error = str(exc)
             self.chemistry_mode = "rejected"
             self.chemistry_note = str(exc)
+        self.audit_states["torsion_states"] = self.torsion_states
         radii = np.array([search._radius(e) for e in self.elements])
         self.topo = Topology(self.id, reference, self.bonds, radii, molecule=self.stable_molecule)
         self.rotors: list[Rotor] = list(self.topo.rotors)
@@ -407,7 +458,8 @@ class _Explorer:
             self._set_arrangement()
             return
         rec = search.audit_structure(self.ref, self.graph, self.spec, self.ref, self.shape, (), (),
-                                     True, self.st.bond_scale, allowed=self.allowed)  # fmt: skip
+                                     True, self.st.bond_scale, allowed=self.allowed,
+                                     **self.audit_states)  # fmt: skip
         if "coordination_class" in rec.failed_checks or rec.actual_class not in self.tid:
             self.unclassified_keep = True
             return  # the input fits no ideal polyhedron: it has no arrangement to keep
@@ -518,6 +570,7 @@ class _Explorer:
             True,
             self.st.bond_scale,
             allowed=self.allowed if self.shape else None,
+            **self.audit_states,
         )
         bad = list(rec.failed_checks)
         if self.shape and not self._same_arrangement(self.ref):
@@ -614,7 +667,9 @@ class _Explorer:
         """Return (label, ()) for an accepted structure, else (None, failed checks)."""
         rec = search.audit_structure(xyz, self.graph, self.spec, self.ref, self.shape, (), self.centers,
                                      conv, self.st.bond_scale, allowed=self.allowed if self.shape else None,
-                                     double_bond_states=self.double_bond_states)  # fmt: skip
+                                     double_bond_states=self.double_bond_states,
+                                     tetrahedral_states=self.tetrahedral_states,
+                                     torsion_states=self.torsion_states)  # fmt: skip
         if rec.coordination_contacts:
             self.audit_evidence.append(
                 {
@@ -736,6 +791,11 @@ class _Explorer:
                 label, bad = self._audit(coords, out.converged, free, key, origin)
                 if label is None:
                     self.fail.update(bad)
+                    if "fixed_state" in bad:
+                        self.fixed_state_rejected += 1
+                        eh = float(out.energy_eh)
+                        if self.fixed_state_lowest_eh is None or eh < self.fixed_state_lowest_eh:
+                            self.fixed_state_lowest_eh = eh
                     if origin == "input":
                         input_bad = bad
                     if origin == "baseline:input":
@@ -757,6 +817,7 @@ class _Explorer:
                         True,
                         self.st.bond_scale,
                         allowed=self.allowed if self.shape else None,
+                        **self.audit_states,
                     )
                     rec = search.SearchRecord(
                         label,
@@ -893,7 +954,11 @@ class _Explorer:
                 self.dg_error_details.append({"target": str(tid), "kind": kind, "reason": detail})
             if len(coords) < hi - lo:  # timed out or unembeddable starts are skipped silently
                 self.fail["dg_no_start"] += hi - lo - len(coords)
-            items += [(f"{tag}/{tid}_{lo:02d}", xyz, f"dg:{tid}") for xyz in coords]
+            for xyz in coords:
+                if preserves_torsions(xyz, self.torsion_states):
+                    items.append((f"{tag}/{tid}_{lo:02d}", xyz, f"dg:{tid}"))
+                else:
+                    self.fail["generated_fixed_state"] += 1
         self._record_generation(
             "dg", len(tasks), len(items), time.monotonic() - began, cpu, worker_wall
         )
@@ -970,6 +1035,10 @@ class _Explorer:
                     attempts += 1
                     if not preserves_double_bonds(x, self.double_bond_states):
                         self.fail["generated_double_bond_stereo"] += 1
+                    elif not preserves_tetrahedra(x, self.tetrahedral_states):
+                        self.fail["generated_tetrahedral_stereo"] += 1
+                    elif not preserves_torsions(x, self.torsion_states):
+                        self.fail["generated_fixed_state"] += 1
                     elif self.topo.clashes(x):
                         self.fail["move_clash"] += 1
                     else:
@@ -1041,6 +1110,8 @@ class _Explorer:
             x, err = result
             if x is None:
                 self.fail[f"reembed_{(err or 'embed').split(':')[0]}"] += 1
+            elif not preserves_torsions(x, self.torsion_states):
+                self.fail["generated_fixed_state"] += 1
             else:
                 items.append((name, x, origin))
         self._record_generation(
@@ -1082,6 +1153,10 @@ class _Explorer:
                     x = rotate(ref.coords, r, ang)
                     if not preserves_double_bonds(x, self.double_bond_states):
                         self.fail["generated_double_bond_stereo"] += 1
+                    elif not preserves_tetrahedra(x, self.tetrahedral_states):
+                        self.fail["generated_tetrahedral_stereo"] += 1
+                    elif not preserves_torsions(x, self.torsion_states):
+                        self.fail["generated_fixed_state"] += 1
                     elif not self.topo.clashes(x):
                         items.append(
                             (
@@ -1282,7 +1357,24 @@ class _Explorer:
             if self._saturated():
                 self.stop = "saturated"
                 break
-        return self._release(), self._stats()
+        final = self._release()
+        stats = self._stats()
+        stats["state_changes"] = self._state_changes(final)
+        return final, stats
+
+    def _state_changes(self, final: MinimaPool) -> dict[str, Any]:
+        """Scan every minimum of the final pool for reminder states; never fails the run."""
+        try:
+            rows = final.ordered()
+            return state_scan.scan_states(
+                self.id,
+                self.ref,
+                [m.coords for m in rows],
+                [m.energy for m in rows],
+                declared=self.fixed_quads,
+            )
+        except Exception as exc:  # reporting only: a scan fault must not fail the search
+            return {"error": str(exc)[:200], "units": []}
 
     def _scope(self) -> tuple[str | None, str | None]:
         """Return (template, arrangement scope) as reported in the stats."""
@@ -1322,6 +1414,13 @@ class _Explorer:
                 "policy": self.st.ez_policy,
                 "states": [asdict(state) for state in self.double_bond_states],
             },
+            "tetrahedral_stereo": {
+                "states": [asdict(s) for s in self.tetrahedral_states],
+                "embedding_enforced": [s.center for s in self.tetrahedral_states if s.embeddable],
+                "filter_only": [s.center for s in self.tetrahedral_states if not s.embeddable],
+                "flat_reference": list(self.flat_tetrahedra),
+            },
+            "fixed_states": self._fixed_state_stats(),
             "adaptive": self.st.adaptive,
             "stop": self.stop,
             "release": self.release_status,
@@ -1355,6 +1454,17 @@ class _Explorer:
             "dg_errors": list(self.dg_error_details),
             "outcome_class": self._outcome_class(),
             "coordination_evidence": list(self.audit_evidence),
+        }
+
+    def _fixed_state_stats(self) -> dict[str, Any]:
+        lowest = None
+        if self.fixed_state_lowest_eh is not None and len(self.pool):
+            lowest = (self.fixed_state_lowest_eh - self.pool.lowest()) * HARTREE_TO_KCAL
+        return {
+            "states": [asdict(state) for state in self.torsion_states],
+            "generated_rejected": int(self.fail.get("generated_fixed_state", 0)),
+            "audit_rejected": self.fixed_state_rejected,
+            "lowest_audit_rejected_kcal": lowest,
         }
 
     def _outcome_class(self) -> str:
@@ -1443,6 +1553,7 @@ class _Explorer:
                     True,
                     self.st.bond_scale,
                     allowed=self.allowed if self.shape else None,
+                    **self.audit_states,
                 ).coordination_contacts,
             )
             for m in rows
