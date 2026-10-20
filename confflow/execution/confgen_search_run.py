@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -51,6 +52,7 @@ __all__ = ["run_search_item"]
 _HARTREE_TO_KCAL = 627.5094740631
 _SHAPE_FIT_MARGIN = 0.2  # Å: declared-shape RMSD excess over the best shape that warns
 _KEEP_WIDENED_SCOPE = "all_classes_input_unclassified"  # search.arrangement_scope value
+_INPUT_ARRANGEMENT = "a0"  # arrangement id of the input donor arrangement
 
 
 class _ImportError(DomainError):
@@ -108,6 +110,52 @@ def _keep_scope_diagnostic(stats: Any, step_id: str, work_item: WorkItem) -> Dia
                 "template": template,
                 "arrangement_scope": stats.get("arrangement_scope"),
                 "targets_searched": targets,
+            }
+        ),
+    )
+
+
+def _arrangement_changed_diagnostic(
+    stats: Any, rows: Any, step_id: str, work_item: WorkItem
+) -> Diagnostic | None:
+    """Warn when the lowest published structure lies in a donor arrangement other than the input's."""
+    table = stats.get("arrangements") if isinstance(stats, Mapping) else None
+    if not isinstance(table, list) or not isinstance(rows, list):
+        return None
+    lowest = next(
+        (r for r in rows if isinstance(r, Mapping) and r.get("passed") is True),
+        None,
+    )
+    arrangement = lowest.get("arrangement") if lowest is not None else None
+    if not isinstance(arrangement, str) or arrangement == _INPUT_ARRANGEMENT:
+        return None
+    input_row = next(
+        (r for r in table if isinstance(r, Mapping) and r.get("id") == _INPUT_ARRANGEMENT),
+        None,
+    )
+    gap = input_row.get("rel_kcal") if input_row is not None else None
+    if isinstance(gap, bool) or not isinstance(gap, (int, float)) or not math.isfinite(gap):
+        gap = None
+    if gap is None:
+        where = "the input arrangement not found in the arrangement table"
+    else:
+        where = (
+            f"{float(gap):.2f} kcal/mol below the input arrangement's lowest ({_INPUT_ARRANGEMENT})"
+        )
+    return Diagnostic(
+        "confgen_arrangement_changed",
+        f"the lowest structure has donor arrangement {arrangement}, {where}; other "
+        "arrangements are different coordination isomers - compare them per arrangement "
+        "(members carry search_arrangement)",
+        DiagnosticSeverity.WARNING,
+        step_id,
+        work_item.id,
+        work_item.logical_key,
+        None,
+        FrozenDict(
+            {
+                "arrangement": arrangement,
+                "input_rel_kcal": None if gap is None else float(gap),
             }
         ),
     )
@@ -400,7 +448,7 @@ def _run(
         settings_doc["budget"] = DEFAULT_SEARCH_BUDGET
         settings_doc["budget_cap"] = DEFAULT_SEARCH_BUDGET_CAP
     settings_doc.setdefault("window_kcal", DEFAULT_SEARCH_WINDOW_KCAL)
-    settings_doc.setdefault("arrangement", "keep")
+    settings_doc.setdefault("arrangement", "search")
     settings_doc.setdefault("release", True)
     settings_doc.setdefault("small_ring_torsions", "both")
     settings_doc.setdefault("embed_timeout_seconds", 120)
@@ -578,6 +626,7 @@ def _run(
                             "energy_eh": energy,
                             "rel_kcal": (float(energy or 0.0) - low) * _HARTREE_TO_KCAL,
                             "search_target": rec.get("target"),
+                            "search_arrangement": rec.get("arrangement"),
                             "search_start": rec.get("start"),
                             "search_actual_target": rec.get("actual_target"),
                             "search_release": release,
@@ -613,6 +662,7 @@ def _run(
                     "outcome_class": search_stats.get("outcome_class"),
                     "template": search_stats.get("template"),
                     "arrangement_scope": search_stats.get("arrangement_scope"),
+                    "arrangements": search_stats.get("arrangements"),
                     "targets_searched": targets_searched,
                 }
             ),
@@ -654,6 +704,11 @@ def _run(
         keep_diag = _keep_scope_diagnostic(search_stats, context.step_id, work_item)
         if keep_diag is not None:
             diagnostics.append(keep_diag)
+        arrangement_diag = _arrangement_changed_diagnostic(
+            search_stats, payload.get("structures"), context.step_id, work_item
+        )
+        if arrangement_diag is not None:
+            diagnostics.append(arrangement_diag)
         state_diag = _state_change_diagnostic(search_stats, context.step_id, work_item, base)
         if state_diag is not None:
             diagnostics.append(state_diag)

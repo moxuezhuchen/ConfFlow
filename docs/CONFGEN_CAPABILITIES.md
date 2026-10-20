@@ -32,10 +32,11 @@
 
 一个 ConfGen 步骤是一次迭代搜索（`confflow/science/confgen/explore.py`），依次进行：
 
-1. 对输入结构做类型拓扑（共价键、可选的配位与反应对），并记下输入的配位排布（`arrangement: keep`）。
+1. 对输入结构做类型拓扑（共价键、可选的配位与反应对），并记下输入的配位排布（`a0`，`arrangement` 默认 `search`，即同时搜索其他给体排布）。
 2. 全局出发：用 RDKit ETKDG 距离几何（`confflow/science/confgen/dg_seed.py`）生成出发构象。
    首轮每个配位类取 `starts` 个出发；`starts` 为 `null` 时把 60 个出发分摊到搜索范围内的类（每类至少 2 个）；
-   无金属时整体取 60 个。`arrangement: keep` 只对输入所属的类做 DG；输入不能归入任何理想多面体时
+   无金属时整体取 60 个。`arrangement: search`（默认）对所有类做 DG；全局出发中约一半不限定输入的给体排布
+   （受限的出发只保留 metal–给体距离，其余约束不变），从而发现其他排布（配位异构体）。`arrangement: keep` 只对输入所属的类做 DG；输入不能归入任何理想多面体时
    保留全部类（此时发出 WARNING `confgen_keep_scope_widened`，见第 6 节）。`enumerate` 对所有类做 DG（按配体图自同构合并等价类）。第二轮只补有产出的类。
 3. 势阱探测：在至多 3 个“环状态×类别”格子的最低构象上，测出每个转子实际弛豫到的扭转偏移，
    作为转子移动，并保留与任何实测偏移都相差 30° 以上的网格移动（探测父结构上不存在的阱仍可到达）。
@@ -109,14 +110,16 @@ ConfFlow 不给出 DFT 能量。
 - `constraints`：可选的 `FORBIDDEN_TRANS` 策略声明（`classification` 固定为 `REJECTED_BY_POLICY`），
   是策略而非证明。
 
-`shapes: [input]`（任意配位数 ≥2，仅与 `arrangement: keep` 搭配）：不套用理想多面体，模板取输入自身的金属–给体核心
+`shapes: [input]`（任意配位数 ≥2，仅与 `arrangement: keep` 或 `search` 搭配，不支持 `enumerate`）：不套用理想多面体，模板取输入自身的金属–给体核心
 （给体相对金属的向量），即输入的配位排布本身。DG 边界放宽 0.25 Å 以容纳输入几何（去掉金属后 RDKit 的自由配体先验，
 如 s-trans 共轭螯合环，可能排除真实结构）。新配位以输入为参照：非给体原子距金属小于共价半径和的 1.25 倍、且比参考近 0.3 Å 以上，
 即判 `coordination_class` 失败。
 
-`arrangement: keep` 保留的内容：配体的给体集合与共价拓扑；给体排布，即按图等价的给体置换取最优的给体–金属–给体夹角，
-偏差 ≤45° 才算同一排布，排布有手性时还比较其手性（镜像排布不通过）；几何弛豫。`release: true` 时，最终极小在去掉
-金属–给体约束后重新弛豫（第 5 节），保留的是排布与手性，而不是搜索阶段的坐标。
+`arrangement` 的含义：`search`（默认）搜索全部给体排布，每个极小按排布分组并标为 `aN`（`a0` 为输入排布，id 按最低极小排序，
+`a1`、`a2`…）；同一排布指按图等价的给体置换后，所有给体–金属–给体夹角偏差 ≤45° 且（手性排布）手性相同。
+`keep` 只保留输入排布（只有 `a0`）；`enumerate` 枚举全部配位类。`search` 与 `keep` 的给体集合与共价拓扑相同，不改变给体集合
+（解离、半柔性配体、配位数变化不在范围内）；声明的立体状态（四面体手性、双键、`fixed_states`）在三种模式下都保持。
+`release: true` 时，最终极小在去掉金属–给体约束后重新弛豫（第 5 节），保留的是排布与手性，而不是搜索阶段的坐标。
 
 `search`（可选）与默认值：
 
@@ -125,7 +128,7 @@ ConfFlow 不给出 DFT 能量。
 | `starts` | `null` | 首轮 DG 出发数：有 `coordination` 时每个配位类的出发数；`null` 时把 60 个出发分摊到搜索范围内的类（每类至少 2 个），无金属时为 60 |
 | `budget` | `null`（自适应） | 不设时：至少 1500 次优化，之后只要低能区仍在增长（最近 max(500, 已花费 25 %) 次里 3 kcal/mol 内新极小多于每 250 次 1 个，或最低能量又降了 0.1 kcal/mol 以上）就继续，上限 8000。设为整数时：搜索阶段的固定上限。收尾（release）对最低能量以上 `window_kcal + 2` 内的每个极小再加一次，Hessian 不计 |
 | `window_kcal` | `6.0` | 发布与父结构选择的能量窗口（kcal/mol，须 >0） |
-| `arrangement` | `keep` | `keep`：保持输入的配位排布（输入不能归入任何理想形状时搜索全部类别，并发出 WARNING `confgen_keep_scope_widened`）；`enumerate`：枚举所有配位类；`shapes: [input]` 同样保持输入排布，且不扩大范围 |
+| `arrangement` | `search` | `search`：搜索其他给体排布，按排布分组输出（见上）；`keep`：保持输入的配位排布（输入不能归入任何理想形状时搜索全部类别，并发出 WARNING `confgen_keep_scope_widened`）；`enumerate`：枚举所有配位类；`shapes: [input]` 可用 `search` 或 `keep`，二者都不扩大范围 |
 | `release` | `true` | 是否做去约束收尾 |
 | `small_ring_torsions` | `both` | 小环扭转开关：`both` 时每批 DG 出发约一半开、一半关；`on`/`off` 全局开或关 |
 | `embed_timeout_seconds` | `120` | 逐起点的 DG 嵌入超时（秒）：每个出发单独一次 RDKit 调用；超时或无法嵌入的出发被跳过（计入 `search.failures.dg_no_start`），其余出发保留。每个出发单独作为一个并行任务（种子与整次请求相同，结果不变）。局部重嵌入另用 10 s 上限（与本值取较小者）：实测成功的重嵌入都在 4 s 内，失败的会一直跑到上限 |
@@ -202,7 +205,7 @@ worker 记录 xTB 的 `xtb version … (commit)` 行到 `summary.json`。已完�
   为 `target=<来源> start=<n> energy_eh=<e> rel_kcal=<r>`，实际类可判定时（有金属的搜索）末尾追加
   ` actual=<实际目标>`，无金属时不追加。
 - `summary.json`：
-  - `settings`：设置（含解析后的 `starts`、xTB 身份）；
+  - `settings`：设置（含解析后的 `starts`、`arrangement`、xTB 身份）；
   - `structures`：只列发布的极小，每个唯一极小一条。`target` 为实际类 id（无金属为 `t00`，
     无法归入任何理想多面体的为 `unclassified`），`start` 为极小 id，`passed` 为 `true`；
   - `totals`：`generated` 为全部优化次数（含收尾），`relaxed` 为收敛数，`passed` 为发布数；
@@ -213,7 +216,11 @@ worker 记录 xTB 的 `xtb version … (commit)` 行到 `summary.json`。已完�
     `rotors`（转子数）、`targets_searched`、`unique_minima`、`spent`（各移动的花费）、
     `found_in_window`（各移动在窗口内的产出）、`failures`（失败原因计数）、`template`（`input`、理想形状名，或无金属时为 None）、
     `arrangement_scope`（搜索范围：`input_arrangement` 只搜索输入所属的类；`all_classes_input_unclassified` keep 下输入不能归类，
-    扩大到全部类；`all_classes` 搜索全部类（`enumerate`）；无金属时为 None）。
+    扩大到全部类；`all_classes` 搜索全部类（`enumerate`）；`all_arrangements` 为 `search`；无金属时为 None）。
+    `arrangements`（仅 `search` 与有金属时）：每个排布一行 `{id, input, lowest_eh, rel_kcal, minima, published}`，
+    `id` 为 `aN`，`a0` 恒为输入排布（`input: true`），`rel_kcal` 为该排布最低极小相对全局最低的能量差，`minima` 为该排布的极小数，
+    `published` 为发布的数量。发布规则：排布的最低极小在全局最低 `window_kcal` 之内才发布该排布；排布内只发布距其自身最低
+    `window_kcal` 之内的极小；输入排布 `a0` 始终发布。
   - `tetrahedral_stereo`（构型保持统计）：`states`（受保护的中心数）、`embedding_enforced`（DG 嵌入时加了输入手性标签的数）、
     `filter_only`（仅生成后过滤的数）、`flat_reference`（参考中近共面、未受保护的原子，0 基内部索引）。
     生成后被过滤的计数为 `generated_tetrahedral_stereo`，reembed 失败原因为 `tetrahedral_stereo`。
@@ -225,7 +232,8 @@ worker 记录 xTB 的 `xtb version … (commit)` 行到 `summary.json`。已完�
   metadata 含 `seed`、`starts`、`energy_eh`、`rel_kcal`、`search_target`、`search_start`、
   `search_actual_target`、`search_release`。`search_target` 是发布的类目标，`search_start` 是极小 id，
   `search_actual_target` 是实际类，`search_release` 与 summary 的 `search.release` 相同（`failed` 表示
-  构象仍带全部搜索约束）。
+  构象仍带全部搜索约束），`search_arrangement` 是排布标签（`a0` 为输入排布，`keep` 下恒为 `a0`）。
+  xyz 注释行在 `actual=` 之后追加 ` arrangement=<aN>`（`arrangement` 为空时不追加）。
   搜索成员是普通结构，下游按导入结构消费，不带额外状态。
 
 退出：至少一个构象通过审计并发布为 `COMPLETED`，附 INFO `confgen_completed`（生成、松弛、发布的数量，
@@ -236,9 +244,12 @@ worker 记录 xTB 的 `xtb version … (commit)` 行到 `summary.json`。已完�
 此时 worker 以退出码 2 结束、不写 `structures.xyz`。
 worker 异常（包括 job 非法或 xTB 缺失）为 `FAILED`，附 stderr 尾部。
 
+WARNING `confgen_arrangement_changed`：`search` 下（且 summary 含 `arrangements` 表时）若最低的发布构象不属于 `a0`，发出此 WARNING，
+给出该排布相对输入排布最低极小的能量差（`a0` 行的 `rel_kcal`；表中无 `a0` 时注明未找到）。不同排布是不同的配位异构体，应按 `search_arrangement` 分别比较。
+
 WARNING `confgen_conformational_states`：`state_changes` 中的单元存在时发出，列出各二面角（已按 `index_base` 换算）及可粘贴的
 `search.fixed_states: [...]`。这只是提示：几何无法判断势垒，快速转子（如甲氧基 gauche±）也可能被报告，且只有另一态也被采样到才会出现；
-金属中心的 Δ/Λ 由 `arrangement: keep` 处理，不在此扫描范围。
+金属中心的 Δ/Λ 由 `arrangement` 处理（`keep` 与 `search` 都保持手性），不在此扫描范围。
 
 续跑：出发目录内已有相同内容的 `done.json` 时自动跳过该出发。
 

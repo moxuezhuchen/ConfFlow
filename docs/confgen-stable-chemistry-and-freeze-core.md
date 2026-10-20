@@ -63,7 +63,7 @@ Every non-metal atom with exactly four neighbours in the transition-state bondin
 bonds plus declared reaction pairs) keeps the signed volume of its input neighbour tetrahedron,
 keyed by atom index. This covers new reactive centres and existing stereocentres alike, and
 conformational changes that do not break bonds cannot invert it. Skipped: atoms with two or more
-same-element terminal neighbours (CH2, CH3, CF2), metal centres (governed by `arrangement`), and
+same-element terminal neighbours (CH2, CH3, CF2), metal centres (governed by `arrangement`; `search` explores other donor arrangements, `keep` holds the input one), and
 reference centres whose neighbours are nearly coplanar (unit volume below 0.1; reported only as
 `flat_reference`). DG embedding (global and local) labels the remaining centres with their input
 chirality, so only the input configuration is generated. A reactive centre lying outside its
@@ -115,7 +115,7 @@ grouped, and atom labels are relabelled by graph automorphisms. The WARNING
 `confgen_conformational_states` lists the units with ready-to-paste `search.fixed_states` entries,
 shifted by `index_base`. Geometry cannot tell barriers, so fast rotors (methoxy gauche±) may be
 reported, and a unit only appears when the other state was sampled. Metal-centred Δ/Λ is handled
-by `arrangement: keep`, not by this scan.
+by `arrangement` (`keep` and `search` both keep the metal's hand), not by this scan.
 
 Search statistics distinguish generation from optimization. For each arm, `generation` reports
 actual generation `attempts`, `generated` raw candidates, `failures`, worker CPU seconds,

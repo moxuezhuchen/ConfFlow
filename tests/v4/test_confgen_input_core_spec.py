@@ -158,11 +158,18 @@ def test_model_accepts_input_with_keep_arrangement() -> None:
     assert model.search.arrangement == "keep"
 
 
+def test_model_accepts_input_with_search_arrangement() -> None:
+    document = _document([1, 2, 3, 4], ["input"], search={"arrangement": "search"})
+    model = ConfgenModelV3.model_validate(document)
+    assert model.search is not None
+    assert model.search.arrangement == "search"
+
+
 def test_model_rejects_input_with_enumerate() -> None:
     document = _document(
         [99, 100, 101, 102, 103, 104, 105], ["input"], search={"arrangement": "enumerate"}
     )
-    with pytest.raises(ValidationError, match="supports arrangement 'keep' only"):
+    with pytest.raises(ValidationError, match="supports arrangement 'keep' or 'search' only"):
         ConfgenModelV3.model_validate(document)
 
 

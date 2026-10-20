@@ -155,9 +155,9 @@ def _load_job(path: str) -> dict[str, Any]:
     if isinstance(window, bool) or not isinstance(window, (int, float)) or not window > 0:
         raise _JobError(f"job field 'settings.window_kcal' must be positive, got {window!r}")
     arrangement = section.get("arrangement")
-    if arrangement not in ("keep", "enumerate"):
+    if arrangement not in ("keep", "enumerate", "search"):
         raise _JobError(f"job field 'settings.arrangement' is invalid: {arrangement!r}")
-    typed_arr: Literal["keep", "enumerate"] = arrangement
+    typed_arr: Literal["keep", "enumerate", "search"] = arrangement
     release = section.get("release")
     if not isinstance(release, bool):
         raise _JobError(f"job field 'settings.release' must be a boolean, got {release!r}")
@@ -222,7 +222,10 @@ def _load_job(path: str) -> dict[str, Any]:
 def _comment(r: search.SearchRecord, low: float) -> str:
     energy = float(r.energy_eh or 0.0)
     text = f"target={r.target} start={r.start} energy_eh={energy:.6f} rel_kcal={(energy - low) * HARTREE_TO_KCAL:.3f}"
-    return text if r.actual_target is None else f"{text} actual={r.actual_target}"
+    if r.actual_target is not None:
+        text = f"{text} actual={r.actual_target}"
+    arrangement = getattr(r, "arrangement", None)
+    return text if arrangement is None else f"{text} arrangement={arrangement}"
 
 
 def _write_json(path: Path, document: dict[str, Any]) -> None:

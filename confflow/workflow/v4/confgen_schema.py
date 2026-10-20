@@ -9,7 +9,7 @@ rejected outright (see :data:`REMOVED_ENGINES_MESSAGE`).
 
 Only supported controls are exposed, with one explicit atom index
 convention. The ``search`` section is optional; an absent section means all
-defaults (budget 1500 relaxations, 6 kcal/mol window, input arrangement kept).
+defaults (budget 1500 relaxations, 6 kcal/mol window, search across donor arrangements).
 """
 
 from __future__ import annotations
@@ -154,8 +154,12 @@ class ConfgenSearchModel(ConfgenSpecModel):
 
     ``budget`` caps the relaxations of the search phase (the release step adds one per minimum
     near the lowest); ``window_kcal`` is the energy window for parents and for
-    the published conformers.  ``arrangement: keep`` searches only the input structure's
-    donor arrangement (every class when the input fits none), ``enumerate`` all classes.
+    the published conformers.  ``arrangement`` selects the donor arrangements: ``search``
+    (default) explores other donor arrangements of the metal core as well as the input one and
+    tags each by ``aN`` (``a0`` is the input arrangement, always published); ``keep`` searches
+    only the input structure's donor arrangement (every class when the input fits none);
+    ``enumerate`` searches all coordination classes.  Shape ``input`` supports ``keep`` and
+    ``search`` only.
     ``release`` re-relaxes the final minima with only reaction-pair restraints.  ``starts``
     counts first-round DG starts per coordination class (in total without a metal); ``None``
     spreads 60 over the classes in scope (at least 2 each), or 60 without a metal.
@@ -166,7 +170,7 @@ class ConfgenSearchModel(ConfgenSpecModel):
 
     budget: StrictInt | None = Field(default=None, ge=1)
     window_kcal: StrictFloat = Field(default=6.0, gt=0)
-    arrangement: Literal["keep", "enumerate"] = "keep"
+    arrangement: Literal["keep", "enumerate", "search"] = "search"
     release: StrictBool = True
     starts: StrictInt | None = Field(default=None, ge=1)
     small_ring_torsions: Literal["both", "on", "off"] = "both"
@@ -222,7 +226,7 @@ class ConfgenModelV3(ConfgenSpecModel):
 
     @model_validator(mode="after")
     def check_input_arrangement(self) -> ConfgenModelV3:
-        """Shape ``input`` keeps the input arrangement; ``enumerate`` is not defined for it."""
+        """Shape ``input`` searches or keeps donor arrangements; ``enumerate`` is not defined."""
         coordination = self.coordination
         if (
             coordination is not None
@@ -230,7 +234,7 @@ class ConfgenModelV3(ConfgenSpecModel):
             and self.search is not None
             and self.search.arrangement == "enumerate"
         ):
-            raise ValueError(f"shape {INPUT_SHAPE!r} supports arrangement 'keep' only")
+            raise ValueError(f"shape {INPUT_SHAPE!r} supports arrangement 'keep' or 'search' only")
         return self
 
     @model_validator(mode="before")

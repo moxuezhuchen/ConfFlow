@@ -387,8 +387,8 @@ def _confgen_section() -> dict[str, Any]:
     ``schema_version: 4``: an explicit index base, a required seed, typed
     topology, the ``bond_scale`` tolerance, an optional single-shape
     coordination scope, and the optional ``search`` settings (absent means
-    all defaults: budget 1500 relaxations, 6 kcal/mol window, input arrangement kept;
-    ``starts: null`` spreads 60 first-round DG starts over the classes in scope).
+    all defaults: budget 1500 relaxations, 6 kcal/mol window, donor arrangements searched
+    (``arrangement: search``); ``starts: null`` spreads 60 first-round DG starts over the classes in scope).
     """
     from ..science.confgen.graph import CN_SHAPES, SUPPORTED_SHAPES
     from ..science.confgen.search_spec import (
@@ -410,7 +410,7 @@ def _confgen_section() -> dict[str, Any]:
             "starts_without_metal": DEFAULT_SEARCH_STARTS_WITHOUT_METAL,
             "budget": DEFAULT_SEARCH_BUDGET,
             "window_kcal": DEFAULT_SEARCH_WINDOW_KCAL,
-            "arrangement": "keep",
+            "arrangement": "search",
             "release": True,
         },
         "tolerances": {"bond_scale": DEFAULT_BOND_SCALE},

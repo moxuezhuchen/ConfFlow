@@ -158,7 +158,7 @@ def test_exit_zero_metal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     assert {target for target, _ in tags} <= {"t00", "t01", "t02", "unclassified"}
     starts = [int(start) for _, start in tags]
     assert len(set(starts)) == len(starts) == summary["totals"]["passed"]
-    assert len(re.findall(r" actual=(t\d\d|unclassified)\n", text)) == len(tags)
+    assert len(re.findall(r" actual=(t\d\d|unclassified)(?: arrangement=a\d+)?\n", text)) == len(tags)
     cinps = "".join(p.read_text(encoding="utf-8") for p in work.rglob("c.inp"))
     assert cinps.startswith("$constrain\n  force constant=1.0\n") and "$end\n" in cinps
     for donor in (2, 3, 4, 5):
