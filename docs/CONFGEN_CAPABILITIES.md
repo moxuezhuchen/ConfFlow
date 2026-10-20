@@ -174,7 +174,12 @@ worker 记录 xTB 的 `xtb version … (commit)` 行到 `summary.json`。已完�
 3. `coordination_class`：配位类无歧义地归一到本次计划的某个目标类（即策略过滤后的目标集合，
    因此禁止的反式配对所对应的类不在其中）。感知有歧义时判失败；落在计划集合之外时，若每个给体原子
    与金属距离都不超过参考的 1.3 倍，则记为 `unclassified` 接受，否则判失败（无金属时 `skipped`）；
-4. `stereo`：只比参考上 RDKit 标出的真四面体手性中心（`DGSeedResult.stereo_centers`）的符号体积；
+4. `stereo`：比较四面体手性的符号体积，分两部分：
+   - 构型保持：过渡态成键图（稳定键加声明的反应对）上每个恰有 4 个邻居的非金属原子，都保持输入中按原子编号的邻居手性。
+     不依赖 RDKit 立体中心识别，因此反应中新出现的中心（如亲核进攻的面）也覆盖；构象变化不改变它，不损失构象。
+   - 原有立体中心：3 邻居可反转原子（膦、亚砜）仍只比 RDKit 标出的真四面体手性中心（`DGSeedResult.stereo_centers`）。
+   - 跳过：带 ≥2 个同元素末端原子的原子（CH2、CH3、CF2 等，互换即复原）；金属中心（由 `arrangement` 管）；
+     参考中四邻居近乎共面（单位体积 <0.1）的原子，仅在 stats 的 `flat_reference` 中报告。
    CH2/CH3 的等价 H 互换不判失败；
 5. `reaction_distance`：反应对距离在参考的 ±0.02 Å 内；
 6. `metal_donor_distance`：金属–给体距离在参考的 ±0.03 Å 内（无金属时 `skipped`）；
@@ -202,6 +207,9 @@ worker 记录 xTB 的 `xtb version … (commit)` 行到 `summary.json`。已完�
     `found_in_window`（各移动在窗口内的产出）、`failures`（失败原因计数）、`template`（`input`、理想形状名，或无金属时为 None）、
     `arrangement_scope`（搜索范围：`input_arrangement` 只搜索输入所属的类；`all_classes_input_unclassified` keep 下输入不能归类，
     扩大到全部类；`all_classes` 搜索全部类（`enumerate`）；无金属时为 None）。
+  - `tetrahedral_stereo`（构型保持统计）：`states`（受保护的中心数）、`embedding_enforced`（DG 嵌入时加了输入手性标签的数）、
+    `filter_only`（仅生成后过滤的数）、`flat_reference`（参考中近共面、未受保护的原子，0 基内部索引）。
+    生成后被过滤的计数为 `generated_tetrahedral_stereo`，reembed 失败原因为 `tetrahedral_stereo`。
   逐起点的失败记录不再列出（几千条），失败原因统一计入 `search.failures`。
 - worker 的 `stdout.log`、`stderr.log`（均为制品）。
 - 成员的 `role` 为 `conformer`，`ordinal` 为能量名次（0-based），id 按 `conformer_output_id`；
@@ -249,4 +257,6 @@ ConfGen 的以下引擎与字段已删除，`schema_version: 4` 文档中出现�
 - Freeze：ConfGen 不支持 `freeze`，非空即拒绝。
 - `fragment_charges` 是启发式覆盖，需要用户确认。
 - 过渡态：反应对只做距离约束，不验证过渡态。
+- 立体：邻居多于 4 个的原子（如 SN2 中心碳）、3 邻居可反转原子（膦、亚砜）和构象性手性（配体螺旋、阻转轴、环构象）不在构型保持规则内。
+  该规则没有用户选项，默认总是开启；需要另一面或另一构型时，提供该构型的输入结构单独运行。
 - 对称：没有对称抑制；等价构象可能重复出现，去重由后续 `deduplicate` 步骤负责。

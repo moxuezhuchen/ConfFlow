@@ -204,6 +204,12 @@ def embedding_molecule(
             builder.AddBond(first, second, Chem.BondType.ZERO)
     result = builder.GetMol()
     result.UpdatePropertyCache(strict=False)
+    # every four-neighbour atom of the TS graph keeps its reference hand, so DG cannot
+    # generate the other face of a reacting centre or a relabelled copy of a symmetric group
+    from .stereo import tag_tetrahedra, tetrahedral_states
+
+    states, _flat = tetrahedral_states(result, reference, (), graph.metal_center)
+    result = tag_tetrahedra(result, states, reference)
     Chem.FastFindRings(result)
     return result, tuple(relaxed)
 
@@ -838,13 +844,21 @@ def generate_dg_seeds(
         params.SetCoordMap({i: Point3D(*map(float, xyz)) for i, xyz in coord_map.items()})
     embedding_mol, relaxed_centers = embedding_molecule(graph, mol, ref, settings.freeze_core)
     starts = _embed_per_start(embedding_mol, requested, params, int(settings.first_start))
-    from .stereo import double_bond_states, preserves_double_bonds
+    from .stereo import (
+        double_bond_states,
+        preserves_double_bonds,
+        preserves_tetrahedra,
+        tetrahedral_states,
+    )
 
     try:
         states = double_bond_states(mol, ref)
     except ValueError as exc:
         raise DGSeedError(str(exc)) from exc
-    starts = tuple(x for x in starts if preserves_double_bonds(x, states))
+    tet, _flat = tetrahedral_states(embedding_mol, ref, (), graph.metal_center)
+    starts = tuple(
+        x for x in starts if preserves_double_bonds(x, states) and preserves_tetrahedra(x, tet)
+    )
     return DGSeedResult(
         coords=starts,
         requested=requested,

@@ -25,10 +25,15 @@ from confflow.science.confgen.dg_seed import DGSeedError, DGSeedSettings, genera
 from confflow.science.confgen.graph import INPUT_SHAPE, CoordinationSpec, EdgeType, TypedGraph
 from confflow.science.confgen.stereo import (
     DoubleBondState,
+    TetrahedralState,
     preserves_double_bonds,
+    preserves_tetrahedra,
 )
 from confflow.science.confgen.stereo import (
     double_bond_states as perceive_double_bond_states,
+)
+from confflow.science.confgen.stereo import (
+    tetrahedral_states as perceive_tetrahedral_states,
 )
 from confflow.science.data import get_atomic_number
 
@@ -584,6 +589,7 @@ def audit_structure(
     *,
     allowed: Collection[tuple[int, ...]] | None = None,
     double_bond_states: Sequence[DoubleBondState] | None = None,
+    tetrahedral_states: Sequence[TetrahedralState] | None = None,
 ) -> AuditRecord:
     ref = np.asarray(reference, dtype=float)
     new = np.asarray(coords, dtype=float)
@@ -628,7 +634,18 @@ def audit_structure(
         after = _signed_volume(new, i, pick)
         same = (before > 0.0) == (after > 0.0) if before and after else before == after == 0.0
         stereo = stereo and same
-    if not stereo:
+    if tetrahedral_states is None:
+        # Standalone audits hold every four-neighbour hand, as the explorer does.
+        from confflow.science.confgen.dg_seed import stable_chemistry_molecule
+
+        try:
+            molecule = stable_chemistry_molecule(graph, ref)[0]
+            tetrahedral_states = perceive_tetrahedral_states(
+                molecule, ref, graph.reaction_pairs, metal
+            )[0]
+        except ValueError:
+            tetrahedral_states = ()
+    if not stereo or not preserves_tetrahedra(new, tuple(tetrahedral_states)):
         failed.append("stereo")
     if double_bond_states is None:
         # Public standalone audits must protect E/Z too, even without caller-supplied atom tags.

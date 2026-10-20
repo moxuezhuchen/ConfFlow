@@ -53,8 +53,13 @@ from confflow.science.confgen.identity import (
 from confflow.science.confgen.rotors import Rotor, Topology, rotate
 from confflow.science.confgen.stereo import (
     DoubleBondState,
+    TetrahedralState,
     double_bond_states,
     preserves_double_bonds,
+    preserves_tetrahedra,
+)
+from confflow.science.confgen.stereo import (
+    tetrahedral_states as perceive_tetrahedral_states,
 )
 
 __all__ = ["ExploreSettings", "ParallelMap", "explore"]
@@ -199,12 +204,15 @@ def _reembed_task(args: tuple[Any, ...]) -> tuple[np.ndarray | None, str | None]
         params.SetCoordMap({i: Point3D(*map(float, xyz[i])) for i in fixed})
         states = double_bond_states(mol, xyz)
         mol, _relaxed = dg_seed.embedding_molecule(graph, mol, xyz, fixed)
+        tet, _flat = perceive_tetrahedral_states(mol, xyz, (), graph.metal_center)
         cid = rdDistGeom.EmbedMolecule(mol, params)
         if cid < 0:
             return None, "embed"
         coords = np.array(mol.GetConformer(cid).GetPositions(), dtype=float)
         if not preserves_double_bonds(coords, states):
             return None, "double_bond_stereo"
+        if not preserves_tetrahedra(coords, tet):
+            return None, "tetrahedral_stereo"
         return coords, None
     except Exception as exc:  # RDKit raises plain RuntimeErrors on hopeless inputs
         return None, f"error: {str(exc)[:40]}"
@@ -254,6 +262,10 @@ class _Explorer:
         self.chemistry_note = ""
         self.fragment_charges: tuple[tuple[tuple[int, ...], int], ...] = ()
         self.double_bond_states: tuple[DoubleBondState, ...] = ()
+        self.tetrahedral_states: tuple[TetrahedralState, ...] = ()
+        self.flat_tetrahedra: tuple[int, ...] = ()
+        # precomputed audit states; empty (the audit's own fallback) when chemistry is rejected
+        self.audit_states: dict[str, Any] = {}
         try:
             (
                 self.stable_molecule,
@@ -263,6 +275,13 @@ class _Explorer:
             ) = dg_seed.stable_chemistry_molecule(graph, ref, st.fragment_charges)
             self.double_bond_states = double_bond_states(self.stable_molecule, ref)
             self.id.double_bond_states = self.double_bond_states
+            self.tetrahedral_states, self.flat_tetrahedra = perceive_tetrahedral_states(
+                self.stable_molecule, ref, graph.reaction_pairs, graph.metal_center
+            )
+            self.audit_states = {
+                "double_bond_states": self.double_bond_states,
+                "tetrahedral_states": self.tetrahedral_states,
+            }
         except ValueError as exc:
             self.stable_chemistry_error = str(exc)
             self.chemistry_mode = "rejected"
@@ -407,7 +426,8 @@ class _Explorer:
             self._set_arrangement()
             return
         rec = search.audit_structure(self.ref, self.graph, self.spec, self.ref, self.shape, (), (),
-                                     True, self.st.bond_scale, allowed=self.allowed)  # fmt: skip
+                                     True, self.st.bond_scale, allowed=self.allowed,
+                                     **self.audit_states)  # fmt: skip
         if "coordination_class" in rec.failed_checks or rec.actual_class not in self.tid:
             self.unclassified_keep = True
             return  # the input fits no ideal polyhedron: it has no arrangement to keep
@@ -518,6 +538,7 @@ class _Explorer:
             True,
             self.st.bond_scale,
             allowed=self.allowed if self.shape else None,
+            **self.audit_states,
         )
         bad = list(rec.failed_checks)
         if self.shape and not self._same_arrangement(self.ref):
@@ -614,7 +635,8 @@ class _Explorer:
         """Return (label, ()) for an accepted structure, else (None, failed checks)."""
         rec = search.audit_structure(xyz, self.graph, self.spec, self.ref, self.shape, (), self.centers,
                                      conv, self.st.bond_scale, allowed=self.allowed if self.shape else None,
-                                     double_bond_states=self.double_bond_states)  # fmt: skip
+                                     double_bond_states=self.double_bond_states,
+                                     tetrahedral_states=self.tetrahedral_states)  # fmt: skip
         if rec.coordination_contacts:
             self.audit_evidence.append(
                 {
@@ -757,6 +779,7 @@ class _Explorer:
                         True,
                         self.st.bond_scale,
                         allowed=self.allowed if self.shape else None,
+                        **self.audit_states,
                     )
                     rec = search.SearchRecord(
                         label,
@@ -970,6 +993,8 @@ class _Explorer:
                     attempts += 1
                     if not preserves_double_bonds(x, self.double_bond_states):
                         self.fail["generated_double_bond_stereo"] += 1
+                    elif not preserves_tetrahedra(x, self.tetrahedral_states):
+                        self.fail["generated_tetrahedral_stereo"] += 1
                     elif self.topo.clashes(x):
                         self.fail["move_clash"] += 1
                     else:
@@ -1082,6 +1107,8 @@ class _Explorer:
                     x = rotate(ref.coords, r, ang)
                     if not preserves_double_bonds(x, self.double_bond_states):
                         self.fail["generated_double_bond_stereo"] += 1
+                    elif not preserves_tetrahedra(x, self.tetrahedral_states):
+                        self.fail["generated_tetrahedral_stereo"] += 1
                     elif not self.topo.clashes(x):
                         items.append(
                             (
@@ -1322,6 +1349,12 @@ class _Explorer:
                 "policy": self.st.ez_policy,
                 "states": [asdict(state) for state in self.double_bond_states],
             },
+            "tetrahedral_stereo": {
+                "states": [asdict(s) for s in self.tetrahedral_states],
+                "embedding_enforced": [s.center for s in self.tetrahedral_states if s.embeddable],
+                "filter_only": [s.center for s in self.tetrahedral_states if not s.embeddable],
+                "flat_reference": list(self.flat_tetrahedra),
+            },
             "adaptive": self.st.adaptive,
             "stop": self.stop,
             "release": self.release_status,
@@ -1443,6 +1476,7 @@ class _Explorer:
                     True,
                     self.st.bond_scale,
                     allowed=self.allowed if self.shape else None,
+                    **self.audit_states,
                 ).coordination_contacts,
             )
             for m in rows

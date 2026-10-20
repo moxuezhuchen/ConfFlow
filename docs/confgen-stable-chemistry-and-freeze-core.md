@@ -58,6 +58,23 @@ neighbors are exactly frozen. The stable molecule, other stereocenters, ETKDG ch
 and the independent output stereo audit remain in force. DG results report the affected atom
 indices in `embedding_relaxed_centers`. This is not permission to invert a reaction center.
 
+Tetrahedral configuration preservation is always on and needs no CIP or RDKit stereo perception.
+Every non-metal atom with exactly four neighbours in the transition-state bonding graph (stable
+bonds plus declared reaction pairs) keeps the signed volume of its input neighbour tetrahedron,
+keyed by atom index. This covers new reactive centres and existing stereocentres alike, and
+conformational changes that do not break bonds cannot invert it. Skipped: atoms with two or more
+same-element terminal neighbours (CH2, CH3, CF2), metal centres (governed by `arrangement`), and
+reference centres whose neighbours are nearly coplanar (unit volume below 0.1; reported only as
+`flat_reference`). DG embedding (global and local) labels the remaining centres with their input
+chirality, so only the input configuration is generated. A reactive centre lying outside its
+neighbour tetrahedron, which ETKDG cannot satisfy, is not labelled and is only filtered after
+generation (`filter_only`). Stats appear under `tetrahedral_stereo` (`states`, `embedding_enforced`,
+`filter_only`, `flat_reference`, 0-based indices); post-generation rejections are counted as
+`generated_tetrahedral_stereo` and re-embedding failures carry the reason `tetrahedral_stereo`.
+Audit failures count under the existing `stereo` check. Atoms with more than four neighbours,
+three-neighbour invertible atoms (phosphines, sulfoxides) and conformational chirality are outside
+this rule. Run with an input structure of the other configuration to obtain it.
+
 `search.ez_policy: preserve` is the default and currently the only supported double-bond state
 policy. Genuinely stereogenic stable double bonds acquire indexed substituent quartets from
 the stable molecule and reference coordinates. Global/local generated candidates and optimized
