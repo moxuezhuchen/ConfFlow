@@ -637,3 +637,9 @@ def test_worker_rejects_invalid_time_limit(tmp_path: Path, limit: Any) -> None:
     job, *_ = _job(tmp_path, *_metal_parts(tmp_path), time_limit_seconds=limit)
     with pytest.raises(worker._JobError, match="time_limit_seconds"):
         worker._load_job(job)
+
+
+@pytest.mark.parametrize(("cores", "expected"), [(1, 4), (2, 4), (48, 48)])
+def test_relaxation_batch_follows_cores(tmp_path: Path, cores: int, expected: int) -> None:
+    job, *_ = _job(tmp_path, *_metal_parts(tmp_path), cores=cores)
+    assert worker._load_job(job)["settings"].relaxation_batch == expected

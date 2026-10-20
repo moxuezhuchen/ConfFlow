@@ -1395,6 +1395,7 @@ class _Explorer:
             "template": template,
             "arrangement_scope": scope,
             "relaxations": self.nopt,
+            "relaxation_batch": self.st.relaxation_batch,
             "input_seed": dict(self.input_seed),
             "stable_chemistry": {
                 "mode": self.chemistry_mode,

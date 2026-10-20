@@ -189,6 +189,8 @@ def _load_job(path: str) -> dict[str, Any]:
         starts=None if starts is None else _int(starts, "settings.starts", 1),
         arrangement=typed_arr,
         batch=8 * cores,
+        # one relaxation per core per backend call: a fixed 4 left most of a many-core job idle
+        relaxation_batch=max(4, cores),
         release=release,
         small_ring_torsions=typed_mode,
         embed_timeout=_int(
