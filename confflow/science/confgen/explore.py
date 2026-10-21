@@ -132,6 +132,10 @@ class ExploreSettings:
     #: Soft wall limit, checked between bounded backend calls.
     time_limit_seconds: float | None = None
     relaxation_batch: int = 4
+    #: relaxations per feedback round = ``round_batches`` x ``relaxation_batch``, handed to the
+    #: calculator at once so short relaxations fill the time a long one holds a core (4: 2026-10-21
+    #: regression, 8 systems x 3 seeds, wall -48 % in total, best energies unchanged)
+    round_batches: int = 4
     freeze_core: tuple[int, ...] = ()
     ez_policy: Literal["preserve"] = "preserve"
     #: declared 4-atom dihedrals (0-based, in order) whose reference side every structure keeps
@@ -891,7 +895,7 @@ class _Explorer:
             self._poll()
             if not self._left() and (not free or self.stop == "time_limit"):
                 break
-            size = self.st.relaxation_batch
+            size = self.st.relaxation_batch * self.st.round_batches
             if not free:
                 size = min(size, self._left())
             elif self.st.time_limit_seconds is not None and self.nopt:
@@ -1401,7 +1405,7 @@ class _Explorer:
             share["single"] = max(0.0, share["single"] - st.share_lowmode)
             share["lowmode"] = st.share_lowmode
         norm = sum(share.values())
-        batch = min(st.batch, max(4, st.relaxation_batch), self._left())
+        batch = min(st.batch, max(4, st.relaxation_batch) * st.round_batches, self._left())
         remaining = batch
         items: list[tuple[str, np.ndarray, str]] = []
         for arm, s in share.items():
@@ -1415,6 +1419,10 @@ class _Explorer:
                 items += self._reembed(q)
             else:
                 items += self._moves(arm, q)
+        if len(items) < batch:
+            # rounding, or arms with nothing to offer (no rotors: no single or low-mode moves),
+            # would leave cores idle for the whole round: fill the round with DG starts
+            items += self._dg_more(batch - len(items))
         if not items:
             return False
         self.rng.shuffle(items)  # budget truncation must not favour one arm
@@ -1589,6 +1597,7 @@ class _Explorer:
             "arrangement_scope": scope,
             "relaxations": self.nopt,
             "relaxation_batch": self.st.relaxation_batch,
+            "round_batches": self.st.round_batches,
             "input_seed": dict(self.input_seed),
             "stable_chemistry": {
                 "mode": self.chemistry_mode,
@@ -1809,7 +1818,7 @@ def explore(
         )
     if settings.budget < 1:
         raise search.SearchError(f"budget must be positive, got {settings.budget!r}")
-    if settings.batch < 1 or settings.relaxation_batch < 1:
+    if settings.batch < 1 or settings.relaxation_batch < 1 or settings.round_batches < 1:
         raise search.SearchError("batch sizes must be positive")
     if settings.time_limit_seconds is not None and (
         not math.isfinite(settings.time_limit_seconds) or settings.time_limit_seconds <= 0

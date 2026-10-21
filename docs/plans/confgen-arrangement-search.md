@@ -119,3 +119,37 @@ is the price of relaxing a new arrangement and only shows when one DG relaxation
 path of each round. Removing it needs rounds that do not wait for their slowest relaxation
 (asynchronous scheduling), a separate item. A lower free share would cut exploration and is not
 used.
+
+## Round fill (2026-10-21)
+
+Timeline reconstruction of the runs above showed the xtb cores busy only 20-50 % of the wall
+time, for two reasons:
+
+1. A round was split between the move arms by fixed shares and never refilled. A rigid system
+   with no rotors (cd6_bpy3, hf8) got one relaxation per round, so xtb ran serially 94-99 % of
+   the time; rounding also gave 4 instead of 5 relaxations per round.
+2. Every round waited for its slowest relaxation (often a free DG start, see above).
+
+Change (`explore.py`): a round that the arms leave short is filled with DG starts, and
+`ExploreSettings.round_batches` (default 4) hands `round_batches x relaxation_batch` relaxations
+to the calculator at once, so short relaxations use the cores a long one leaves idle. Fully
+asynchronous rounds were estimated at about the same saving as 4 batches and are not used.
+
+Regression (814 server, budget 300, 5 cores, seeds 11-13; base = main ff53f467; fillN = this
+change with `round_batches = N`). Mean wall time; best energies were unchanged within seed
+noise (<= 0.4 kcal/mol), arrangement counts within 6 kcal and unique minima equal or higher.
+
+| system | base | fill1 | fill2 | fill4 |
+|---|---|---|---|---|
+| akugod | 861 s | -6 % | -27 % | -43 % |
+| al6_ts1 | 2922 s | -8 % | -27 % | -40 % |
+| cd6_bpy3 | 1156 s | -72 % | -74 % | -76 % |
+| cnetpa | 336 s | +3 % | -17 % | -36 % |
+| egozuv | 1597 s | -4 % | -24 % | -39 % |
+| hf8 | 2299 s | -65 % | -68 % | -73 % |
+| ti7_salan | 1387 s | -4 % | -30 % | -44 % |
+| zr8_onn | 3211 s | +1 % | -24 % | -37 % |
+| total | 13769 s | -20 % | -37 % | -48 % |
+
+The workflow worker sets `batch = 8 x cores` and `relaxation_batch = max(4, cores)`, so its rounds
+hold `4 x cores` relaxations (budget 300 -> about 15 feedback rounds instead of 60).
