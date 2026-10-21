@@ -190,11 +190,16 @@ def _run(args: argparse.Namespace) -> int:
     from .domain.errors import DomainError
     from .execution.process import NativeProcessSupervisor
     from .workflow.v4.assembly import RunInputs
+    from .workflow.v4.parser import WorkflowYamlError, parse_workflow_text
 
     with open(args.workflow, encoding="utf-8") as handle:
-        import yaml
-
-        document = yaml.safe_load(handle)
+        workflow_text = handle.read()
+    # Strict parser (same as ``validate``): duplicate mapping keys are rejected
+    # with a schema_error report instead of silently keeping the last value.
+    try:
+        document: dict[str, Any] = dict(parse_workflow_text(workflow_text))
+    except WorkflowYamlError:
+        return _report_workflow_schema_error(args, workflow_text)
     # Single version-discriminator authority: a V1/V2/V3 (or unknown) schema
     # fails closed with ``legacy_workflow_not_executable`` plus the stable
     # ``unsupported_workflow_version`` code for a retired id, before any run
@@ -205,12 +210,17 @@ def _run(args: argparse.Namespace) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     structures: dict[str, Any] = {}
+    sources: dict[str, str] = {}
     for assignment in args.inputs:
         name, _, path = assignment.partition("=")
         if not name or not path:
             raise ValueError(f"--inputs entry must be NAME=FILE, got {assignment!r}")
         with open(path, encoding="utf-8") as handle:
-            structures[name] = import_xyz(handle.read(), source_name=path)
+            text = handle.read()
+        structures[name] = import_xyz(text, source_name=path)
+        # Raw XYZ text travels with the run (as v4_entry does) so that a
+        # re-run on the same run root matches the recorded entity identities.
+        sources[name] = text
     executables: dict[str, str] = {}
     for assignment in args.executable:
         program, _, path = assignment.partition("=")
@@ -225,6 +235,7 @@ def _run(args: argparse.Namespace) -> int:
                 run_root=args.run_root,
                 owner_token=args.owner_token,
                 executables=FrozenDict(executables),
+                import_sources=FrozenDict(sources),
             )
         )
     except DomainError as exc:
@@ -246,6 +257,19 @@ def _run(args: argparse.Namespace) -> int:
     else:
         print(f"run {report.run_id}: {report.status}", file=sys.stderr)
     return 0 if report.status == "completed" else 1
+
+
+def _report_workflow_schema_error(args: argparse.Namespace, workflow_text: str) -> int:
+    """Report an unparseable workflow document the way ``validate`` does."""
+    from .producer.validation import validate_workflow_bytes
+
+    report = validate_workflow_bytes(workflow_text.encode("utf-8"))
+    if args.json:
+        sys.stdout.write(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+        sys.stdout.write("\n")
+    for item in report.errors():
+        print(f"Error: {item['code']}: {item['message']}", file=sys.stderr)
+    return 1
 
 
 def _report_run_failure(args: argparse.Namespace, exc: Exception) -> int:

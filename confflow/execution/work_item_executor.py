@@ -44,6 +44,7 @@ from ..domain.work_item import (
 from .checks import CHECK_DEFAULTS, CheckContext, ScientificCheck
 from .contracts import ExecutionBinding
 from .execution_adapters import DRIVING_STRUCTURE_PORT
+from .execution_policy import enforce_execution_policy
 from .native import (
     CancelOutcome,
     GeometryOutput,
@@ -504,6 +505,20 @@ class WorkItemExecutor:
             item_dir = context.attempt_dir(work_item)
         except Exception:
             item_dir = context.item_directory(work_item.logical_key)
+        # Defence in depth: direct batch callers bypass the step-level policy check, so the
+        # binding's allow-list and sandbox are enforced here before the item directory exists.
+        try:
+            self._enforce_policy(context, item_dir)
+        except DomainError as exc:
+            return self._finish_error(
+                work_item,
+                context,
+                NativeErrorCode.ENVIRONMENT_ERROR,
+                str(exc),
+                wall_start,
+                monotonic_start,
+                diagnostics=tuple(diagnostics),
+            )
         try:
             os.makedirs(item_dir, exist_ok=True)
             staged = self._stage_checkpoints(work_item, context, item_dir)
@@ -583,7 +598,7 @@ class WorkItemExecutor:
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(entry.content)
         try:
-            executable = self._resolve_executable(context)
+            executable = self._resolve_executable(context, item_dir)
         except DomainError as exc:
             return self._finish_error(
                 work_item,
@@ -1076,22 +1091,58 @@ class WorkItemExecutor:
         name = getattr(recovery, "name", None)
         return str(name) if name else "none"
 
-    def _resolve_executable(self, context: ItemExecutionContext) -> str:
+    @staticmethod
+    def _policy_candidate(context: ItemExecutionContext) -> str | None:
         binding = context.execution_binding
-        candidate = None
         if binding is not None and binding.executable:
-            candidate = binding.executable
+            return binding.executable
+        return getattr(context.adapter, "default_executable", None)
+
+    def _enforce_policy(self, context: ItemExecutionContext, item_dir: str) -> None:
+        """Enforce the binding's allow-list and sandbox for one item launch.
+
+        Called before any item file is written: the program is then only looked
+        up on PATH (never raising for a missing program) so that a forbidden
+        program is rejected even when it does not exist.  A no-op without a
+        binding.
+        """
+        binding = context.execution_binding
+        if binding is None:
+            return
+        candidate = self._policy_candidate(context)
+        enforce_execution_policy(
+            binding,
+            executable=candidate,
+            resolved_executable=shutil.which(candidate) if candidate else None,
+            write_paths=(item_dir,),
+            label=f"step {context.step_id!r} executable",
+        )
+
+    def _resolve_executable(self, context: ItemExecutionContext, item_dir: str = "") -> str:
+        binding = context.execution_binding
+        candidate = self._policy_candidate(context)
         if candidate is None:
-            candidate = context.adapter.default_executable
+            raise DomainError("no executable configured for this step")
         if os.path.isabs(candidate):
             if not os.path.isfile(candidate):
                 raise DomainError(f"executable not found: {candidate!r}")
-            return candidate
-        resolved = shutil.which(candidate)
-        if resolved is None:
-            raise DomainError(
-                f"executable {candidate!r} was not found on PATH and no "
-                "execution binding provides an absolute path"
+            resolved = candidate
+        else:
+            found = shutil.which(candidate)
+            if found is None:
+                raise DomainError(
+                    f"executable {candidate!r} was not found on PATH and no "
+                    "execution binding provides an absolute path"
+                )
+            resolved = found
+        if binding is not None:
+            # the resolved program and the item directory are checked before any launch
+            enforce_execution_policy(
+                binding,
+                executable=candidate,
+                resolved_executable=resolved,
+                write_paths=(item_dir,) if item_dir else (),
+                label=f"step {context.step_id!r} executable",
             )
         return resolved
 

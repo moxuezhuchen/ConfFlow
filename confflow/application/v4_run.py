@@ -16,6 +16,7 @@ artifact match (mismatch fails closed); completed items never re-executed.
 from __future__ import annotations
 
 import os
+import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -177,6 +178,24 @@ def _search_xtb_binding(planned: Any, request: V4RunRequest) -> Any:
             planned=planned.execution,
             defaults=BindingRequestDefaults(executables=dict(request.executables.thaw())),
         )
+    except DomainError:
+        return None
+
+
+def _pure_executable_identity(planned: Any, binding: Any) -> Any:
+    """Return the measured native binary a pure step launches, else None.
+
+    Only confgen steps with an xTB binding launch a native program here.
+    The full content identity enters the reuse digest, so a changed binary
+    recomputes.  An unresolvable binary yields None: the executor then
+    fails the work item as it does today.
+    """
+    if planned.executor is not ExecutorCapability.CONFGEN or binding is None:
+        return None
+    from ..execution.environment import measure_executable
+
+    try:
+        return measure_executable(binding.executable or "xtb")
     except DomainError:
         return None
 
@@ -744,6 +763,17 @@ class V4RunApplication:
                 adapter_default_executable=adapter.default_executable,
             )
             from ..execution.binding_resolution import effective_native_env
+            from ..execution.execution_policy import enforce_execution_policy
+
+            # policy before any probe, measurement or file write of this step
+            candidate = binding.executable or adapter.default_executable
+            enforce_execution_policy(
+                binding,
+                executable=candidate,
+                resolved_executable=shutil.which(candidate),
+                write_paths=(run_root,),
+                label=f"step {planned.step_id!r} executable",
+            )
 
             # ONE immutable native-environment snapshot per step.  Ambient
             # inheritance is explicit producer-side policy (os.environ) and
@@ -767,10 +797,19 @@ class V4RunApplication:
             from ..persistence.reuse import build_producer_provenance
 
             implementation = f"confflow.{contract.capability.value}"
+            binding = _search_xtb_binding(planned, request)
+            if planned.executor is ExecutorCapability.SCRIPT:
+                # scripts honour the declared env, walltime and policy of their binding
+                binding = planned.execution
+            identity = _pure_executable_identity(planned, binding)
+            metadata: dict[str, object] = {"step_id": planned.step_id}
+            if identity is not None:
+                metadata["executable_resolved_path"] = identity.resolved_path
             environment = build_pure_environment(
                 implementation=implementation,
                 implementation_version=contract.contract_version,
-                metadata={"step_id": planned.step_id},
+                metadata=metadata,
+                executable_digest=identity.digest if identity is not None else None,
             )
             native_env = None
             provenance = build_producer_provenance(
@@ -783,7 +822,23 @@ class V4RunApplication:
             profile = None
             checks = ()
             recovery = None
-            binding = _search_xtb_binding(planned, request)
+            if binding is not None:
+                from ..execution.execution_policy import enforce_execution_policy
+
+                # the script executor checks its interpreter once it is resolved
+                is_script = planned.executor is ExecutorCapability.SCRIPT
+                enforce_execution_policy(
+                    binding,
+                    executable=None if is_script else binding.executable,
+                    resolved_executable=(
+                        None
+                        if is_script or not binding.executable
+                        else shutil.which(binding.executable)
+                    ),
+                    write_paths=(run_root,),
+                    label=f"step {planned.step_id!r} executable",
+                    check_program=not is_script,
+                )
             provenance = FrozenDict(dict(provenance))
         batch = BatchStepExecutor(executor)
         if supervisor is not None:

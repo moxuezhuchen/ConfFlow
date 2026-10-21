@@ -10,6 +10,7 @@ must be refused before execution.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -20,9 +21,25 @@ from confflow.execution.process import NativeProcessSupervisor
 from confflow.workflow.v4.assembly import RunInputs
 from tests.v4._helpers.v42_executors import calculation_doc
 
+#: Real QC runs are opt-in only: the gate is checked before /opt/g16 is touched.
+REAL_QC_ENABLED = os.environ.get("CONFFLOW_ALLOW_REAL_QC") == "1"
+
 G16 = Path("/opt/g16/g16")
 
-pytestmark = pytest.mark.skipif(not G16.exists(), reason="real Gaussian binary not available")
+
+def _g16_present() -> bool:
+    if not REAL_QC_ENABLED:
+        return False
+    try:
+        return G16.exists()
+    except OSError:
+        return False
+
+
+pytestmark = pytest.mark.skipif(
+    not _g16_present(),
+    reason="real Gaussian tests need CONFFLOW_ALLOW_REAL_QC=1 and an installed /opt/g16/g16",
+)
 
 
 def _run_gaussian(keyword: str, run_root: Path):
