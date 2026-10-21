@@ -133,7 +133,8 @@ time, for two reasons:
 Change (`explore.py`): a round that the arms leave short is filled with DG starts, and
 `ExploreSettings.round_batches` (default 4) hands `round_batches x relaxation_batch` relaxations
 to the calculator at once, so short relaxations use the cores a long one leaves idle. Fully
-asynchronous rounds were estimated at about the same saving as 4 batches and are not used.
+asynchronous rounds were first estimated at about the same saving as 4 batches; measured after
+round fill they still saved 17 % (see "Rounds with one round of lag" below).
 
 Regression (814 server, budget 300, 5 cores, seeds 11-13; base = main ff53f467; fillN = this
 change with `round_batches = N`). Mean wall time; best energies were unchanged within seed
@@ -159,3 +160,39 @@ was found in 2/3 runs (seed 11 stopped 5.3 kcal above it; snapped re-embedding a
 wall 12233 -> 6962 s (-43 %). Relaxation counts per start type were unchanged. Finding this
 arrangement depends on a random free start (all runs since the snapped re-embedding: 5/6), so the
 miss is not attributed to round fill; no extra seeds were run. Watch it.
+
+## Rounds with one round of lag (2026-10-21)
+
+After round fill, a timeline of TS1 (budget 512, 16 cores) showed xtb busy 74 % of the time: 21 %
+of the capacity idled inside each round while it waited for its last DG start (DG 27-38 s median,
+up to 75 s; single moves 3 s), 5 % between rounds. Submitting DG starts first would recover only
+~5 %, because one start is often half a round long.
+
+Change: when the calculator offers `submit_many` (xTB does), the search waits until every
+relaxation of round k is running, then plans round k+1 from the state before round k and queues it
+on the same workers, so it fills the cores round k frees. Feedback (pool, arm rates) arrives one
+round later. Planning depends only on absorbed rounds and the seeded RNG, so a rerun with the same
+seed gives the same xtb inputs (TS1: all 636 inputs identical, release included). When the loop
+stops, a round already queued is absorbed (saturation) or dropped (time limit). Engines without
+`submit_many` keep the old synchronous rounds.
+
+TS1, budget 512, 16 cores, local: wall 854/816/834 -> 729/719/762 s (seeds 12-14), xtb busy
+74 -> 90 %, lowest energy unchanged. Remaining idle time is the start (input, first DG round, well
+probes run one after another, ~5 %) and the end (last round, release, ~4 %).
+
+Regression (814 server, budget 300, 5 cores, seeds 11-13, `round_batches = 4`; main = 42e59e98).
+Mean wall time; 3 kcal counts are summed over the seeds.
+
+| system | main | lag 1 | best energy | published within 3 kcal |
+|---|---|---|---|---|
+| akugod | 516 s | -16 % | same | 98 -> 98 |
+| al6_ts1 | 1716 s | -17 % | within 0.01 kcal | 83 -> 80 |
+| cd6_bpy3 | 287 s | -13 % | same | 11 -> 9 |
+| cnetpa | 227 s | -18 % | same | 72 -> 71 |
+| egozuv | 1016 s | -18 % | same | 163 -> 175 |
+| hf8 | 656 s | -15 % | same | 61 -> 58 |
+| ti7_salan | 810 s | -23 % | same | 11 -> 11 |
+| zr8_onn | 2068 s | -16 % | same | 101 -> 114 |
+| total | 7296 s | -17 % | | 600 -> 616 |
+
+Unique minima and arrangement counts within 6 kcal were equal or higher.

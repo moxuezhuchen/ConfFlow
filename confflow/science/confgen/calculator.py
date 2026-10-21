@@ -134,6 +134,11 @@ class Calculator(Protocol):
     ``relax_many`` returns exactly one outcome per request, in request order.  Engines own
     their parallelism, caching and cancellation; a cancelled batch raises instead of
     returning partial results.
+
+    An engine may also offer ``submit_many(requests) -> list[Future[RelaxOutcome]]`` that
+    queues requests on the same workers ``relax_many`` uses and returns at once.  The search
+    then queues the next feedback round while the current one drains (one round of lag);
+    without it every round waits for its slowest relaxation.
     """
 
     @property

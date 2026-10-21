@@ -168,6 +168,7 @@ class XtbCalculator:
         self._stop = threading.Event()
         self._live: set[subprocess.Popen[str]] = set()
         self._lock = threading.Lock()
+        self._pool: futures.ThreadPoolExecutor | None = None
 
     @property
     def info(self) -> CalculatorInfo:
@@ -201,11 +202,27 @@ class XtbCalculator:
                 req.fixed_atoms,
             )
 
-        with futures.ThreadPoolExecutor(max_workers=self._cores) as pool:
-            outcomes = list(pool.map(_one, requests))
+        outcomes = [f.result() for f in self.submit_many(requests)]
         if self._stop.is_set():
             raise Cancelled("search cancelled")
         return outcomes
+
+    def submit_many(self, requests: Sequence[RelaxRequest]) -> list[futures.Future[RelaxOutcome]]:
+        """Queue every request on the shared ``cores``-wide pool; return one future each."""
+
+        def _one(req: RelaxRequest) -> RelaxOutcome:
+            if self._stop.is_set():
+                raise Cancelled("search cancelled")
+            return self._relax_one(
+                self._work / req.key,
+                req.coords,
+                _input_blocks(req.restraints, req.fixed_atoms),
+                req.fixed_atoms,
+            )
+
+        if self._pool is None:
+            self._pool = futures.ThreadPoolExecutor(max_workers=self._cores)
+        return [self._pool.submit(_one, req) for req in requests]
 
     def hessian(self, request: RelaxRequest) -> np.ndarray | None:
         """Return the xTB Hessian (3N x 3N, Eh/bohr^2) under the request's restraints."""

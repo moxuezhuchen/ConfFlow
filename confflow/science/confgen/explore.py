@@ -382,6 +382,9 @@ class _Explorer:
         self.marks: dict[str, set[int]] = {}
         self.pending_moves: dict[str, list[tuple[str, np.ndarray, str]]] = {}
         self.nopt = 0
+        self._submitted: dict[str, Any] = {}
+        self._planned: tuple[dict[str, float], list[tuple[str, np.ndarray, str]]] | None = None
+        self._lookahead = False
         self.fail: Counter[str] = Counter()
         self.dg_error_details: list[dict[str, str]] = []
         self.yields: Counter[str] = Counter()
@@ -913,7 +916,22 @@ class _Explorer:
                 for key, x, _ in batch
             ]
             began = time.monotonic()
-            outs = self.calc.relax_many(reqs)
+            submit = getattr(self.calc, "submit_many", None)
+            if submit is None or free:
+                outs = self.calc.relax_many(reqs)
+            else:
+                fresh = [r for r in reqs if r.key not in self._submitted]
+                self._submitted.update(zip((r.key for r in fresh), submit(fresh)))
+                futs = [self._submitted.pop(r.key) for r in reqs]
+                if self._lookahead:
+                    # one round of lag: once every job of this round is running, plan the next
+                    # round from the state before this one and queue it on the cores it frees
+                    self._lookahead = False
+                    while not all(f.running() or f.done() for f in futs):
+                        self._poll()
+                        time.sleep(0.05)
+                    self._plan_ahead(len(items) - start + len(batch))
+                outs = [f.result() for f in futs]
             if len(outs) != len(reqs):
                 raise search.SearchError("calculator returned an incomplete relaxation batch")
             elapsed = time.monotonic() - began
@@ -1393,9 +1411,59 @@ class _Explorer:
         """Relax probe items: charged to the budget, accepted minima go to both pools."""
         self._relax(items, scratch, self.restraints)
 
+    def _plan_ahead(self, inflight: int) -> None:
+        """Plan the next round now (budget net of ``inflight``) and queue its relaxations."""
+        self.nopt += inflight
+        try:
+            planned = self._plan_round()
+        finally:
+            self.nopt -= inflight
+        self._planned = planned
+        submit = getattr(self.calc, "submit_many", None)
+        if planned is None or not planned[1] or submit is None:
+            return
+        reqs = [
+            RelaxRequest(key, self._pin_frozen(x), self.restraints, self.fixed_atoms)
+            for key, x, _ in planned[1][: self.st.relaxation_batch * self.st.round_batches]
+        ]
+        self._submitted.update(zip((r.key for r in reqs), submit(reqs)))
+
+    def _settle_planned(self) -> None:
+        """Finish the round queued ahead when the search loop stops.
+
+        A saturated search still absorbs it (it was planned within budget, and absorbing all
+        of it keeps the result independent of timing); at the time limit it is dropped:
+        queued relaxations are cancelled and running ones are waited for and discarded.
+        """
+        planned, self._planned = self._planned, None
+        if planned is not None and planned[1] and self.stop != "time_limit":
+            self.round_index += 1
+            self._run_round(*planned)
+            return
+        pending = list(self._submitted.values())
+        self._submitted.clear()
+        for fut in pending:
+            fut.cancel()
+        for fut in pending:
+            if not fut.cancelled():
+                try:
+                    fut.result()
+                except Exception:  # noqa: BLE001 - a dropped relaxation is not a result
+                    pass
+
     def _round(self) -> bool:
-        st = self.st
         self.round_index += 1
+        planned, self._planned = self._planned, None
+        if planned is None:
+            planned = self._plan_round()
+        if planned is None or not planned[1]:
+            return False
+        share, items = planned
+        self._lookahead = True
+        return self._run_round(share, items)
+
+    def _plan_round(self) -> tuple[dict[str, float], list[tuple[str, np.ndarray, str]]] | None:
+        st = self.st
         share = {"dg": st.share_dg, "single": st.share_single, "reembed": self._reembed_share()}
         if (
             st.share_lowmode > 0
@@ -1424,9 +1492,12 @@ class _Explorer:
             # would leave cores idle for the whole round: fill the round with DG starts
             items += self._dg_more(batch - len(items))
         if not items:
-            return False
+            return None
         self.rng.shuffle(items)  # budget truncation must not favour one arm
-        items = items[: self._left()]
+        return share, items[: self._left()]
+
+    def _run_round(self, share: dict[str, float], items: list[tuple[str, np.ndarray, str]]) -> bool:
+        st = self.st
         before = len(self.pool)
         before_nopt = self.nopt
         self._relax(items, self.pool, self.restraints)
@@ -1556,6 +1627,7 @@ class _Explorer:
             if self._saturated():
                 self.stop = "saturated"
                 break
+        self._settle_planned()
         final = self._release()
         stats = self._stats()
         stats["state_changes"] = self._state_changes(final)
