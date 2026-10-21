@@ -85,6 +85,37 @@ both arms; wall time change is the mean over the three seeds.
 | Zr7 TS | 1500 | 5.70 x3 | 5.70 / 5.72 / 0.00 | 3/3; the 5.7-lower one 1/3 | +5 % |
 
 No loss of best energy beyond seed noise. Generation time and relaxation counts are equal between
-arms; the extra wall time is in the xtb relaxations (likely more steps from free starts whose metal
-core is less ideal; not measured per relaxation). Open: zr8_onn +33 % (consider a lower free share
-at CN >= 8); Zr7 hit rate 1/3 at budget 1500 (2/3 at 600 in the prototype).
+arms; the extra wall time is in the xtb relaxations of free DG starts (see below).
+
+## Free-start cost and the snapped re-embedding (2026-10-21)
+
+Per-relaxation xtb logs (zr8_onn, seed 11): a free DG start needs 210 optimizer steps (52 s), a
+fixed one 122 (28 s). zr8_onn runs about one DG start per round, and that relaxation is the
+slowest job of the round, so ~37 free starts x ~24 s ≈ the 904 s (+33 %) wall-time increase.
+Other systems relax many DG starts per round and pay 1-14 %.
+
+The cause is the core angles, not the metal-donor distances. A free start's core is a random
+arrangement, not a stable polyhedron: during relaxation its donor-metal-donor angles move by a
+median maximum of 48 deg (fixed starts: 6 deg); steps vs angle change correlate at 0.76. An earlier
+guess (metal-donor distances off by 0.1-0.2 Å) only correlated through the angles.
+
+Change: each free start is re-embedded on its own core with the donors put back at their
+metal-donor distances (angles kept, so the arrangement and hand are unchanged), the way a fixed
+start is embedded, with the start's own seed index; if that fails the free start is kept (about
+1 in 24 starts). Same-load regression (seeds 11-13, budget 300; Zr7 1500), old free starts vs
+re-embedded:
+
+| system | wall old / new | best and arrangements |
+|---|---|---|
+| zr8_onn | 3239 / 3207 s | unchanged |
+| al6_ts1 | 2807 / 2801 s | unchanged |
+| cd6_bpy3 | 1118 / 1114 s | unchanged |
+| hf8 | 2102 / 2134 s | unchanged (+2.5 kcal arrangement 3/3) |
+| Zr7 TS | 12919 (other load) / 12233 s | 5.7-lower arrangement 1/3 -> 3/3 (0.04 / 0.01 / 0.00) |
+
+The re-embedding does not change the cost (steps 210 -> 198 on zr8_onn) but raised the Zr7 hit
+rate at no cost (mechanism not verified; old runs together 3/6). Kept. The zr8_onn cost stays: it
+is the price of relaxing a new arrangement and only shows when one DG relaxation is the critical
+path of each round. Removing it needs rounds that do not wait for their slowest relaxation
+(asynchronous scheduling), a separate item. A lower free share would cut exploration and is not
+used.
