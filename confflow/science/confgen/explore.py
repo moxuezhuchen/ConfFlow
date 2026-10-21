@@ -575,9 +575,11 @@ class _Explorer:
         enantiomer, which the minima pool already counts as the same minimum.
         """
         vec = self._donor_vectors(xyz)
-        chiral = bool(self.tetrahedral_states or self.torsion_states) and min(
-            _fit_rmsd(vec[pm], vec, proper=False) for pm in self.arr_group_perms
-        ) > _HAND_TOL
+        chiral = (
+            bool(self.tetrahedral_states or self.torsion_states)
+            and min(_fit_rmsd(vec[pm], vec, proper=False) for pm in self.arr_group_perms)
+            > _HAND_TOL
+        )
         return self._angles(xyz), vec, chiral
 
     def _arrangement_of(self, xyz: np.ndarray) -> str:
@@ -1052,7 +1054,9 @@ class _Explorer:
             if pool is not self.pool and not free:
                 for row, mid in zip(rows, self.pool.add_many(rows, self.pmap)):
                     if mid is not None and self.donors:
-                        self.arr_of.setdefault(id(self.pool), {})[mid] = self._arrangement_of(row[1])
+                        self.arr_of.setdefault(id(self.pool), {})[mid] = self._arrangement_of(
+                            row[1]
+                        )
             self._checkpoint(pool if free else self.pool, free)
         return ids
 
