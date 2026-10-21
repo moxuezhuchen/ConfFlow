@@ -99,7 +99,7 @@ def test_ideal_shape_rejects_cn7_declaration(shape: str) -> None:
 def test_input_shape_rejects_enumerate_at_declaration() -> None:
     meta, _ = _fixture("ti7_salan")
     scope = _input_scope(list(meta["donors0"]), ["input"], {"arrangement": "enumerate"})
-    with pytest.raises(ValidationError, match="arrangement 'keep' only"):
+    with pytest.raises(ValidationError, match="arrangement 'keep' or 'search' only"):
         ConfgenModelV3.model_validate(scope)
     doc = {
         "schema": "confflow.workflow.v4",

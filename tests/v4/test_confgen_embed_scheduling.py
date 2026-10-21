@@ -82,7 +82,7 @@ def test_dg_windows_match_whole_window_per_start() -> None:
     seed = 424242
 
     def args(window):
-        return (ex.graph, ex.spec, ex.ref, ex.shape, target, 3, seed, ex.st, window)
+        return (ex.graph, ex.spec, ex.ref, ex.shape, target, 3, seed, ex.st, window, False)
 
     whole = explore._dg_task(args((0, 3)))[1]
     split = [explore._dg_task(args((i, i + 1)))[1] for i in range(3)]

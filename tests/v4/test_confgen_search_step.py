@@ -320,7 +320,8 @@ def test_widened_keep_scope_is_reported_with_template_and_searched_targets(
             "metal_center": 1,
             "binding_sites": _SITES,
             "shapes": ["tetrahedral"],
-        }
+        },
+        search={**_SEARCH, "arrangement": "keep"},
     )
     out, _ = _run(native, _driving_metal(), _write_fake(tmp_path), tmp_path)
 
@@ -409,7 +410,8 @@ def test_exit_two_reports_search_failures(tmp_path: Path, monkeypatch: pytest.Mo
             "metal_center": 1,
             "binding_sites": _SITES,
             "shapes": ["tetrahedral"],
-        }
+        },
+        search={**_SEARCH, "arrangement": "keep"},
     )
     driving = _driving_metal()
     item = _item("cg-item", [driving])

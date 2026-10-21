@@ -90,6 +90,9 @@ class DGSeedSettings:
     first_start : int
         Index of the first start.  Start ``k`` always gets the seed derived for ``k``, so
         consecutive slices of one request reproduce that request exactly.
+    free_arrangement : bool
+        Keep the metal-donor distances but drop the donor-donor core bounds and the core
+        coordinate map, so the start may realise any donor arrangement (template unused).
     """
 
     count: int = 20
@@ -104,6 +107,7 @@ class DGSeedSettings:
     timeout_seconds: int = 0
     first_start: int = 0
     freeze_core: tuple[int, ...] = ()
+    free_arrangement: bool = False
 
 
 #: Shared default settings (frozen, safe to share across calls).
@@ -815,9 +819,12 @@ def generate_dg_seeds(
                 tol = settings.forming_neighbor_tolerance
             _set_pair(metal, peer, _ref_dist(metal, peer), tol)
     core = [] if metal is None else [metal] + list(donors)
+    free = settings.free_arrangement and metal is not None
     if metal is not None:
         for rank, first in enumerate(core):
             for second in core[rank + 1 :]:
+                if free and first != metal:
+                    continue  # a free start keeps only the metal-donor distances
                 dist = float(np.linalg.norm(targets[first] - targets[second]))
                 _set_pair(first, second, dist, settings.core_tolerance)
     if not DoTriangleSmoothing(bounds):
@@ -832,7 +839,7 @@ def generate_dg_seeds(
     params.useSmallRingTorsions = settings.small_ring_torsions
     params.timeout = settings.timeout_seconds
     params.SetBoundsMat(bounds)
-    coord_map = {i: np.asarray(xyz, dtype=float) for i, xyz in targets.items()}
+    coord_map = {} if free else {i: np.asarray(xyz, dtype=float) for i, xyz in targets.items()}
     for index in settings.freeze_core:
         point = ref[index]
         if index in coord_map and not np.allclose(coord_map[index], point, rtol=0.0, atol=1.0e-4):

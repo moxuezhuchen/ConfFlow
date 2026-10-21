@@ -2,8 +2,9 @@
 
 Owns the search strategy validated in the 2026-10 prototype study:
 
-1. global starts: DG embeddings for every coordination class kept in scope (by default only the
-   input structure's arrangement), then more for the classes that produced minima;
+1. global starts: DG embeddings for every coordination class kept in scope (by default the
+   input structure's arrangement, with every other start free of the donor-donor core bounds
+   so other donor arrangements are reached), then more for the classes that produced minima;
 2. well probe: each rotor's moves become the torsion offsets it actually relaxes to on the
    lowest minima of up to ``probes`` ring/class cells, plus the grid moves no measured well
    covers (a well absent on the probed parents stays reachable);
@@ -12,7 +13,9 @@ Owns the search strategy validated in the 2026-10 prototype study:
    and - once single-rotor moves stop finding new minima - displacements along the softest
    Hessian modes (only when the engine declares ``CAP_HESSIAN``);
 4. release: the minima near the lowest are re-relaxed with only reaction-pair restraints and
-   published within the energy window.
+   published within the energy window; with a metal, minima are grouped by donor arrangement
+   (``a0`` = the input's) and each arrangement within the window of the lowest is published
+   with its own window (the input arrangement always).
 
 Every relaxation goes through the backend-neutral ``Calculator``.  CPU-bound RDKit work runs
 through an injected ``parallel_map`` so the execution layer decides on processes; the module
@@ -49,6 +52,7 @@ from confflow.science.confgen.identity import (
     Identity,
     MinimaPool,
     Minimum,
+    typed_mol,
 )
 from confflow.science.confgen.rotors import Rotor, Topology, rotate
 from confflow.science.confgen.stereo import (
@@ -69,12 +73,16 @@ __all__ = ["ExploreSettings", "ParallelMap", "explore"]
 #: ``map``-like callable used for CPU-bound RDKit tasks (results in input order).
 ParallelMap = Callable[[Callable[[Any], Any], Sequence[Any]], Iterable[Any]]
 
-_ARR_TOL = 45.0  # deg: largest donor-metal-donor angle change still in the input arrangement
+_ARR_TOL = 45.0  # deg: largest donor-metal-donor angle change still in the same arrangement
+#: share of global DG starts embedded without donor-donor core bounds in ``arrangement: search``
+_FREE_DG_SHARE = 0.5
 _DONOR_SLACK = 1.3  # an unclassified structure keeps every donor within 1.3 x its ref distance
 _RESTRAINT_TOL = 0.03  # Angstrom
 _PROBE_MAX_KCAL = 12.0
 _LM_KIDS_MODES, _LM_AMPS = 6, (1.2, 2.2)
 _SEED_MOD = 2_000_003  # x 1000 stays below 2**31
+#: self-match cap of the folded donor-permutation graph (terminal atoms folded away)
+_FOLD_CAP = 200_000
 #: unit-vector RMSD above which a donor arrangement counts as chiral (mirror not superimposable)
 _HAND_TOL = 0.1
 #: numerical tie tolerance for comparing proper and mirror fits of one candidate
@@ -93,7 +101,10 @@ class ExploreSettings:
     window_kcal: float = 6.0
     seed: int = 1
     starts: int | None = None
-    arrangement: Literal["keep", "enumerate"] = "keep"
+    #: ``search``: template starts on the input arrangement plus free-arrangement starts, every
+    #: donor arrangement accepted; ``keep``: only the input arrangement; ``enumerate``: every
+    #: class of an ideal shape (template starts per class)
+    arrangement: Literal["keep", "enumerate", "search"] = "search"
     batch: int = 64
     probes: int = 3
     #: keep the grid moves that no measured well covers (within 30 degrees)
@@ -129,10 +140,10 @@ class ExploreSettings:
 
 # ----------------------------------------------------------------------------- worker tasks
 def _dg_task(args: tuple[Any, ...]) -> tuple[str, list[np.ndarray], str | None, tuple[int, ...]]:
-    graph, spec, ref, shape, target, count, seed, st, window = args
+    graph, spec, ref, shape, target, count, seed, st, window, free = args
     settings = search.SearchSettings(count, seed, st.small_ring_torsions, st.embed_timeout,
                                      st.fragment_charges, st.bond_scale, window,
-                                     st.freeze_core)  # fmt: skip
+                                     st.freeze_core, free)  # fmt: skip
     try:
         found = search.generate_starts(graph, spec, ref, shape, [target], settings)
     except search.SearchError as exc:
@@ -282,8 +293,8 @@ class _Explorer:
         self.audit_evidence: list[dict[str, Any]] = []
         self.rng = random.Random(f"explore-{st.seed}")
         self.metal = graph.metal_center
-        if shape == INPUT_SHAPE and st.arrangement != "keep":
-            raise search.SearchError("shape 'input' supports arrangement 'keep' only")
+        if shape == INPUT_SHAPE and st.arrangement == "enumerate":
+            raise search.SearchError("shape 'input' supports arrangement 'keep' or 'search' only")
         self.id = Identity(graph, fixed_atoms=st.freeze_core)
         self.elements = self.id.elements
         self.bonds = dg_seed._candidate_bonds(graph)
@@ -333,8 +344,24 @@ class _Explorer:
         self.arr_vec: np.ndarray = np.empty((0, 3))  # reference donor unit vectors (metal->donor)
         self.arr_chiral = False  # the reference arrangement has no mirror-superimposable relabel
         self.unclassified_keep = False  # keep requested, but the input fits no class
-        if st.arrangement == "keep" and self.donors:
+        #: only ``keep`` rejects other donor arrangements; ``search`` groups and publishes them
+        self.arr_filter = st.arrangement == "keep"
+        if st.arrangement in ("keep", "search") and self.donors:
             self._keep_arrangement()
+        # free-arrangement DG starts: search mode with a metal and no frozen core atoms
+        self.free_share = (
+            _FREE_DG_SHARE
+            if st.arrangement == "search" and self.donors and not st.freeze_core
+            else 0.0
+        )
+        self.dg_starts = 0  # global DG starts planned so far (free-start schedule)
+        self.free_dg = {"attempts": 0, "generated": 0}
+        # donor arrangement groups: leaders (angles, unit vectors, chiral), a0 = the reference
+        self.arr_leaders: list[tuple[np.ndarray, np.ndarray, bool]] = []
+        self.arr_of: dict[int, dict[int, str]] = {}  # id(pool) -> minimum id -> group id
+        self.arr_perm_index: np.ndarray | None = None
+        if self.donors:
+            self._init_arrangement_groups()
         self.restraints = self._restraints()
         react = {(min(int(a), int(b)), max(int(a), int(b))) for a, b in graph.reaction_pairs}
         self.free_restraints = tuple(
@@ -402,12 +429,39 @@ class _Explorer:
         where = {a: k for k, a in enumerate(sites)}
         perms: set[tuple[int, ...]] = set()
         automorphisms = self.id.automorphisms()
-        if automorphisms is None:
-            return [tuple(range(len(sites)))]
+        if automorphisms is None:  # e.g. many CF3/CH3 rotors: fold terminal atoms instead
+            return self._folded_donor_perms(sites)
         for match in automorphisms:
             image = [int(self.id.kept[match[pos[a]]]) for a in sites]
             if all(a in where for a in image):
                 perms.add(tuple(where[a] for a in image))
+        return sorted(perms) or [tuple(range(len(sites)))]
+
+    def _folded_donor_perms(self, sites: list[int]) -> list[tuple[int, ...]]:
+        """Donor permutations from the heavy-atom graph with terminal atoms folded into colours.
+
+        Swapping terminal atoms (F of CF3, C of tBu methyls) never moves a donor, but multiplies
+        the full automorphism count past the identity cap; the colour-refinement classes of the
+        typed graph keep every folded atom's environment, so the projections are unchanged.
+        """
+        idn = self.id
+        heavy = [a for a in range(idn.n) if idn.elements[a] != "H"]
+        hset = set(heavy)
+        keep = set(sites) | {self.metal}
+        term = {a for a in heavy
+                if a not in keep and sum(1 for k in idn.full[a] if k in hset) == 1}  # fmt: skip
+        core = [a for a in heavy if a not in term]
+        if self.metal not in core or any(a not in core for a in sites):
+            return [tuple(range(len(sites)))]
+        colours: dict[int, int] = {}
+        iso = [colours.setdefault(idn.classes[a], len(colours) + 1) for a in core]
+        mol = typed_mol(idn.elements, idn.full, core, iso, idn.formal_charges)
+        found = mol.GetSubstructMatches(mol, uniquify=False, useChirality=False,
+                                        maxMatches=_FOLD_CAP)  # fmt: skip
+        pos = {a: k for k, a in enumerate(core)}
+        where = {a: k for k, a in enumerate(sites)}
+        perms = {tuple(where[core[match[pos[a]]]] for a in sites)
+                 for match in found if core[match[pos[self.metal]]] == self.metal}  # fmt: skip
         return sorted(perms) or [tuple(range(len(sites)))]
 
     def _reduce_targets(self) -> None:
@@ -497,6 +551,123 @@ class _Explorer:
                 return True
         return False
 
+    def _arrangement_ok(self, xyz: np.ndarray) -> bool:
+        """Return whether the arrangement filter (``keep`` only) admits ``xyz``."""
+        return not self.arr_filter or self._same_arrangement(xyz)
+
+    def _init_arrangement_groups(self) -> None:
+        """Prepare donor relabellings and seed group ``a0`` with the reference arrangement."""
+        perms = self.arr_perms
+        if not perms:
+            try:
+                perms = [list(pm) for pm in self._donor_perms()]
+            except Exception:  # automorphism search is an optimisation only
+                perms = [list(range(len(self.donors)))]
+        self.arr_group_perms = [list(pm) for pm in perms]
+        self.arr_perm_index = np.asarray(self.arr_group_perms, dtype=int)
+        self.arr_leaders = [self._arrangement_leader(self.ref)]
+
+    def _arrangement_leader(self, xyz: np.ndarray) -> tuple[np.ndarray, np.ndarray, bool]:
+        """Return (angles, donor vectors, hand matters) of a new group leader.
+
+        The hand of an arrangement separates groups only when the molecule keeps another hand
+        (tetrahedral or declared torsion states): otherwise the mirror arrangement is the
+        enantiomer, which the minima pool already counts as the same minimum.
+        """
+        vec = self._donor_vectors(xyz)
+        chiral = (
+            bool(self.tetrahedral_states or self.torsion_states)
+            and min(_fit_rmsd(vec[pm], vec, proper=False) for pm in self.arr_group_perms)
+            > _HAND_TOL
+        )
+        return self._angles(xyz), vec, chiral
+
+    def _arrangement_of(self, xyz: np.ndarray) -> str:
+        """Return the donor arrangement group of ``xyz``, opening a new group if none fits.
+
+        Same arrangement = some admissible donor relabelling keeps every donor-metal-donor angle
+        within ``_ARR_TOL`` of the group leader and, for a chiral leader, the hand.
+        """
+        assert self.arr_perm_index is not None
+        a = self._angles(xyz)
+        idx = self.arr_perm_index
+        stack = a[idx[:, :, None], idx[:, None, :]]  # every relabelling of the candidate
+        vec = self._donor_vectors(xyz)
+        for k, (ref_a, ref_vec, chiral) in enumerate(self.arr_leaders):
+            fits = np.flatnonzero(np.abs(stack - ref_a).max(axis=(1, 2)) <= _ARR_TOL)
+            for f in fits:
+                if not chiral:
+                    return f"a{k}"
+                pm = self.arr_group_perms[int(f)]
+                proper = _fit_rmsd(vec[pm], ref_vec, proper=True)
+                if proper <= _fit_rmsd(vec[pm], ref_vec, proper=False) + _HAND_FIT_EPS:
+                    return f"a{k}"
+        self.arr_leaders.append(self._arrangement_leader(xyz))
+        return f"a{len(self.arr_leaders) - 1}"
+
+    def _arrangement(self, pool: MinimaPool, m: Minimum) -> str | None:
+        """Return the arrangement group of pool member ``m`` (``None`` without a metal)."""
+        if not self.donors:
+            return None
+        known = self.arr_of.setdefault(id(pool), {})
+        if m.id not in known:
+            known[m.id] = self._arrangement_of(m.coords)
+        return known[m.id]
+
+    def _publishable(self, pool: MinimaPool, extra: float = 0.0) -> list[Minimum]:
+        """Minima to release or publish, lowest first.
+
+        Without a metal: the window of the lowest. With one: every arrangement whose lowest is
+        within the window of the overall lowest (the input arrangement ``a0`` always), each
+        with its own window.
+        """
+        win = self.st.window_kcal + extra
+        if not self.donors or not len(pool):
+            return pool.within(win)
+        low = pool.lowest()
+        groups: dict[str, list[Minimum]] = {}
+        for m in pool.minima:
+            groups.setdefault(self._arrangement(pool, m) or "", []).append(m)
+        rows = []
+        for gid, members in groups.items():
+            glow = min(m.energy for m in members)
+            if gid != "a0" and (glow - low) * HARTREE_TO_KCAL > win:
+                continue
+            rows += [m for m in members if (m.energy - glow) * HARTREE_TO_KCAL <= win]
+        return sorted(rows, key=lambda m: m.energy)
+
+    def _arrangement_table(
+        self, final: MinimaPool, published: list[Minimum]
+    ) -> list[dict[str, Any]] | None:
+        """Every donor arrangement found: lowest energy (released when published) and counts."""
+        if not self.donors or not len(self.pool):
+            return None
+        search_low: dict[str, float] = {}
+        count: Counter[str] = Counter()
+        for m in self.pool.minima:
+            gid = self._arrangement(self.pool, m) or ""
+            count[gid] += 1
+            search_low[gid] = min(search_low.get(gid, m.energy), m.energy)
+        final_low: dict[str, float] = {}
+        released = final is not self.pool and len(final)
+        if released:
+            for m in final.minima:
+                gid = self._arrangement(final, m) or ""
+                final_low[gid] = min(final_low.get(gid, m.energy), m.energy)
+        shown = Counter(self._arrangement(final, m) or "" for m in published)
+        lo_search = min(search_low.values())
+        lo_final = min(final_low.values()) if final_low else None
+        rows = []
+        for gid in sorted(set(search_low) | set(final_low), key=lambda g: int(g[1:])):
+            if gid in final_low and lo_final is not None:
+                eh, rel, stage = final_low[gid], (final_low[gid] - lo_final), "released"
+            else:
+                eh, rel, stage = search_low[gid], (search_low[gid] - lo_search), "restrained"
+            rows.append({"id": gid, "input": gid == "a0", "lowest_eh": float(eh),
+                         "rel_kcal": float(rel * HARTREE_TO_KCAL), "stage": stage,
+                         "minima": int(count.get(gid, 0)), "published": int(shown.get(gid, 0))})  # fmt: skip
+        return rows
+
     def _restraints(self) -> tuple[DistanceRestraint, ...]:
         """Return the reference restraints averaged over graph-equivalent atom pairs."""
         raw = search.distance_restraints(self.graph, self.spec, self.ref)
@@ -573,7 +744,7 @@ class _Explorer:
             **self.audit_states,
         )
         bad = list(rec.failed_checks)
-        if self.shape and not self._same_arrangement(self.ref):
+        if self.shape and not self._arrangement_ok(self.ref):
             bad.append("arrangement")
         self.input_seed["raw_failed_checks"] = bad
         self.baseline = replace(self.baseline, raw_failed_checks=tuple(bad))
@@ -687,7 +858,7 @@ class _Explorer:
                     bad.append("restraint")
                     break
         if not bad:
-            if self.shape and not self._same_arrangement(xyz):
+            if self.shape and not self._arrangement_ok(xyz):
                 return None, ("arrangement",)
             if self.metal is None or rec.actual_class is None:
                 return "t00", ()
@@ -705,7 +876,7 @@ class _Explorer:
             )
             if not ok:
                 return None, ("donor_detached",)
-            if not self._same_arrangement(xyz):
+            if not self._arrangement_ok(xyz):
                 return None, ("arrangement",)
             return "unclassified", ()
         return None, tuple(bad)
@@ -803,7 +974,13 @@ class _Explorer:
                     continue
                 cell = label + "#" + self.topo.ring_signature(coords)
                 rows.append((float(out.energy_eh), coords, label, origin, cell))
-            ids.extend(mid for mid in pool.add_many(rows, self.pmap) if mid is not None)
+            added = pool.add_many(rows, self.pmap)
+            ids.extend(mid for mid in added if mid is not None)
+            if self.donors:  # group new minima in arrival order (deterministic group ids)
+                known = self.arr_of.setdefault(id(pool), {})
+                for row, mid in zip(rows, added):
+                    if mid is not None:
+                        known[mid] = self._arrangement_of(row[1])
             for energy, coords, label, origin, _ in rows:
                 if origin in {"input", "baseline:input"}:
                     evidence = search.audit_structure(
@@ -875,7 +1052,11 @@ class _Explorer:
                     ),
                 )
             if pool is not self.pool and not free:
-                self.pool.add_many(rows, self.pmap)
+                for row, mid in zip(rows, self.pool.add_many(rows, self.pmap)):
+                    if mid is not None and self.donors:
+                        self.arr_of.setdefault(id(self.pool), {})[mid] = self._arrangement_of(
+                            row[1]
+                        )
             self._checkpoint(pool if free else self.pool, free)
         return ids
 
@@ -923,8 +1104,13 @@ class _Explorer:
         # one task per start, each a slice of one request (seeds as for the whole request), so
         # a single target fills every worker and one slow start delays no other start
         chunks = [(k, t, c, (i, i + 1)) for k, (t, c) in enumerate(plan) for i in range(c)]
+        free = []
+        for _ in chunks:  # every 1/share-th global start is free (deterministic schedule)
+            n = self.dg_starts
+            self.dg_starts += 1
+            free.append(math.floor((n + 1) * self.free_share) > math.floor(n * self.free_share))
         tasks = [(self.graph, self.spec, self.ref, self.shape, t, c, (base + 31 * k) % _SEED_MOD,
-                  self.st, w) for k, t, c, w in chunks]  # fmt: skip
+                  self.st, w, f) for (k, t, c, w), f in zip(chunks, free)]  # fmt: skip
         items = []
         began = time.monotonic()
         measured = list(self.pmap(_timed_dg_task, tasks))
@@ -936,7 +1122,10 @@ class _Explorer:
                 worker_wall += task_wall
                 cpu += task_cpu
             results.append(result)
-        for (_, _, _, (lo, hi)), (tid, coords, err, centers) in zip(chunks, results):
+        for (_, _, _, (lo, hi)), is_free, (tid, coords, err, centers) in zip(chunks, free, results):
+            if is_free:
+                self.free_dg["attempts"] += hi - lo
+                self.free_dg["generated"] += len(coords)
             if centers and not self.centers:
                 self.centers = centers
             if err:
@@ -956,7 +1145,8 @@ class _Explorer:
                 self.fail["dg_no_start"] += hi - lo - len(coords)
             for xyz in coords:
                 if preserves_torsions(xyz, self.torsion_states):
-                    items.append((f"{tag}/{tid}_{lo:02d}", xyz, f"dg:{tid}"))
+                    key = f"{tag}/{tid}_{lo:02d}" + ("f" if is_free else "")
+                    items.append((key, xyz, f"dg:{tid}"))
                 else:
                     self.fail["generated_fixed_state"] += 1
         self._record_generation(
@@ -1283,8 +1473,9 @@ class _Explorer:
             if baseline is not None:
                 self.baseline = replace(self.baseline, status="release_deferred")
             return self.pool
-        near = self.pool.within(self.st.window_kcal + 2.0)
+        near = self._publishable(self.pool, extra=2.0)
         out = MinimaPool(self.id)
+        self.arr_of.pop(id(out), None)  # a recycled id must not inherit stale groups
         before = self.released
         planned = 0
         if baseline is not None and baseline.coords is not None:
@@ -1383,6 +1574,8 @@ class _Explorer:
         template = self.shape  # the input template is named by INPUT_SHAPE itself
         if self.st.arrangement == "enumerate":
             return template, "all_classes"
+        if self.st.arrangement == "search":
+            return template, "all_arrangements"
         if self.arr_ref is not None:
             return template, "input_arrangement"
         if self.unclassified_keep:
@@ -1444,6 +1637,7 @@ class _Explorer:
             "unique_minima": len(self.pool),
             "spent": dict(self.spent),
             "generation": {arm: dict(record) for arm, record in self.generation.items()},
+            "free_arrangement_dg": {"share": self.free_share, **self.free_dg},
             "reembed_scheduler": {
                 "failure_streak": self.reembed_failure_streak,
                 "backoff_level": self.reembed_backoff_level,
@@ -1483,11 +1677,12 @@ class _Explorer:
         return "no_minima"
 
     def _result(self, final: MinimaPool, stats: dict[str, Any]) -> search.SearchRun:
-        rows = final.within(self.st.window_kcal)
+        rows = self._publishable(final)
+        stats["arrangements"] = self._arrangement_table(final, rows)
         seed = dict(self.input_seed)
         if seed["minimum_id"] is not None:
             seed["in_search_window"] = any(
-                m.id == seed["minimum_id"] for m in self.pool.within(self.st.window_kcal)
+                m.id == seed["minimum_id"] for m in self._publishable(self.pool)
             )
             released = final is not self.pool and (
                 stats.get("checkpoint_stage") == "released"
@@ -1543,6 +1738,7 @@ class _Explorer:
                 0.0,
                 m.coords,
                 m.label,
+                arrangement=self._arrangement(final, m),
                 coordination_contacts=search.audit_structure(
                     m.coords,
                     self.graph,

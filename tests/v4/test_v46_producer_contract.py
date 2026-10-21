@@ -285,7 +285,7 @@ class TestConfgenV4Section:
             "starts_without_metal": 60,
             "budget": 1500,
             "window_kcal": 6.0,
-            "arrangement": "keep",
+            "arrangement": "search",
             "release": True,
         }
         assert section["tolerances"] == {"bond_scale": 1.15}

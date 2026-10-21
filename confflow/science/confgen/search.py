@@ -92,6 +92,8 @@ class SearchSettings:
     #: embed only starts ``lo <= k < hi`` of the ``count`` (same seeds as the full request)
     window: tuple[int, int] | None = None
     freeze_core: tuple[int, ...] = ()
+    #: drop the donor-donor core bounds of every start (see ``DGSeedSettings.free_arrangement``)
+    free_arrangement: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +176,8 @@ class SearchRecord:
     coords: np.ndarray | None = None
     actual_target: str | None = None
     coordination_contacts: tuple[CoordinationContact, ...] = ()
+    #: donor arrangement group (``a0`` = the input's); ``None`` without a metal
+    arrangement: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -187,6 +191,7 @@ class SearchRecord:
             "small_ring_torsions": bool(self.small_ring_torsions),
             "skipped_checks": [str(n) for n in self.skipped_checks],
             "actual_target": self.actual_target,
+            "arrangement": self.arrangement,
         }
 
 
@@ -365,6 +370,7 @@ def generate_starts(
                 fragment_charges=frag,
                 first_start=a,
                 freeze_core=tuple(settings.freeze_core),
+                free_arrangement=settings.free_arrangement,
             )
             try:
                 made = generate_dg_seeds(

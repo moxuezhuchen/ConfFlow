@@ -75,7 +75,9 @@ def _build(name: str) -> tuple[TypedGraph, CoordinationSpec, np.ndarray]:
 
 
 def _settings(**kw: Any) -> explore.ExploreSettings:
+    """Keep-arrangement settings (the input-core tests pin the ``keep`` scope)."""
     base: dict[str, Any] = {
+        "arrangement": "keep",
         "budget": 16,
         "window_kcal": 6.0,
         "seed": 3,
@@ -143,7 +145,7 @@ def test_input_search_runs_on_the_input_arrangement(
 
 def test_input_shape_refuses_enumerate() -> None:
     graph, spec, ref = _build("ti7_salan")
-    with pytest.raises(search.SearchError, match="arrangement 'keep' only"):
+    with pytest.raises(search.SearchError, match="arrangement 'keep' or 'search' only"):
         explore.explore(
             graph, spec, ref, INPUT_SHAPE, _settings(arrangement="enumerate"), _FakeCalc(), map
         )
