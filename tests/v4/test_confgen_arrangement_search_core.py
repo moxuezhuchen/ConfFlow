@@ -153,7 +153,7 @@ def test_dg_schedule_alternates_free_starts(monkeypatch: pytest.MonkeyPatch) -> 
 def test_free_start_drops_the_core_template_but_keeps_metal_donor_distances() -> None:
     graph, spec, xyz = _build("cd6_bpy3")
     donors = [s.atoms[0] for s in spec.binding_sites]
-    common = dict(count=2, random_seed=7, timeout_seconds=60)
+    common = dict(count=4, random_seed=7, timeout_seconds=60)
     fixed = dg_seed.generate_dg_seeds(graph, spec, xyz, list(range(6)), INPUT_SHAPE,
                                       dg_seed.DGSeedSettings(**common))  # fmt: skip
     free = dg_seed.generate_dg_seeds(graph, spec, xyz, list(range(6)), INPUT_SHAPE,
@@ -161,13 +161,34 @@ def test_free_start_drops_the_core_template_but_keeps_metal_donor_distances() ->
     assert fixed.coords and free.coords
     for start in fixed.coords:  # the core coordinate map pins the metal
         assert np.allclose(start[0], xyz[0], atol=1e-3)
+    snapped = 0
     for start in free.coords:
         assert not np.allclose(start[0], xyz[0], atol=1e-3)
-        # bounds, not a coordinate map: ETKDG meets them only roughly (no force-field type for
-        # the metal); the restrained relaxation then holds the metal-donor distances
+        # re-embedded on its own core snapped to the target distances (rarely kept as embedded)
         dev = [abs(np.linalg.norm(start[d] - start[0]) - np.linalg.norm(xyz[d] - xyz[0]))
                for d in donors]  # fmt: skip
-        assert np.mean(dev) < 0.6 and max(dev) < 1.0
+        snapped += max(dev) < 0.05
+    assert snapped >= len(free.coords) - 1
+
+
+def test_free_start_is_kept_when_the_snapped_re_embedding_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph, spec, xyz = _build("cd6_bpy3")
+    real = dg_seed._embed_per_start
+    first_pass: list[np.ndarray] = []
+
+    def no_second_pass(mol, requested, params, first=0, refine=None):
+        if refine is None:
+            return ()  # the re-embedding on the snapped core
+        out = real(mol, requested, params, first, lambda x, i: first_pass.append(x) or refine(x, i))
+        return out
+
+    monkeypatch.setattr(dg_seed, "_embed_per_start", no_second_pass)
+    st = dg_seed.DGSeedSettings(count=2, random_seed=7, timeout_seconds=60, free_arrangement=True)
+    free = dg_seed.generate_dg_seeds(graph, spec, xyz, list(range(6)), INPUT_SHAPE, st)
+    assert free.coords
+    assert all(any(np.array_equal(c, f) for f in first_pass) for c in free.coords)
 
 
 # ----------------------------------------------------------------------------- publication
@@ -214,3 +235,17 @@ def test_metal_free_publication_is_the_plain_window() -> None:
     ex.pool.add(-1.0, ex.ref, "t00", "a", "t00#")
     assert [m.origin for m in ex._publishable(ex.pool)] == ["a"]
     assert ex._arrangement(ex.pool, ex.pool.minima[0]) is None
+
+
+def test_free_start_slices_reproduce_the_whole_request() -> None:
+    graph, spec, xyz = _build("cd6_bpy3")
+
+    def run(first: int, count: int) -> tuple[np.ndarray, ...]:
+        st = dg_seed.DGSeedSettings(count=count, first_start=first, random_seed=5,
+                                    timeout_seconds=60, free_arrangement=True)  # fmt: skip
+        return dg_seed.generate_dg_seeds(graph, spec, xyz, list(range(6)), INPUT_SHAPE, st).coords
+
+    whole = run(0, 4)
+    parts = run(0, 2) + run(2, 2)
+    assert len(whole) == len(parts) == 4
+    assert all(np.allclose(a, b) for a, b in zip(whole, parts, strict=True))
