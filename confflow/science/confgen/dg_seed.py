@@ -17,7 +17,7 @@ is perceived as charge 0 o-quinone, nitrate as charge -3); use the
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -93,6 +93,8 @@ class DGSeedSettings:
     free_arrangement : bool
         Keep the metal-donor distances but drop the donor-donor core bounds and the core
         coordinate map, so the start may realise any donor arrangement (template unused).
+        Each such start is then re-embedded on its own core with the donors put back at
+        their metal-donor distances (kept as embedded if that fails).
     """
 
     count: int = 20
@@ -421,14 +423,19 @@ def _perceive_fragment(
 
 
 def _embed_per_start(
-    mol: Any, requested: int, params: Any, first: int = 0
+    mol: Any,
+    requested: int,
+    params: Any,
+    first: int = 0,
+    refine: Callable[[np.ndarray, int], np.ndarray] | None = None,
 ) -> tuple[np.ndarray, ...]:
     """Embed the starts one conformer per RDKit call, each with its own seed.
 
     ``params.timeout`` bounds a single call, so a timed-out, unembeddable, or
     raising start is skipped and the others are kept. Each start is copied out
-    of the molecule immediately, before the next call adds a conformer. Only
-    when every attempt raised is the failure reported.
+    of the molecule immediately, before the next call adds a conformer, and passed
+    through ``refine(start, start_index)`` when given. Only when every attempt
+    raised is the failure reported.
     """
     from rdkit.Chem import rdDistGeom
 
@@ -454,7 +461,8 @@ def _embed_per_start(
             raised.append(exc)
             continue
         if conf_id >= 0:
-            found.append(np.array(mol.GetConformer(conf_id).GetPositions(), dtype=float))
+            start = np.array(mol.GetConformer(conf_id).GetPositions(), dtype=float)
+            found.append(start if refine is None else refine(start, offset))
     if requested and len(raised) == requested:
         raise DGSeedError(f"RDKit embedding failed: {raised[-1]}") from raised[-1]
     return tuple(found)
@@ -820,25 +828,36 @@ def generate_dg_seeds(
             _set_pair(metal, peer, _ref_dist(metal, peer), tol)
     core = [] if metal is None else [metal] + list(donors)
     free = settings.free_arrangement and metal is not None
-    if metal is not None:
+    base_bounds = bounds.copy()
+
+    def _pin_core(matrix: np.ndarray, pos: dict[int, np.ndarray], metal_only: bool) -> None:
         for rank, first in enumerate(core):
             for second in core[rank + 1 :]:
-                if free and first != metal:
+                if metal_only and first != metal:
                     continue  # a free start keeps only the metal-donor distances
-                dist = float(np.linalg.norm(targets[first] - targets[second]))
-                _set_pair(first, second, dist, settings.core_tolerance)
+                dist = float(np.linalg.norm(pos[first] - pos[second]))
+                low, high = (first, second) if first < second else (second, first)
+                matrix[low, high] = dist + settings.core_tolerance
+                matrix[high, low] = max(0.0, dist - settings.core_tolerance)
+
+    def _params(matrix: np.ndarray, seed: int) -> Any:
+        made = rdDistGeom.ETKDGv3()
+        made.useRandomCoords = True
+        made.embedFragmentsSeparately = False
+        made.numThreads = 1
+        made.randomSeed = seed
+        made.maxIterations = settings.max_iterations
+        made.useSmallRingTorsions = settings.small_ring_torsions
+        made.timeout = settings.timeout_seconds
+        made.SetBoundsMat(matrix)
+        return made
+
+    if metal is not None:
+        _pin_core(bounds, targets, free)
     if not DoTriangleSmoothing(bounds):
         raise DGSeedError("triangle smoothing of the DG bounds matrix failed")
 
-    params = rdDistGeom.ETKDGv3()
-    params.useRandomCoords = True
-    params.embedFragmentsSeparately = False
-    params.numThreads = 1
-    params.randomSeed = settings.random_seed
-    params.maxIterations = settings.max_iterations
-    params.useSmallRingTorsions = settings.small_ring_torsions
-    params.timeout = settings.timeout_seconds
-    params.SetBoundsMat(bounds)
+    params = _params(bounds, settings.random_seed)
     coord_map = {} if free else {i: np.asarray(xyz, dtype=float) for i, xyz in targets.items()}
     for index in settings.freeze_core:
         point = ref[index]
@@ -850,7 +869,33 @@ def generate_dg_seeds(
     if coord_map:
         params.SetCoordMap({i: Point3D(*map(float, xyz)) for i, xyz in coord_map.items()})
     embedding_mol, relaxed_centers = embedding_molecule(graph, mol, ref, settings.freeze_core)
-    starts = _embed_per_start(embedding_mol, requested, params, int(settings.first_start))
+
+    def _snap(start: np.ndarray, index: int) -> np.ndarray:
+        # The free embedding only roughly meets the metal-donor bounds (no force field for
+        # the metal), which costs the relaxation ~70 % more steps. Keep the arrangement it
+        # found, put each donor back at its target distance, and re-embed start ``index`` on
+        # that core the way a fixed start is embedded; keep the free start if that fails.
+        assert metal is not None
+        pos = {metal: start[metal]}
+        for donor in donors:
+            way = start[donor] - start[metal]
+            radius = float(np.linalg.norm(targets[donor] - targets[metal]))
+            pos[donor] = start[metal] + radius * way / np.linalg.norm(way)
+        matrix = base_bounds.copy()
+        _pin_core(matrix, pos, False)
+        if not DoTriangleSmoothing(matrix):
+            return start
+        pinned = _params(matrix, settings.random_seed)
+        pinned.SetCoordMap({i: Point3D(*map(float, xyz)) for i, xyz in pos.items()})
+        try:
+            again = _embed_per_start(embedding_mol, 1, pinned, index)
+        except DGSeedError:
+            return start
+        return again[0] if again else start
+
+    starts = _embed_per_start(
+        embedding_mol, requested, params, int(settings.first_start), _snap if free else None
+    )
     from .stereo import (
         double_bond_states,
         preserves_double_bonds,
