@@ -39,6 +39,7 @@ from ...execution.script_registry import (
     SCRIPT_OUTPUT_CHANNELS,
     ScriptEntry,
     load_script_registry,
+    script_identity,
     validate_script_args_template,
 )
 from .diagnostics import DiagnosticCode, DiagnosticReason, error
@@ -503,8 +504,13 @@ def _has_parent_segment(pattern: str) -> bool:
 def _validate_script_step(
     step: StepDefinition,
     scripts: Mapping[str, ScriptEntry],
-) -> tuple[str | None, list[Diagnostic]]:
-    """Check one script step against the server table; return its content hash."""
+) -> tuple[dict[str, Any] | None, list[Diagnostic]]:
+    """Check one script step against the server table; return its reuse identity.
+
+    The identity (script hash, registered command, interpreter content hash)
+    comes from :func:`script_identity`, so changing any registered argument
+    or the interpreter yields a new step digest.
+    """
     diagnostics: list[Diagnostic] = []
     field_path = f"steps.{step.id}"
     scientific = step.scientific
@@ -591,7 +597,7 @@ def _validate_script_step(
             )
     if any(item.is_error for item in diagnostics):
         return None, diagnostics
-    return entry.sha256, diagnostics
+    return script_identity(entry), diagnostics
 
 
 def _validate_script_output_bindings(
@@ -798,9 +804,9 @@ def _validate_step(
             )
         )
         return None, diagnostics
-    script_sha: str | None = None
+    script_identity_payload: dict[str, Any] | None = None
     if capability is ExecutorCapability.SCRIPT:
-        script_sha, script_diagnostics = _validate_script_step(step, scripts or {})
+        script_identity_payload, script_diagnostics = _validate_script_step(step, scripts or {})
         diagnostics.extend(script_diagnostics)
     if capability is ExecutorCapability.CALCULATION and not scientific.program:
         diagnostics.append(
@@ -1157,10 +1163,10 @@ def _validate_step(
         check_versions=check_versions,
         recovery_version=recovery_version,
     )
-    if capability is ExecutorCapability.SCRIPT and script_sha is not None:
+    if capability is ExecutorCapability.SCRIPT and script_identity_payload is not None:
         base_digest = typed_digest(
             SCRIPT_STEP_DIGEST_KIND,
-            {"base": base_digest, "script_sha256": script_sha},
+            {"base": base_digest, "script": script_identity_payload},
         )
     validated = ValidatedStep(
         definition=step,

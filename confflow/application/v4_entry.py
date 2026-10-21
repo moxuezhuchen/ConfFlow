@@ -72,16 +72,19 @@ def require_v4_document(document: Any) -> dict[str, Any]:
 
 def load_v4_document_file(path: str | Path) -> dict[str, Any]:
     """Load one workflow document file and require the V4 schema."""
-    import yaml
+    from ..workflow.v4.parser import WorkflowYamlError, parse_workflow_text
 
     try:
         with open(path, encoding="utf-8") as handle:
-            document = yaml.safe_load(handle)
+            text = handle.read()
     except FileNotFoundError as exc:
         raise _legacy_error(f"workflow file is not readable: {path}") from exc
     except OSError as exc:
         raise _legacy_error(f"workflow file is not readable: {exc}") from exc
-    except yaml.YAMLError as exc:
+    # Strict parser: duplicate keys fail here exactly as they fail ``validate``.
+    try:
+        document = parse_workflow_text(text)
+    except WorkflowYamlError as exc:
         raise _legacy_error(f"workflow file is not valid YAML: {exc}") from exc
     return require_v4_document(document)
 

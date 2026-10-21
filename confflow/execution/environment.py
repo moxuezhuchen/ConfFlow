@@ -207,6 +207,7 @@ def build_pure_environment(
     implementation_version: str,
     relevant_env: Mapping[str, str] | None = None,
     metadata: Mapping[str, object] | None = None,
+    executable_digest: str | None = None,
 ) -> ExecutionEnvironment:
     """Build the environment identity of a pure (non-native) executor.
 
@@ -227,6 +228,10 @@ def build_pure_environment(
         Declared scientifically relevant explicit environment, or ``None``.
     metadata : Mapping[str, object] | None
         Operational provenance (never digested).
+    executable_digest : str | None
+        Full content digest (``sha256:<hex>``, see ``ExecutableIdentity.digest``)
+        of a native binary the pure executor launches (for example the xTB
+        binary of a ConfGen step). ``None`` when no binary is launched.
     """
     if not isinstance(implementation, str) or not implementation.strip():
         raise DomainError("implementation must be a non-empty string")
@@ -241,7 +246,7 @@ def build_pure_environment(
     return ExecutionEnvironment(
         program=implementation.strip(),
         program_version=implementation_version.strip(),
-        executable_digest=None,
+        executable_digest=executable_digest,
         relevant_env=FrozenDict(relevant),
         metadata=FrozenDict(dict(metadata) if metadata is not None else {}),
     )

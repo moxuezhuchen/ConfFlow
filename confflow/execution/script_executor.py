@@ -20,7 +20,7 @@ import logging
 import os
 import shutil
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +32,7 @@ from ..domain.errors import DomainError
 from ..domain.result import ResultSet, ScientificResult, make_result_id
 from ..domain.structure import StructureRecord, StructureSet
 from ..domain.work_item import RecoveryInfo, Timing, WorkItem, WorkItemResult
+from .execution_policy import enforce_execution_policy
 from .native import NativeExecutionRequest
 from .quota import QuotaCancelled, QuotaError
 from .script_registry import (
@@ -39,6 +40,7 @@ from .script_registry import (
     expand_script_args,
     format_mem_gb,
     load_script_registry,
+    script_identity,
     validate_script_args_template,
 )
 from .work_item_executor import (
@@ -72,11 +74,16 @@ def serialize_script_input(record: StructureRecord) -> str:
 
 
 def script_item_key(
-    *, script_sha256: str, expanded_args: tuple[str, ...], structure: StructureRecord
+    *, identity: Mapping[str, Any], expanded_args: tuple[str, ...], structure: StructureRecord
 ) -> str:
-    """Derive the item directory key from script content, args, and input."""
+    """Derive the item directory key from the script identity, args, and input.
+
+    *identity* is :func:`script_identity` of the registered entry: script hash,
+    registered command (script element replaced by its hash), and interpreter
+    content hash, so a changed registration gets a fresh item directory.
+    """
     payload = {
-        "script_sha256": script_sha256,
+        "script": dict(identity),
         "args": list(expanded_args),
         "structure": structure.reuse_payload(),
     }
@@ -198,9 +205,24 @@ class ScriptExecutor:
             template, input_path="input.xyz", cores=cores, mem_gb=mem_gb, item_id=work_item.id
         )
         item_key = script_item_key(
-            script_sha256=entry.sha256, expanded_args=key_args, structure=driving
+            identity=script_identity(entry), expanded_args=key_args, structure=driving
         )
         item_dir = os.path.join(str(context.run_root), "script", context.step_id, item_key)
+        resolved = _resolved_script_command(entry)
+        if len(resolved) == 1:
+            interpreter = str(entry.script_path)
+        else:
+            interpreter = self._resolve_interpreter(resolved[0])
+        binding = context.execution_binding
+        # Policy before any directory or input file is written (direct batch
+        # callers bypass the step-level check in the application layer).
+        enforce_execution_policy(
+            binding,
+            executable=interpreter,
+            resolved_executable=interpreter,
+            write_paths=(item_dir,),
+            label="script interpreter",
+        )
         os.makedirs(item_dir, exist_ok=True)
         input_path = os.path.join(item_dir, "input.xyz")
         with open(input_path, "w", encoding="utf-8") as handle:
@@ -208,19 +230,23 @@ class ScriptExecutor:
         full_args = expand_script_args(
             template, input_path=input_path, cores=cores, mem_gb=mem_gb, item_id=work_item.id
         )
-        resolved = _resolved_script_command(entry)
         if len(resolved) == 1:
-            interpreter = str(entry.script_path)
             argv = (interpreter,) + tuple(full_args)
         else:
-            interpreter = self._resolve_interpreter(resolved[0])
             argv = (interpreter,) + tuple(resolved[1:]) + tuple(full_args)
+        walltime = float(binding.walltime_seconds) if binding and binding.walltime_seconds else None
+        # Same environment rule as native steps: the snapshot hashed into the
+        # environment digest (ambient + declared), else the ambient process env.
+        if context.native_env is not None:
+            launch_env = dict(context.native_env)
+        else:
+            launch_env = dict(os.environ)
         request = NativeExecutionRequest(
             executable=interpreter,
             argv=argv,
             work_dir=item_dir,
-            env=FrozenDict(dict(os.environ)),
-            walltime_seconds=None,
+            env=FrozenDict(launch_env),
+            walltime_seconds=walltime,
             stdout_file="stdout.log",
             stderr_file="stderr.log",
             metadata=FrozenDict({"script_id": script_id, "item_key": item_key}),
@@ -277,7 +303,19 @@ class ScriptExecutor:
                 f"cancellation could not be confirmed: {cancel_outcome.detail}",
                 details=details,
             )
-        if execution_result.timed_out or execution_result.exit_code is None:
+        if execution_result.timed_out:
+            # Reported like native walltime overruns: same details keys, the
+            # script failure code, and the configured limit in the message.
+            return self._fail(
+                work_item,
+                context,
+                wall_start,
+                monotonic_start,
+                "script_failed",
+                f"script execution exceeded walltime of {walltime:g} seconds",
+                details={**provenance, "timed_out": True, "walltime_seconds": walltime},
+            )
+        if execution_result.exit_code is None:
             return self._fail(
                 work_item,
                 context,
