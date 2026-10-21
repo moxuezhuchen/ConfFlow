@@ -671,3 +671,34 @@ def test_raw_input_audit_does_not_require_optimized_restraint_residual(monkeypat
     # The fake optimizer did not satisfy the target, so its optimized result is rejected.
     assert run.stats["input_seed"]["optimization_failed_checks"] == ["restraint"]
     assert not run.records
+
+
+class _SizeCalc(_FakeCalc):
+    """Fake engine that records the size of every relaxation call."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sizes: list[int] = []
+
+    def relax_many(self, requests):
+        self.sizes.append(len(requests))
+        return super().relax_many(requests)
+
+
+@pytest.mark.parametrize("round_batches", [1, 3])
+def test_rounds_are_filled_with_dg_starts_when_moves_are_missing(round_batches: int) -> None:
+    graph, spec, ref = _pt_toy()  # no rotors: single and low-mode moves offer nothing
+    calc = _SizeCalc()
+    st = _settings(budget=60, batch=64, relaxation_batch=4, round_batches=round_batches,
+                   release=False)  # fmt: skip
+    run = explore.explore(graph, spec, ref, _SHAPE, st, calc, map)
+    assert run.stats["round_batches"] == round_batches
+    rounds = calc.sizes[2:]  # after the input relaxation and the bootstrap DG starts
+    assert rounds and all(n == 4 * round_batches for n in rounds[:-1])  # the last one: budget
+    assert sum(calc.sizes) == 60
+
+
+def test_round_batches_must_be_positive() -> None:
+    graph, spec, ref = _pt_toy()
+    with pytest.raises(search.SearchError, match="batch sizes"):
+        explore.explore(graph, spec, ref, _SHAPE, _settings(round_batches=0), _FakeCalc(), map)
