@@ -153,3 +153,9 @@ noise (<= 0.4 kcal/mol), arrangement counts within 6 kcal and unique minima equa
 
 The workflow worker sets `batch = 8 x cores` and `relaxation_batch = max(4, cores)`, so its rounds
 hold `4 x cores` relaxations (budget 300 -> about 15 feedback rounds instead of 60).
+
+Zr7 TS, budget 1500, 10 cores, seeds 11-13, `round_batches = 4`: the 5.7 kcal lower arrangement
+was found in 2/3 runs (seed 11 stopped 5.3 kcal above it; snapped re-embedding alone: 3/3), mean
+wall 12233 -> 6962 s (-43 %). Relaxation counts per start type were unchanged. Finding this
+arrangement depends on a random free start (all runs since the snapped re-embedding: 5/6), so the
+miss is not attributed to round fill; no extra seeds were run. Watch it.
