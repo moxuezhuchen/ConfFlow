@@ -409,8 +409,9 @@ def test_b2_catalog_contract_bytes_unchanged() -> None:
     # ConfGen 新增 coordination shapes: [input]（输入核心模板，keep 专用，位点数 >=2）：contract 摘要更新，boundary 不变。
     # ConfGen adds formal_charge/reaction_pairs/freeze_core/ez_policy; boundary stays fixed.
     # ConfGen adds search.fixed_states (4-atom torsion states): contract digest updated, boundary fixed.
+    # ConfGen search.arrangement default keep→search: contract digest updated, boundary fixed.
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(env)).hexdigest() == (
-        "sha256:0c80340528f7e434d8f4853b30f904678fbaf1457bf8d6267b3b3180cd527b05"
+        "sha256:3f9a28150ffb79b43f72292f49e8a4b53d2a64003a76d5b48015b07407fb934d"
     )
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(bdoc)).hexdigest() == (
         "sha256:ff7491007ffd37e4e688e9dd1c73aba5301ccd699f9610d060bd2029cf370f27"

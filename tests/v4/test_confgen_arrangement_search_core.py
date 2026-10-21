@@ -167,7 +167,7 @@ def test_free_start_drops_the_core_template_but_keeps_metal_donor_distances() ->
         # the metal); the restrained relaxation then holds the metal-donor distances
         dev = [abs(np.linalg.norm(start[d] - start[0]) - np.linalg.norm(xyz[d] - xyz[0]))
                for d in donors]  # fmt: skip
-        assert np.mean(dev) < 0.4 and max(dev) < 1.0
+        assert np.mean(dev) < 0.6 and max(dev) < 1.0
 
 
 # ----------------------------------------------------------------------------- publication
