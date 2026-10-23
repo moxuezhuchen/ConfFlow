@@ -478,7 +478,6 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
             service = self._service
             if service is not None:
                 try:
-                    aggregate = service.status(request.run_id)
                     winner = arbitration.current_terminal_status(self._spec.work_dir)
                     if winner is not None:
                         # The run root's arbitration already owns a terminal
@@ -491,8 +490,6 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
                         and Path(self._spec.cancel_beacon_file).exists()
                     ):
                         ExecutionLifecycle(service, request.run_id, request.token).cancelled()
-                    elif aggregate.state is RunState.RUNNING:
-                        ExecutionLifecycle(service, request.run_id, request.token).paused()
                 except ExecutionServiceError as error:
                     # A confirmed service cancellation may have already won the
                     # race and moved the aggregate to terminal state.
@@ -815,14 +812,7 @@ def run_workflow_through_service(
             retry_resume=False,
         )
         run_id = spec.run_id
-    if snapshot.state is RunState.PAUSED:
-        if not resume:
-            raise ExecutionServiceError(
-                ErrorCode.INVALID_STATE_TRANSITION,
-                "Paused run requires resume=True",
-            )
-        snapshot = service.resume(run_id)
-    elif snapshot.state is RunState.PREPARED or snapshot.state is RunState.QUEUED:
+    if snapshot.state is RunState.PREPARED or snapshot.state is RunState.QUEUED:
         snapshot = service.execute(run_id)
     elif snapshot.state in {RunState.RUNNING, RunState.COMPLETED}:
         if snapshot.state is RunState.RUNNING:
@@ -845,8 +835,6 @@ def run_workflow_through_service(
             ) from None
         raise
     final = service.status(run_id)
-    if final.state is RunState.PAUSED:
-        raise StopRequestedError("Workflow paused by service lifecycle")
     if final.state is RunState.CANCELLED:
         # Worker exit semantics (D2): completed is the only success exit.
         # Cancelled — whether from a beacon exception or a V4

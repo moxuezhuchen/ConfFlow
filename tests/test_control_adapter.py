@@ -56,10 +56,6 @@ class FakeService:
         self.cancel_run_id = run_id
         return RunSnapshot(run_id, 4, RunState.CANCELLED)
 
-    def resume(self, run_id, *, checkpoint_id=None):
-        self.resume_args = (run_id, checkpoint_id)
-        return RunSnapshot(run_id, 5, RunState.QUEUED)
-
     def artifacts(self, run_id):
         self.artifacts_run_id = run_id
         return ArtifactManifest(
@@ -117,7 +113,6 @@ def test_all_operations_map_to_the_service_public_methods(monkeypatch, capsys, t
         ("status", []),
         ("events", ["--after", "r00000000000000000002"]),
         ("cancel", []),
-        ("resume", ["--checkpoint", "checkpoint-1"]),
         ("artifacts", []),
     ):
         code, response, _ = _capture(
@@ -134,7 +129,6 @@ def test_all_operations_map_to_the_service_public_methods(monkeypatch, capsys, t
     assert service.status_run_id == "run-1"
     assert service.events_args == ("run-1", "r00000000000000000002")
     assert service.cancel_run_id == "run-1"
-    assert service.resume_args == ("run-1", "checkpoint-1")
     assert [
         item["terminal"]
         for item in _capture(
@@ -144,6 +138,22 @@ def test_all_operations_map_to_the_service_public_methods(monkeypatch, capsys, t
             capsys,
         )[1]["artifacts"]
     ] == ["a_terminal", "z_terminal"]
+
+
+def test_resume_is_not_a_control_operation(monkeypatch, capsys, tmp_path: Path):
+    """The removed resume operation and its checkpoint flag fail as typed requests."""
+    service = FakeService()
+    for extra in ([], ["--checkpoint", "checkpoint-1"]):
+        code, response, _ = _capture(
+            monkeypatch,
+            service,
+            ["resume", "--state-root", str(tmp_path), "--run-id", "run-1", *extra, "--json"],
+            capsys,
+        )
+        assert code == 1
+        assert response["ok"] is False
+        assert response["error"]["code"] == "invalid_request"
+    assert not hasattr(service, "resume_args")
 
 
 def test_prepare_decodes_schema_and_maps_the_complete_service_request(

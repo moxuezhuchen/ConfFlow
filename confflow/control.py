@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 PROTOCOL = "confflow.control.v1"
 _OPERATIONS = frozenset(
-    {"capabilities", "prepare", "execute", "status", "events", "cancel", "resume", "artifacts"}
+    {"capabilities", "prepare", "execute", "status", "events", "cancel", "artifacts"}
 )
 _SCHEMA_FILES = frozenset(
     {
@@ -112,7 +112,6 @@ def _parse_args(args_list: list[str]) -> argparse.Namespace:
     parser.add_argument("--request")
     parser.add_argument("--run-id")
     parser.add_argument("--after")
-    parser.add_argument("--checkpoint")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(args_list)
     if not args.json:
@@ -129,12 +128,11 @@ def _validate_cli_shape(args: argparse.Namespace) -> None:
         "status": {"json", "state_root", "run_id"},
         "events": {"json", "state_root", "run_id", "after"},
         "cancel": {"json", "state_root", "run_id"},
-        "resume": {"json", "state_root", "run_id", "checkpoint"},
         "artifacts": {"json", "state_root", "run_id"},
     }
     values = {
         name
-        for name in ("state_root", "request", "run_id", "after", "checkpoint")
+        for name in ("state_root", "request", "run_id", "after")
         if getattr(args, name) is not None
     }
     unexpected = values - allowed[args.operation]
@@ -148,16 +146,12 @@ def _validate_cli_shape(args: argparse.Namespace) -> None:
     if args.operation != "prepare" and args.request:
         raise ControlRequestError(ErrorCode.INVALID_REQUEST, "--request is only valid for prepare")
     if (
-        args.operation in {"execute", "status", "events", "cancel", "resume", "artifacts"}
+        args.operation in {"execute", "status", "events", "cancel", "artifacts"}
         and not args.run_id
     ):
         raise ControlRequestError(ErrorCode.INVALID_REQUEST, "--run-id is required")
     if args.operation == "events" and args.after == "":
         raise ControlRequestError(ErrorCode.INVALID_REQUEST, "--after must not be empty")
-    if args.operation != "resume" and args.checkpoint is not None:
-        raise ControlRequestError(
-            ErrorCode.INVALID_REQUEST, "--checkpoint is only valid for resume"
-        )
 
 
 def _request_from_args(args: argparse.Namespace) -> dict[str, Any]:
@@ -177,8 +171,6 @@ def _request_from_args(args: argparse.Namespace) -> dict[str, Any]:
         generated["run_id"] = args.run_id
     if args.operation == "events" and args.after is not None:
         generated["after"] = args.after
-    if args.operation == "resume" and args.checkpoint is not None:
-        generated["checkpoint"] = args.checkpoint
     return generated
 
 
@@ -272,10 +264,6 @@ def _dispatch(service: ExecutionService, request: dict[str, Any]) -> dict[str, A
         return response
     if operation == "cancel":
         return _snapshot_response(operation, service.cancel(run_id))
-    if operation == "resume":
-        return _snapshot_response(
-            operation, service.resume(run_id, checkpoint_id=request.get("checkpoint"))
-        )
     if operation == "artifacts":
         return _artifacts_response(service.artifacts(run_id))
     raise ControlRequestError(ErrorCode.INVALID_REQUEST, f"Unsupported operation: {operation}")

@@ -102,7 +102,7 @@ def run_control_worker(
             raise ExecutionServiceError(ErrorCode.UNKNOWN_RUN, "control worker run disappeared")
         if current.state in _TERMINAL_STATES:
             return current.state
-        if current.cancel_pending and current.state in {RunState.QUEUED, RunState.PAUSED}:
+        if current.cancel_pending and current.state is RunState.QUEUED:
             token = current.launch_token
             if not token:
                 raise ExecutionServiceError(
@@ -130,10 +130,6 @@ def run_control_worker(
                 )
             finally:
                 lease.release()
-        if current.state is RunState.PAUSED:
-            resume = True
-            sleep(1.0)
-            continue
         if current.state is RunState.RUNNING:
             token = current.launch_token
             if not token:
@@ -224,9 +220,8 @@ def run_control_worker(
                     service_builder=build_workflow_service,
                 )
             except StopRequestedError:
-                # A pause beacon is a normal lifecycle boundary. The executor
-                # records PAUSED before re-raising; release the token lease so
-                # a later producer resume can claim the new queued attempt.
+                # A cancel beacon stop: the executor records the outcome before
+                # re-raising; the durable state read below is returned.
                 pass
             else:
                 if attempt_state in _TERMINAL_STATES:
@@ -239,9 +234,6 @@ def run_control_worker(
                 ErrorCode.UNKNOWN_RUN,
                 "control worker run disappeared after execution",
             )
-        if current.state is RunState.PAUSED:
-            resume = True
-            continue
         return current.state
 
 

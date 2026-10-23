@@ -411,8 +411,7 @@ def synthetic_agent_entry(
     until it has driven the run to a terminal state through the official
     ``ExecutionLifecycle``.
     Terminal runs attach by returning their existing snapshot; ``PREPARED``,
-    ``PAUSED`` and ``RUNNING`` runs are rejected without claiming, resuming or
-    launching anything:
+    ``RUNNING`` runs are rejected without claiming or launching anything:
 
         control prepare -> control execute -> synthetic_agent_entry
                                              -> control status/events/artifacts

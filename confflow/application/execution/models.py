@@ -12,7 +12,6 @@ class RunState(str, Enum):
     PREPARED = "prepared"
     QUEUED = "queued"
     RUNNING = "running"
-    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
