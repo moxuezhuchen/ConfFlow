@@ -356,9 +356,12 @@ class TestScientificResolution:
         overridden = assemble_work_items(override_plan, inputs)
         assert base.ok and overridden.ok
         assert base.items[0].semantic_digest != overridden.items[0].semantic_digest
-        assert "structure_value_overridden" in [
-            str(d.details.get("reason")) for d in overridden.warnings
+        conflicts = [
+            d
+            for d in overridden.warnings
+            if d.details.get("reason") == "structure_value_overridden"
         ]
+        assert conflicts and {d.step_id for d in conflicts} == {"s_opt"}
 
     def test_electron_parity_error_blocks_assembly(self) -> None:
         plan = _compile(_calc_doc())

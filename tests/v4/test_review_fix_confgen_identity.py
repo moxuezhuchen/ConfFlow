@@ -114,6 +114,24 @@ def test_unchanged_xtb_content_still_reuses_confgen(
     assert _calls(isolated) == calls_before
 
 
+def test_changed_launch_env_recomputes_confgen(
+    tmp_path: Path, toy_text: str, isolated: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # xTB reads e.g. XTBPATH from the environment it is launched with
+    fake = _write_fake(tmp_path)
+    run_root = tmp_path / "run"
+    document = _document()
+    monkeypatch.setenv("XTBPATH", str(tmp_path / "params-a"))
+    first = _run(document, run_root, toy_text, fake)
+    calls_before = _calls(isolated)
+    assert first.status == "completed" and calls_before > 0
+
+    monkeypatch.setenv("XTBPATH", str(tmp_path / "params-b"))
+    second = _run(document, run_root, toy_text, fake)
+    assert second.status == "completed"
+    assert _calls(isolated) > calls_before
+
+
 def test_confgen_identity_digests_xtb_content_not_metadata(tmp_path: Path) -> None:
     from confflow.application.v4_run import _pure_executable_identity
 
