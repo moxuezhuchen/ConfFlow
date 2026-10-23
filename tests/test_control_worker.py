@@ -766,4 +766,3 @@ def test_control_worker_confirms_pending_cancel_after_prior_worker_crash(
         "cancel_requested",
         "cancelled",
     ]
-

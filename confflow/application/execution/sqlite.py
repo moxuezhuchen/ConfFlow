@@ -27,12 +27,12 @@ from .state_root import StateRoot
 _SCHEMA_VERSION = 1
 
 
-
 def _run_state(value: str) -> RunState:
     """Read a stored state; the removed ``paused`` state reads as cancelled."""
     # A paused run could only be resumed by the removed resume operation, so
     # the closest live meaning is a stopped run that a fresh start replaces.
     return RunState.CANCELLED if value == "paused" else RunState(value)
+
 
 class SQLiteExecutionRepository:
     """Per-operation SQLite connections with atomic aggregate/event CAS commits."""

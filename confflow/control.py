@@ -145,10 +145,7 @@ def _validate_cli_shape(args: argparse.Namespace) -> None:
         raise ControlRequestError(ErrorCode.INVALID_REQUEST, "--request is required for prepare")
     if args.operation != "prepare" and args.request:
         raise ControlRequestError(ErrorCode.INVALID_REQUEST, "--request is only valid for prepare")
-    if (
-        args.operation in {"execute", "status", "events", "cancel", "artifacts"}
-        and not args.run_id
-    ):
+    if args.operation in {"execute", "status", "events", "cancel", "artifacts"} and not args.run_id:
         raise ControlRequestError(ErrorCode.INVALID_REQUEST, "--run-id is required")
     if args.operation == "events" and args.after == "":
         raise ControlRequestError(ErrorCode.INVALID_REQUEST, "--after must not be empty")
