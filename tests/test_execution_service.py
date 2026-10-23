@@ -516,52 +516,10 @@ def test_cancel_pending_ignore_is_scoped_to_the_checkpoint_callback():
     assert service.cancel("run-001").state is RunState.RUNNING
 
     assert lifecycle.checkpoint("late-step").state is RunState.RUNNING
-    with pytest.raises(ExecutionServiceError) as paused_error:
-        lifecycle.paused()
-    assert paused_error.value.code is ErrorCode.INVALID_STATE_TRANSITION
     with pytest.raises(ExecutionServiceError) as started_error:
         lifecycle.started()
     assert started_error.value.code is ErrorCode.INVALID_STATE_TRANSITION
     assert service.status("run-001").state is RunState.RUNNING
-
-
-def test_resume_generates_a_new_token_with_the_current_checkpoint():
-    """Resume pre-verifies, queues a new attempt, and forwards its checkpoint."""
-    repository = InMemoryExecutionRepository()
-    executor = FakeExecutor()
-    service = _service(repository, executor)
-    lifecycle = _running(service, executor)
-    lifecycle.checkpoint("checkpoint-1")
-    lifecycle.paused()
-    first_token = repository.read("run-001").launch_token  # type: ignore[union-attr]
-
-    resumed = service.resume("run-001")
-    aggregate = repository.read("run-001")
-    assert aggregate is not None
-    assert resumed.state is RunState.QUEUED
-    assert aggregate.attempt == 2
-    assert aggregate.launch_token != first_token
-    assert aggregate.launch_checkpoint == "checkpoint-1"
-    assert executor.launch_calls[-1] == aggregate.launch_token
-
-
-def test_stale_lifecycle_token_cannot_modify_the_resumed_attempt():
-    """Callbacks for the old attempt are rejected by aggregate token CAS."""
-    repository = InMemoryExecutionRepository()
-    executor = FakeExecutor()
-    service = _service(repository, executor)
-    old_lifecycle = _running(service, executor)
-    old_lifecycle.checkpoint("checkpoint-1")
-    old_lifecycle.paused()
-    service.resume("run-001")
-
-    with pytest.raises(ExecutionServiceError) as error:
-        old_lifecycle.started()
-    assert error.value.code is ErrorCode.INVALID_STATE_TRANSITION
-    aggregate = repository.read("run-001")
-    assert aggregate is not None and aggregate.launch_token is not None
-    new_lifecycle = ExecutionLifecycle(service, "run-001", aggregate.launch_token)
-    assert new_lifecycle.started().state is RunState.RUNNING
 
 
 def test_injected_repository_failure_does_not_tear_record_event_or_intent():
@@ -658,7 +616,7 @@ def test_events_cursor_order_pagination_empty_reconnect_and_unknown():
     service = _service(repository, executor)
     lifecycle = _running(service, executor)
     lifecycle.checkpoint("checkpoint-1")
-    lifecycle.paused()
+    lifecycle.checkpoint("checkpoint-2")
 
     first = service.events("run-001")
     second = service.events("run-001", after=first.next_cursor)
@@ -700,42 +658,6 @@ def test_initial_empty_event_page_returns_null_cursor():
     page = service.events("recovered-001")
     assert page.events == ()
     assert page.next_cursor is None
-
-
-def test_resume_rejects_missing_stale_running_and_terminal_checkpoints():
-    """The resume sequence matrix distinguishes every invalid state/checkpoint case."""
-    missing_repo = InMemoryExecutionRepository()
-    missing_executor = FakeExecutor()
-    missing = _service(missing_repo, missing_executor)
-    missing_lifecycle = _running(missing, missing_executor)
-    missing_lifecycle.paused()
-    with pytest.raises(ExecutionServiceError) as error:
-        missing.resume("run-001")
-    assert error.value.code is ErrorCode.INVALID_CHECKPOINT
-
-    stale_repo = InMemoryExecutionRepository()
-    stale_executor = FakeExecutor()
-    stale = _service(stale_repo, stale_executor)
-    stale_lifecycle = _running(stale, stale_executor)
-    stale_lifecycle.checkpoint("checkpoint-old")
-    stale_lifecycle.checkpoint("checkpoint-current")
-    stale_lifecycle.paused()
-    with pytest.raises(ExecutionServiceError) as error:
-        stale.resume("run-001", checkpoint_id="checkpoint-old")
-    assert error.value.code is ErrorCode.INVALID_CHECKPOINT
-    assert stale.resume("run-001", checkpoint_id="checkpoint-current").state is RunState.QUEUED
-
-    running_repo = InMemoryExecutionRepository()
-    running_executor = FakeExecutor()
-    running = _service(running_repo, running_executor)
-    running_lifecycle = _running(running, running_executor)
-    with pytest.raises(ExecutionServiceError) as error:
-        running.resume("run-001")
-    assert error.value.code is ErrorCode.INVALID_STATE_TRANSITION
-    running_lifecycle.completed()
-    with pytest.raises(ExecutionServiceError) as error:
-        running.resume("run-001")
-    assert error.value.code is ErrorCode.TERMINAL_RUN
 
 
 def test_duplicate_artifact_target_rejects_the_terminal_mutation_atomically():

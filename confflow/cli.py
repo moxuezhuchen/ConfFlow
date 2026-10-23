@@ -623,7 +623,6 @@ def main(
                     original_input_files=original_input_files,
                     resume=bool(args.resume),
                     verbose=bool(args.verbose),
-                    pause_beacon_file=os.path.join(work_dir, "PAUSE"),
                     cancel_beacon_file=os.path.join(work_dir, "CANCEL"),
                     work_directory_lease=work_lease,
                     workflow_runner=cast(WorkflowRunner, run_workflow),

@@ -182,9 +182,6 @@ def test_run_workflow_service_routes_existing_states_and_terminal_errors(
         def execute(self, _run_id):
             return SimpleNamespace(state=RunState.QUEUED)
 
-        def resume(self, _run_id):
-            return SimpleNamespace(state=RunState.QUEUED)
-
         def status(self, _run_id):
             return SimpleNamespace(state=self.final)
 
@@ -203,13 +200,13 @@ def test_run_workflow_service_routes_existing_states_and_terminal_errors(
             workflow_runner=lambda **_kwargs: {"ignored": True},
         )
 
-    # The formal V4 guard precedes service state routing: even PAUSED fails
-    # closed with legacy_workflow_not_executable for a legacy document.
+    # The formal V4 guard precedes service state routing: even a CANCELLED run
+    # fails closed with legacy_workflow_not_executable for a legacy document.
     with pytest.raises(
         ConfFlowError,
         match="legacy_workflow_not_executable.*not a V4 workflow document.*migration required",
     ):
-        invoke(StubService(RunState.PAUSED), StubExecutor())
+        invoke(StubService(RunState.CANCELLED), StubExecutor())
 
 
 def test_direct_adapter_prestart_cancel_terminal_winner_is_ignored(
@@ -592,13 +589,13 @@ def test_direct_adapter_commits_lifecycle_and_manifest_artifacts(tmp_path: Path)
 
 
 def test_direct_adapter_resume_reuses_idempotency_request_and_checkpoint_boundary(tmp_path: Path):
-    # Legacy document fails closed before any pause/resume lifecycle.
+    # Legacy document fails closed before any stop/resume lifecycle.
     input_xyz, config, work = _files(tmp_path)
     calls = {"count": 0}
 
     def fake_runner(**kwargs):
         calls["count"] += 1
-        raise StopRequestedError("pause")
+        raise StopRequestedError("stop")
 
     common = dict(
         input_xyz=[str(input_xyz)],

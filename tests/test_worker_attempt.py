@@ -79,7 +79,7 @@ def test_terminal_consumption_does_not_wait_and_builds_the_bound_spec(
     assert spec.config_file == staged_config
     assert spec.work_dir == staged_tasks[0]["work_dir"]
     assert spec.resume is True
-    assert spec.pause_beacon_file == str(tmp_path / "state" / "work" / "PAUSE")
+    assert not hasattr(spec, "pause_beacon_file")
     assert spec.cancel_beacon_file == str(tmp_path / "state" / "work" / "CANCEL")
 
 

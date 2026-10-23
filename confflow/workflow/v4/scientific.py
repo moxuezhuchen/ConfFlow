@@ -4,9 +4,9 @@
 
 Precedence (highest first):
 
-1. an explicit inherent property of the :class:`StructureRecord`
+1. an explicit step scientific override;
+2. an explicit inherent property of the :class:`StructureRecord`
    (``charge`` / ``multiplicity``);
-2. an explicit step scientific override;
 3. an explicit run-level scientific default.
 
 Conflicts between a structure property and a step override are never silent:
@@ -96,11 +96,13 @@ def resolve_scientific_parameters(
                 DiagnosticCode.SCIENTIFIC_PARAMETER_CONFLICT,
                 DiagnosticReason.STRUCTURE_VALUE_OVERRIDDEN,
                 "step charge override replaces the structure's explicit charge",
-                step_id=structure.source_step_id,
+                # unscoped: callers attach the overriding step, not the producer
+                step_id=None,
                 logical_key=structure.id,
                 field_path="calculation.overrides.charge",
                 details={
                     "structure_id": structure.id,
+                    "source_step_id": structure.source_step_id,
                     "structure_value": structure.charge,
                     "override_value": override_charge,
                 },
@@ -132,11 +134,13 @@ def resolve_scientific_parameters(
                 DiagnosticCode.SCIENTIFIC_PARAMETER_CONFLICT,
                 DiagnosticReason.STRUCTURE_VALUE_OVERRIDDEN,
                 "step multiplicity override replaces the structure's explicit multiplicity",
-                step_id=structure.source_step_id,
+                # unscoped: callers attach the overriding step, not the producer
+                step_id=None,
                 logical_key=structure.id,
                 field_path="calculation.overrides.multiplicity",
                 details={
                     "structure_id": structure.id,
+                    "source_step_id": structure.source_step_id,
                     "structure_value": structure.multiplicity,
                     "override_value": override_multiplicity,
                 },

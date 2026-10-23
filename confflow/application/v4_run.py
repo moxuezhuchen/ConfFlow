@@ -805,13 +805,20 @@ class V4RunApplication:
             metadata: dict[str, object] = {"step_id": planned.step_id}
             if identity is not None:
                 metadata["executable_resolved_path"] = identity.resolved_path
+            # A pure step that launches a process (ConfGen xTB, scripts) follows the
+            # native rule: the environment it launches with is the one digested.
+            native_env = None
+            if binding is not None:
+                from ..execution.binding_resolution import effective_native_env
+
+                native_env = FrozenDict(effective_native_env(binding, inherit=os.environ))
             environment = build_pure_environment(
                 implementation=implementation,
                 implementation_version=contract.contract_version,
+                relevant_env=native_env,
                 metadata=metadata,
                 executable_digest=identity.digest if identity is not None else None,
             )
-            native_env = None
             provenance = build_producer_provenance(
                 adapter_version=implementation,
                 profile_version=contract.contract_version,
