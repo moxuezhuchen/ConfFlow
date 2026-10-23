@@ -191,7 +191,6 @@ def formal_v4_runner(
     input_xyz: Any = (),
     config_file: str | None = None,
     work_dir: str | None = None,
-    pause_beacon_file: str | None = None,
     cancel_beacon_file: str | None = None,
     on_step_status_change: Any = None,
     executables: dict[str, str] | None = None,
@@ -201,7 +200,7 @@ def formal_v4_runner(
     """Typed formal runner for the single V4 application.
 
     The parameters are the explicit service/supervision surface: run inputs,
-    lifecycle beacons (``pause_beacon_file``/``cancel_beacon_file``), and
+    the cancel beacon (``cancel_beacon_file``), and
     the V4 supervision seam (``supervisor``/``executables``/
     ``owner_token``).  Service-owned
     flags (``resume``/``verbose``/original inputs) stay on the service spec:
@@ -224,7 +223,7 @@ def formal_v4_runner(
     if not input_xyz:
         raise _legacy_error("at least one XYZ input is required")
     document = load_v4_document_file(config_file)
-    # Beacon pre-check: a pre-existing CANCEL/PAUSE beacon is a formal
+    # Beacon pre-check: a pre-existing CANCEL beacon is a formal
     # lifecycle boundary. The V4 store is the durable truth; surfacing the
     # stop before launching keeps Ctrl-C / worker interruption faithful
     # without a second persistence.
@@ -233,9 +232,8 @@ def formal_v4_runner(
     from ..core.exceptions import StopRequestedError as _Stop
     from ..execution.cancellation import beacon_probe
 
-    for _beacon in (cancel_beacon_file, pause_beacon_file):
-        if _beacon and _os.path.exists(_beacon):
-            raise _Stop(f"workflow stopped by beacon: {_beacon}")
+    if cancel_beacon_file and _os.path.exists(cancel_beacon_file):
+        raise _Stop(f"workflow stopped by beacon: {cancel_beacon_file}")
     # Live cancellation: the SAME beacon the service/control cancel paths
     # touch is polled by every layer for the whole run, so a cancel during
     # a native execution terminates the process boundary instead of
