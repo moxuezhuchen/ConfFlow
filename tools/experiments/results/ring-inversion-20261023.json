@@ -1,0 +1,920 @@
+{
+  "date": "2026-10-23",
+  "system": "akugod",
+  "status": "Experimental candidate; confirmed only on akugod; production defaults unchanged",
+  "protocol": {
+    "date": "2026-10-23",
+    "base_commit": "719a4a32",
+    "system": "akugod",
+    "search_budget": 300,
+    "cores": 8,
+    "screen_seeds": [
+      70,
+      71,
+      72
+    ],
+    "confirmation_seeds": [
+      73,
+      74,
+      75
+    ],
+    "comparison": "production main versus replacing at most half of successful local reembedding proposals with pendant-ring inversion; parent policy and other arm shares unchanged",
+    "screen_gate": "At least two seeds improve best energy by >= 1 kcal/mol, median 3 kcal reference coverage gains >= 15%, and combined search+release CPU rises <= 15%. If passed, run fixed confirmation seeds without modifying the operator.",
+    "metrics": [
+      "best relative energy",
+      "frozen reference coverage 1/3/6 kcal",
+      "Boltzmann coverage",
+      "new low-energy minima",
+      "search optimizations",
+      "release optimizations",
+      "total CPU",
+      "wall",
+      "ancestry of improvements"
+    ],
+    "no_ring_policy": "unchanged production reembed output, no extra random draws",
+    "reference_sha256": "678cf01eda3ede3fe882945e9df754fbeb353b9413085b456262a834f425d4d9",
+    "confirmation_source_sha256": {
+      "tools/experiments/confgen_ring_moves.py": "0ba09f4c2172073ddd54b0aef266fb3922c2778ed0603f443076de6d602c73d8",
+      "tools/experiments/confgen_ring_explorer.py": "5616cad085d0b663c02685e566e3f8565db61461d13bd0eb8605ce0626c522d6",
+      "confflow/science/confgen/explore.py": "b32cbdb3ef468fd429bf6765212ab8a618e2f51b28b535f36d8e2b87c66a5930"
+    },
+    "screen_decision": {
+      "passed": true,
+      "median_cov3_ratio": 1.1666666666666667,
+      "total_cpu_ratio": 1.0063477052035958,
+      "seeds_with_best_gain_ge_1_kcal": 2
+    }
+  },
+  "commit": "719a4a32a5bba9bc62567e72e5b84d8eecac3de7",
+  "xtb": "/opt/xtb-pr/6.7.1-68fe777-pr1464.1465.1466-dynacc/bin/xtb",
+  "xtb_sha256": "46d13bd974d9aefa9bceffe2e4602934634d83823c9e2b4552739c72fee19323",
+  "raw_data": "/tmp/confgen-ring-dev",
+  "runner_sha256": "e91d8fe87b3aab87c53a582c5f21d73bf45b528ad00b14c0d9547e7923d75c01",
+  "case_sha256": "cc14b0dfa72a8ad57846cca8a7ddb359f7fdf9c353235e8440d7cb0a20f48d43",
+  "diagnostics": [
+    {
+      "operator": "ring_arc_rotation",
+      "proposals_per_arm": 32,
+      "passed": 24,
+      "control_passed": 32,
+      "best_relative_kcal": 1.58551,
+      "control_best_relative_kcal": 0.66038,
+      "below_1_kcal": 0,
+      "control_below_1_kcal": 1
+    },
+    {
+      "operator": "pendant_ring_inversion",
+      "proposals_per_arm": 4,
+      "passed": 4,
+      "control_passed": 4,
+      "best_relative_kcal": 0.69546,
+      "control_best_relative_kcal": 1.69958,
+      "below_1_kcal": 1,
+      "control_below_1_kcal": 0
+    }
+  ],
+  "aggregates": {
+    "screen": {
+      "seeds": [
+        70,
+        71,
+        72
+      ],
+      "median_paired_cov3_ratio": 1.1666666666666667,
+      "mean_cov3_base": 0.27906976744186046,
+      "mean_cov3_ring": 0.3333333333333333,
+      "mean_cov_boltz_base": 0.04333333333333333,
+      "mean_cov_boltz_ring": 0.225,
+      "total_cpu_ratio": 1.0063477052035958,
+      "total_wall_ratio": 1.0047220663936802,
+      "mean_release_base": 83.33333333333333,
+      "mean_release_ring": 88
+    },
+    "confirmation": {
+      "seeds": [
+        73,
+        74,
+        75
+      ],
+      "median_paired_cov3_ratio": 1.1666666666666667,
+      "mean_cov3_base": 0.27906976744186046,
+      "mean_cov3_ring": 0.3178294573643411,
+      "mean_cov_boltz_base": 0.09233333333333334,
+      "mean_cov_boltz_ring": 0.20333333333333334,
+      "total_cpu_ratio": 1.0025628541936569,
+      "total_wall_ratio": 1.0026217816900047,
+      "mean_release_base": 76.66666666666667,
+      "mean_release_ring": 87
+    },
+    "combined": {
+      "seeds": [
+        70,
+        71,
+        72,
+        73,
+        74,
+        75
+      ],
+      "median_paired_cov3_ratio": 1.1666666666666667,
+      "mean_cov3_base": 0.27906976744186046,
+      "mean_cov3_ring": 0.32558139534883723,
+      "mean_cov_boltz_base": 0.06783333333333333,
+      "mean_cov_boltz_ring": 0.21416666666666667,
+      "total_cpu_ratio": 1.004458653270026,
+      "total_wall_ratio": 1.0036753280142765,
+      "mean_release_base": 80,
+      "mean_release_ring": 87.5
+    }
+  },
+  "runs": [
+    {
+      "run": "akugod-base-s70-b300",
+      "system": "akugod",
+      "seed": 70,
+      "wall_s": 254.55870076300926,
+      "spent": {
+        "dg": 97,
+        "single": 151,
+        "reembed": 36
+      },
+      "best_eh": -102.037189552187,
+      "best_rel": 1.59,
+      "hit": null,
+      "cov1": 0.0,
+      "cov3": 0.279,
+      "cov6": 0.22,
+      "cov_boltz": 0.044,
+      "n3": 12,
+      "ref3": 43,
+      "new3": 0,
+      "ref_matched_arrangements": "1/1",
+      "win6_arr_cov3": {
+        "a0": 0.279
+      },
+      "cpu_s": 1824.706964,
+      "variant": "base",
+      "release": 84,
+      "ring_counts": {}
+    },
+    {
+      "run": "akugod-base-s71-b300",
+      "system": "akugod",
+      "seed": 71,
+      "wall_s": 258.21441440700437,
+      "spent": {
+        "dg": 97,
+        "single": 151,
+        "reembed": 36
+      },
+      "best_eh": -102.037189552187,
+      "best_rel": 1.59,
+      "hit": null,
+      "cov1": 0.0,
+      "cov3": 0.279,
+      "cov6": 0.206,
+      "cov_boltz": 0.043,
+      "n3": 12,
+      "ref3": 43,
+      "new3": 0,
+      "ref_matched_arrangements": "1/1",
+      "win6_arr_cov3": {
+        "a0": 0.279
+      },
+      "cpu_s": 1868.015936,
+      "variant": "base",
+      "release": 82,
+      "ring_counts": {}
+    },
+    {
+      "run": "akugod-base-s72-b300",
+      "system": "akugod",
+      "seed": 72,
+      "wall_s": 259.08719789999304,
+      "spent": {
+        "dg": 97,
+        "single": 151,
+        "reembed": 36
+      },
+      "best_eh": -102.037189552187,
+      "best_rel": 1.59,
+      "hit": null,
+      "cov1": 0.0,
+      "cov3": 0.279,
+      "cov6": 0.206,
+      "cov_boltz": 0.043,
+      "n3": 12,
+      "ref3": 43,
+      "new3": 0,
+      "ref_matched_arrangements": "1/1",
+      "win6_arr_cov3": {
+        "a0": 0.279
+      },
+      "cpu_s": 1874.940195,
+      "variant": "base",
+      "release": 84,
+      "ring_counts": {}
+    },
+    {
+      "run": "akugod-base-s73-b300",
+      "system": "akugod",
+      "seed": 73,
+      "wall_s": 254.02181584201753,
+      "spent": {
+        "dg": 97,
+        "single": 151,
+        "reembed": 36
+      },
+      "best_eh": -102.039720638296,
+      "best_rel": 0.002,
+      "hit": null,
+      "cov1": 0.125,
+      "cov3": 0.279,
+      "cov6": 0.187,
+      "cov_boltz": 0.193,
+      "n3": 12,
+      "ref3": 43,
+      "new3": 0,
+      "ref_matched_arrangements": "1/1",
+      "win6_arr_cov3": {
+        "a0": 0.279
+      },
+      "cpu_s": 1836.586741,
+      "variant": "base",
+      "release": 68,
+      "ring_counts": {}
+    },
+    {
+      "run": "akugod-base-s74-b300",
+      "system": "akugod",
+      "seed": 74,
+      "wall_s": 249.04055739397882,
+      "spent": {
+        "dg": 97,
+        "single": 151,
+        "reembed": 36
+      },
+      "best_eh": -102.037189552187,
+      "best_rel": 1.59,
+      "hit": null,
+      "cov1": 0.0,
+      "cov3": 0.279,
+      "cov6": 0.206,
+      "cov_boltz": 0.042,
+      "n3": 12,
+      "ref3": 43,
+      "new3": 0,
+      "ref_matched_arrangements": "1/1",
+      "win6_arr_cov3": {
+        "a0": 0.279
+      },
+      "cpu_s": 1799.715447,
+      "variant": "base",
+      "release": 80,
+      "ring_counts": {}
+    },
+    {
+      "run": "akugod-base-s75-b300",
+      "system": "akugod",
+      "seed": 75,
+      "wall_s": 263.81023085900233,
+      "spent": {
+        "dg": 97,
+        "single": 151,
+        "reembed": 36
+      },
+      "best_eh": -102.037189552187,
+      "best_rel": 1.59,
+      "hit": null,
+      "cov1": 0.0,
+      "cov3": 0.279,
+      "cov6": 0.196,
+      "cov_boltz": 0.042,
+      "n3": 12,
+      "ref3": 43,
+      "new3": 0,
+      "ref_matched_arrangements": "1/1",
+      "win6_arr_cov3": {
+        "a0": 0.279
+      },
+      "cpu_s": 1911.5456120000001,
+      "variant": "base",
+      "release": 82,
+      "ring_counts": {}
+    },
+    {
+      "run": "akugod-ring-s70-b300",
+      "system": "akugod",
+      "seed": 70,
+      "wall_s": 255.03993652798817,
+      "spent": {
+        "dg": 97,
+        "single": 151,
+        "reembed": 36
+      },
+      "best_eh": -102.039156159684,
+      "best_rel": 0.356,
+      "hit": null,
+      "cov1": 0.25,
+      "cov3": 0.326,
+      "cov6": 0.234,
+      "cov_boltz": 0.179,
+      "n3": 14,
+      "ref3": 43,
+      "new3": 4,
+      "ref_matched_arrangements": "1/1",
+      "win6_arr_cov3": {
+        "a0": 0.326
+      },
+      "cpu_s": 1830.7601410000002,
+      "variant": "ring",
+      "release": 89,
+      "ring_counts": {
+        "attempts": 18,
+        "proposed": 18
+      }
+    },
+    {
+      "run": "akugod-ring-s71-b300",
+      "system": "akugod",
+      "seed": 71,
+      "wall_s": 262.2704338869953,
+      "spent": {
+        "dg": 97,
+        "single": 151,
+        "reembed": 36
+      },
+      "best_eh": -102.038687647262,
+      "best_rel": 0.65,
+      "hit": null,
+      "cov1": 0.125,
+      "cov3": 0.302,
+      "cov6": 0.215,
+      "cov_boltz": 0.092,
+      "n3": 13,
+      "ref3": 43,
+      "new3": 4,
+      "ref_matched_arrangements": "1/1",
+      "win6_arr_cov3": {
+        "a0": 0.302
+      },
+      "cpu_s": 1910.9952620000001,
+      "variant": "ring",
+      "release": 88,
+      "ring_counts": {
+        "attempts": 18,
+        "proposed": 18
+      }
+    },
+    {
+      "run": "akugod-ring-s72-b300",
+      "system": "akugod",
+      "seed": 72,
+      "wall_s": 258.19471829998656,
+      "spent": {
+        "dg": 97,
+        "single": 151,
+        "reembed": 36
+      },
+      "best_eh": -102.039721519743,
+      "best_rel": 0.002,
+      "hit": null,
+      "cov1": 0.375,
+      "cov3": 0.372,
+      "cov6": 0.234,
+      "cov_boltz": 0.404,
+      "n3": 16,
+      "ref3": 43,
+      "new3": 2,
+      "ref_matched_arrangements": "1/1",
+      "win6_arr_cov3": {
+        "a0": 0.372
+      },
+      "cpu_s": 1861.2495760000002,
+      "variant": "ring",
+      "release": 87,
+      "ring_counts": {
+        "attempts": 18,
+        "proposed": 18
+      }
+    },
+    {
+      "run": "akugod-ring-s73-b300",
+      "system": "akugod",
+      "seed": 73,
+      "wall_s": 257.31824779100134,
+      "spent": {
+        "dg": 97,
+        "single": 151,
+        "reembed": 36
+      },
+      "best_eh": -102.039715762674,
+      "best_rel": 0.005,
+      "hit": null,
+      "cov1": 0.25,
+      "cov3": 0.326,
+      "cov6": 0.238,
+      "cov_boltz": 0.339,
+      "n3": 14,
+      "ref3": 43,
+      "new3": 3,
+      "ref_matched_arrangements": "1/1",
+      "win6_arr_cov3": {
+        "a0": 0.326
+      },
+      "cpu_s": 1865.955618,
+      "variant": "ring",
+      "release": 86,
+      "ring_counts": {
+        "attempts": 18,
+        "proposed": 18
+      }
+    },
+    {
+      "run": "akugod-ring-s74-b300",
+      "system": "akugod",
+      "seed": 74,
+      "wall_s": 250.45396623399574,
+      "spent": {
+        "dg": 97,
+        "single": 151,
+        "reembed": 36
+      },
+      "best_eh": -102.039156159684,
+      "best_rel": 0.356,
+      "hit": null,
+      "cov1": 0.25,
+      "cov3": 0.326,
+      "cov6": 0.229,
+      "cov_boltz": 0.179,
+      "n3": 14,
+      "ref3": 43,
+      "new3": 3,
+      "ref_matched_arrangements": "1/1",
+      "win6_arr_cov3": {
+        "a0": 0.326
+      },
+      "cpu_s": 1818.818076,
+      "variant": "ring",
+      "release": 87,
+      "ring_counts": {
+        "attempts": 18,
+        "proposed": 18
+      }
+    },
+    {
+      "run": "akugod-ring-s75-b300",
+      "system": "akugod",
+      "seed": 75,
+      "wall_s": 261.1109626219841,
+      "spent": {
+        "dg": 97,
+        "single": 151,
+        "reembed": 36
+      },
+      "best_eh": -102.038687647262,
+      "best_rel": 0.65,
+      "hit": null,
+      "cov1": 0.125,
+      "cov3": 0.302,
+      "cov6": 0.215,
+      "cov_boltz": 0.092,
+      "n3": 13,
+      "ref3": 43,
+      "new3": 4,
+      "ref_matched_arrangements": "1/1",
+      "win6_arr_cov3": {
+        "a0": 0.302
+      },
+      "cpu_s": 1877.292431,
+      "variant": "ring",
+      "release": 88,
+      "ring_counts": {
+        "attempts": 18,
+        "proposed": 18
+      }
+    }
+  ],
+  "best_lineages": [
+    {
+      "seed": 70,
+      "complete": true,
+      "contains_ring": true,
+      "lineage": [
+        {
+          "stage": "release",
+          "id": 1,
+          "origin": "release:197",
+          "energy_eh": -102.039156159684
+        },
+        {
+          "stage": "search",
+          "id": 197,
+          "origin": "reembed:94:ring:2",
+          "energy_eh": -102.038859084451
+        },
+        {
+          "stage": "search",
+          "id": 94,
+          "origin": "single:19",
+          "energy_eh": -102.035548146469
+        },
+        {
+          "stage": "search",
+          "id": 19,
+          "origin": "single:11",
+          "energy_eh": -102.03695786959
+        },
+        {
+          "stage": "search",
+          "id": 11,
+          "origin": "probe:0:2",
+          "energy_eh": -102.034906195026
+        },
+        {
+          "stage": "search",
+          "id": 0,
+          "origin": "input",
+          "energy_eh": -102.029265307803
+        }
+      ]
+    },
+    {
+      "seed": 71,
+      "complete": true,
+      "contains_ring": true,
+      "lineage": [
+        {
+          "stage": "release",
+          "id": 1,
+          "origin": "release:154",
+          "energy_eh": -102.038687647262
+        },
+        {
+          "stage": "search",
+          "id": 154,
+          "origin": "single:72",
+          "energy_eh": -102.038425355861
+        },
+        {
+          "stage": "search",
+          "id": 72,
+          "origin": "reembed:23:ring:3",
+          "energy_eh": -102.038279740819
+        },
+        {
+          "stage": "search",
+          "id": 23,
+          "origin": "single:11",
+          "energy_eh": -102.03695786959
+        },
+        {
+          "stage": "search",
+          "id": 11,
+          "origin": "probe:0:2",
+          "energy_eh": -102.034906195026
+        },
+        {
+          "stage": "search",
+          "id": 0,
+          "origin": "input",
+          "energy_eh": -102.029265307803
+        }
+      ]
+    },
+    {
+      "seed": 72,
+      "complete": true,
+      "contains_ring": true,
+      "lineage": [
+        {
+          "stage": "release",
+          "id": 1,
+          "origin": "release:164",
+          "energy_eh": -102.039721519743
+        },
+        {
+          "stage": "search",
+          "id": 164,
+          "origin": "single:93",
+          "energy_eh": -102.039477769125
+        },
+        {
+          "stage": "search",
+          "id": 93,
+          "origin": "reembed:23:ring:3",
+          "energy_eh": -102.039387207481
+        },
+        {
+          "stage": "search",
+          "id": 23,
+          "origin": "single:11",
+          "energy_eh": -102.03619754389
+        },
+        {
+          "stage": "search",
+          "id": 11,
+          "origin": "probe:0:2",
+          "energy_eh": -102.034906195026
+        },
+        {
+          "stage": "search",
+          "id": 0,
+          "origin": "input",
+          "energy_eh": -102.029265307803
+        }
+      ]
+    },
+    {
+      "seed": 73,
+      "complete": true,
+      "contains_ring": false,
+      "lineage": [
+        {
+          "stage": "release",
+          "id": 1,
+          "origin": "release:156",
+          "energy_eh": -102.039715762674
+        },
+        {
+          "stage": "search",
+          "id": 156,
+          "origin": "reembed:108",
+          "energy_eh": -102.039468065852
+        },
+        {
+          "stage": "search",
+          "id": 108,
+          "origin": "single:26",
+          "energy_eh": -102.037110243448
+        },
+        {
+          "stage": "search",
+          "id": 26,
+          "origin": "single:11",
+          "energy_eh": -102.03695786959
+        },
+        {
+          "stage": "search",
+          "id": 11,
+          "origin": "probe:0:2",
+          "energy_eh": -102.034906195026
+        },
+        {
+          "stage": "search",
+          "id": 0,
+          "origin": "input",
+          "energy_eh": -102.029265307803
+        }
+      ]
+    },
+    {
+      "seed": 74,
+      "complete": true,
+      "contains_ring": true,
+      "lineage": [
+        {
+          "stage": "release",
+          "id": 1,
+          "origin": "release:199",
+          "energy_eh": -102.039156159684
+        },
+        {
+          "stage": "search",
+          "id": 199,
+          "origin": "reembed:103:ring:2",
+          "energy_eh": -102.038859084451
+        },
+        {
+          "stage": "search",
+          "id": 103,
+          "origin": "single:20",
+          "energy_eh": -102.035524360554
+        },
+        {
+          "stage": "search",
+          "id": 20,
+          "origin": "single:11",
+          "energy_eh": -102.03695786959
+        },
+        {
+          "stage": "search",
+          "id": 11,
+          "origin": "probe:0:2",
+          "energy_eh": -102.034906195026
+        },
+        {
+          "stage": "search",
+          "id": 0,
+          "origin": "input",
+          "energy_eh": -102.029265307803
+        }
+      ]
+    },
+    {
+      "seed": 75,
+      "complete": true,
+      "contains_ring": true,
+      "lineage": [
+        {
+          "stage": "release",
+          "id": 1,
+          "origin": "release:149",
+          "energy_eh": -102.038687647262
+        },
+        {
+          "stage": "search",
+          "id": 149,
+          "origin": "single:82",
+          "energy_eh": -102.038425355861
+        },
+        {
+          "stage": "search",
+          "id": 82,
+          "origin": "reembed:21:ring:3",
+          "energy_eh": -102.038279740819
+        },
+        {
+          "stage": "search",
+          "id": 21,
+          "origin": "single:11",
+          "energy_eh": -102.03695786959
+        },
+        {
+          "stage": "search",
+          "id": 11,
+          "origin": "probe:0:2",
+          "energy_eh": -102.034906195026
+        },
+        {
+          "stage": "search",
+          "id": 0,
+          "origin": "input",
+          "energy_eh": -102.029265307803
+        }
+      ]
+    }
+  ],
+  "scope": [
+    {
+      "system": "akugod",
+      "parts": [
+        {
+          "anchor": 1,
+          "ring": [
+            3,
+            6,
+            9,
+            12,
+            15,
+            1
+          ],
+          "stereo": true,
+          "clash": false
+        },
+        {
+          "anchor": 18,
+          "ring": [
+            20,
+            23,
+            26,
+            29,
+            32,
+            18
+          ],
+          "stereo": true,
+          "clash": false
+        },
+        {
+          "anchor": 39,
+          "ring": [
+            41,
+            44,
+            47,
+            50,
+            53,
+            39
+          ],
+          "stereo": true,
+          "clash": false
+        },
+        {
+          "anchor": 56,
+          "ring": [
+            58,
+            61,
+            64,
+            67,
+            70,
+            56
+          ],
+          "stereo": true,
+          "clash": false
+        }
+      ]
+    },
+    {
+      "system": "al6_ts1",
+      "parts": [
+        {
+          "anchor": 78,
+          "ring": [
+            80,
+            81,
+            82,
+            84,
+            77,
+            78
+          ],
+          "stereo": true,
+          "clash": false
+        }
+      ]
+    },
+    {
+      "system": "cnetpa",
+      "parts": []
+    },
+    {
+      "system": "zr7",
+      "parts": [
+        {
+          "anchor": 94,
+          "ring": [
+            90,
+            92,
+            93,
+            94,
+            96,
+            89
+          ],
+          "stereo": true,
+          "clash": false
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Single-system efficacy study, 3 screening pairs and 3 independent confirmation pairs.",
+    "No budget-prefix checkpoints were saved; no CPU growth curve claim.",
+    "The experimental adapter still generates DG proposals before replacing some, and includes that overhead.",
+    "TS1 low-budget smoke test is integration validation only; Zr7 helicity coverage is untested."
+  ],
+  "integration_smoke": [
+    {
+      "run": "al6_ts1-base-s76-b32",
+      "variant": "base",
+      "budget": 32,
+      "seed": 76,
+      "inputs_unchanged": true,
+      "search_optimizations": 32,
+      "release_optimizations": 17,
+      "ring_counts": {},
+      "ring_minima": [],
+      "final_passing": 14,
+      "wall_s": 117.47527743602404,
+      "cpu_s": 576.9774039999999,
+      "purpose": "Integration smoke only; not an efficacy comparison"
+    },
+    {
+      "run": "al6_ts1-ring-s76-b32",
+      "variant": "ring",
+      "budget": 32,
+      "seed": 76,
+      "inputs_unchanged": true,
+      "search_optimizations": 32,
+      "release_optimizations": 17,
+      "ring_counts": {},
+      "ring_minima": [],
+      "final_passing": 14,
+      "wall_s": 118.7028692990134,
+      "cpu_s": 561.2338480000001,
+      "purpose": "Integration smoke only; not an efficacy comparison"
+    },
+    {
+      "run": "al6_ts1-ring-s76-b64",
+      "variant": "ring",
+      "budget": 64,
+      "seed": 76,
+      "inputs_unchanged": true,
+      "search_optimizations": 64,
+      "release_optimizations": 25,
+      "ring_counts": {
+        "attempts": 1,
+        "proposed": 1
+      },
+      "ring_minima": [],
+      "final_passing": 19,
+      "wall_s": 153.15433367202058,
+      "cpu_s": 845.4811139999999,
+      "purpose": "Integration smoke only; not an efficacy comparison",
+      "ring_audit": {
+        "label": null,
+        "failed_checks": [
+          "topology"
+        ]
+      },
+      "backend_converged": true,
+      "ring_optimization_energy_eh": -186.980274679669
+    }
+  ]
+}
