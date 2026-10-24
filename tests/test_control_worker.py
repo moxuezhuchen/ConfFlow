@@ -86,6 +86,31 @@ def test_worker_token_lease_allows_one_cross_process_owner(tmp_path: Path) -> No
     second.release()
 
 
+def test_worker_token_lease_closes_fd_when_marker_io_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened: list[int] = []
+    real_open = os.open
+
+    def recording_open(*args: object, **kwargs: object) -> int:
+        fd = real_open(*args, **kwargs)  # type: ignore[arg-type]
+        opened.append(fd)
+        return fd
+
+    def failing_read(fd: int, size: int) -> bytes:
+        raise OSError("injected read failure")
+
+    monkeypatch.setattr(os, "open", recording_open)
+    monkeypatch.setattr(os, "read", failing_read)
+    lease = TokenLaunchLease(tmp_path, "worker-run", "worker-run.launch.2")
+    with pytest.raises(OSError, match="injected read failure"):
+        lease.acquire()
+    assert len(opened) == 1
+    monkeypatch.undo()
+    with pytest.raises(OSError):
+        os.fstat(opened[0])
+
+
 def test_worker_token_lease_blocks_a_separate_process(tmp_path: Path) -> None:
     lease = TokenLaunchLease(tmp_path, "worker-run", "worker-run.launch.1")
     assert lease.acquire() is True
