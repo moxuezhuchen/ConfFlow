@@ -11,11 +11,11 @@ validated separately in :mod:`confflow.workflow.v4.graph`.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Set
 from dataclasses import dataclass
 from typing import Any
 
-from ...domain.binding import PortKind, SourceKind
+from ...domain.binding import BindingSource, PortKind, SelectorKind, SourceKind
 from ...domain.canonical import typed_digest
 from ...domain.diagnostics import Diagnostic, diagnostic_sort_key
 from ...domain.errors import DomainError
@@ -416,6 +416,137 @@ def _producer_port_is_structure(
     return bool(getattr(profile, "provides_structures", False))
 
 
+def follow_disabled_passthroughs(
+    source: BindingSource,
+    *,
+    disabled_ids: Set[str],
+    passthrough_inputs: Callable[[str], Mapping[str, str]],
+    upstream_of: Callable[[str, str], tuple[BindingSource, PortSpec | None] | None],
+) -> tuple[BindingSource, PortSpec | None, tuple[str, ...], list[Diagnostic]]:
+    """Follow *source* upstream through disabled pure-passthrough steps.
+
+    Shared by compile-time graph rewiring (:mod:`.graph`) and by validation,
+    which runs before rewiring and must judge provenance the same way.
+    ``passthrough_inputs(step_id)`` maps a disabled step's output ports to
+    its input ports; ``upstream_of(step_id, input_port)`` returns the bound
+    source and its port.  Returns the effective source, the port of the last
+    followed binding (``None`` when nothing was followed), the disabled steps
+    traversed, and any error diagnostics.
+    """
+    via: list[str] = []
+    diagnostics: list[Diagnostic] = []
+    current = source
+    current_port: PortSpec | None = None
+    seen: set[str] = set()
+    while (
+        current.kind is SourceKind.STEP_OUTPUT
+        and current.step_id is not None
+        and current.step_id in disabled_ids
+    ):
+        disabled_id = current.step_id
+        if disabled_id in seen:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.COMPILE_ERROR,
+                    DiagnosticReason.DISABLED_PASSTHROUGH_AMBIGUOUS,
+                    f"disabled passthrough cycle detected at {disabled_id!r}",
+                    step_id=disabled_id,
+                    details={"candidates": sorted(seen)},
+                )
+            )
+            return current, current_port, tuple(via), diagnostics
+        seen.add(disabled_id)
+        input_port_name = passthrough_inputs(disabled_id).get(current.port)
+        if input_port_name is None:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.CAPABILITY_ERROR,
+                    DiagnosticReason.DISABLED_CAPABILITY_LOST,
+                    f"disabled step {disabled_id!r} cannot forward output port "
+                    f"{current.port!r}: it is not a declared pure passthrough",
+                    step_id=disabled_id,
+                    details={"port": current.port},
+                )
+            )
+            return current, current_port, tuple(via), diagnostics
+        if current.selector.kind is not SelectorKind.ALL:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.COMPILE_ERROR,
+                    DiagnosticReason.SELECTOR_COMPOSITION_UNSUPPORTED,
+                    "selector composition through a disabled passthrough is not supported",
+                    step_id=disabled_id,
+                    details={"selector": current.selector.to_dict()},
+                )
+            )
+            return current, current_port, tuple(via), diagnostics
+        upstream = upstream_of(disabled_id, input_port_name)
+        if upstream is None:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.COMPILE_ERROR,
+                    DiagnosticReason.DISABLED_ROOT_NO_SOURCE,
+                    f"disabled step {disabled_id!r} has no upstream binding for "
+                    f"port {input_port_name!r}",
+                    step_id=disabled_id,
+                    details={"input_port": input_port_name},
+                )
+            )
+            return current, current_port, tuple(via), diagnostics
+        via.append(disabled_id)
+        current, current_port = upstream
+    return current, current_port, tuple(via), diagnostics
+
+
+def _contract_passthrough_ports(
+    step: StepDefinition, registry: ExecutionRegistry
+) -> Mapping[str, str]:
+    """Return the passthrough port map of *step*'s executor contract (empty if unknown)."""
+    try:
+        _capability, contract, _diagnostics = resolve_executor_contract(step, registry)
+    except Exception:
+        return {}
+    if contract is None:
+        return {}
+    return contract.passthrough_ports
+
+
+def _effective_source(
+    source: BindingSource,
+    steps_by_id: Mapping[str, StepDefinition],
+    registry: ExecutionRegistry,
+) -> BindingSource | None:
+    """Return *source* as the compiled graph will see it, or ``None`` if unresolvable.
+
+    A binding onto a disabled pure-passthrough step is rewired to that step's
+    upstream producer, exactly as :func:`.graph.build_binding_graph` does.
+    ``None`` means the chain ends at a genuine error (a disabled producer that
+    is not a declared passthrough, a selector composition, a cycle, or a
+    missing upstream binding); callers fail closed on it.
+    """
+    disabled_ids = frozenset(sid for sid, item in steps_by_id.items() if not item.enabled)
+    if source.kind is not SourceKind.STEP_OUTPUT or source.step_id not in disabled_ids:
+        return source
+
+    def upstream_of(step_id: str, input_port: str) -> tuple[BindingSource, PortSpec | None] | None:
+        for binding in steps_by_id[step_id].bindings:
+            if binding.target_port == input_port:
+                return binding.source, None
+        return None
+
+    resolved, _port, _via, diagnostics = follow_disabled_passthroughs(
+        source,
+        disabled_ids=disabled_ids,
+        passthrough_inputs=lambda step_id: _contract_passthrough_ports(
+            steps_by_id[step_id], registry
+        ),
+        upstream_of=upstream_of,
+    )
+    if diagnostics:
+        return None
+    return resolved
+
+
 def _proven_input_state(
     step: StepDefinition,
     field: str,
@@ -461,7 +592,10 @@ def _proven_input_state(
     for binding in bindings:
         if binding.target_port not in targets:
             continue
-        source = binding.source
+        resolved = _effective_source(binding.source, steps_by_id, registry)
+        if resolved is None:
+            return False
+        source = resolved
         if source.kind is SourceKind.RUN_INPUT:
             declaration = inputs_by_name.get(source.port)
             if declaration is None or declaration.kind is not PortKind.STRUCTURE:
@@ -740,22 +874,35 @@ def _results_source_diagnostics(
     results_binding = by_target.get("results")
     if results_binding is None:
         return []
+    steps_by_id = {item.id: item for item in all_steps}
     source = results_binding.source
+    # Both sides are compared as the compiled graph sees them: a binding onto
+    # a disabled passthrough is rewired to its upstream producer first.
+    effective_results = _effective_source(source, steps_by_id, registry)
     producer: StepDefinition | None = None
-    if source.kind is SourceKind.STEP_OUTPUT and source.step_id is not None:
-        producer = {item.id: item for item in all_steps}.get(source.step_id)
+    if (
+        effective_results is not None
+        and effective_results.kind is SourceKind.STEP_OUTPUT
+        and effective_results.step_id is not None
+    ):
+        producer = steps_by_id.get(effective_results.step_id)
     producer_capability: ExecutorCapability | None = None
     if producer is not None:
         producer_capability, _, _ = resolve_executor_contract(producer, registry)
     structure_source_id: str | None = None
+    effective_structure_id: str | None = None
     structure_binding = by_target.get("structure")
     if structure_binding is not None and structure_binding.source.kind is (SourceKind.STEP_OUTPUT):
         structure_source_id = structure_binding.source.step_id
+        effective_structure = _effective_source(structure_binding.source, steps_by_id, registry)
+        if effective_structure is not None and effective_structure.kind is SourceKind.STEP_OUTPUT:
+            effective_structure_id = effective_structure.step_id
     if (
-        source.kind is SourceKind.STEP_OUTPUT
+        effective_results is not None
+        and effective_results.kind is SourceKind.STEP_OUTPUT
         and producer_capability is ExecutorCapability.CALCULATION
-        and source.port == "results"
-        and structure_source_id == source.step_id
+        and effective_results.port == "results"
+        and effective_structure_id == effective_results.step_id
     ):
         return []
     return [
