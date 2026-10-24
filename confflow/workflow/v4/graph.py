@@ -36,7 +36,12 @@ from ...domain.completion import CompletionMode, PartialOutputPolicy
 from ...domain.diagnostics import Diagnostic, diagnostic_sort_key
 from ...execution.contracts import PortSpec
 from .diagnostics import DiagnosticCode, DiagnosticReason, error, warning
-from .validation import ValidatedDefinition, ValidatedStep, run_input_port_spec
+from .validation import (
+    ValidatedDefinition,
+    ValidatedStep,
+    follow_disabled_passthroughs,
+    run_input_port_spec,
+)
 
 __all__ = [
     "BindingGraph",
@@ -447,66 +452,18 @@ def _resolve_passthrough(
     run_ports: dict[str, PortSpec],
     disabled_ids: frozenset[str],
 ) -> tuple[BindingSource, PortSpec | None, tuple[str, ...], list[Diagnostic]]:
-    via: list[str] = []
-    diagnostics: list[Diagnostic] = []
-    current = source
-    current_port: PortSpec | None = None
-    seen: set[str] = set()
-    while current.kind is SourceKind.STEP_OUTPUT and current.step_id in disabled_ids:
-        disabled_id = current.step_id
-        if disabled_id in seen:
-            diagnostics.append(
-                error(
-                    DiagnosticCode.COMPILE_ERROR,
-                    DiagnosticReason.DISABLED_PASSTHROUGH_AMBIGUOUS,
-                    f"disabled passthrough cycle detected at {disabled_id!r}",
-                    step_id=disabled_id,
-                    details={"candidates": sorted(seen)},
-                )
-            )
-            return current, current_port, tuple(via), diagnostics
-        seen.add(disabled_id)
-        disabled_step = all_steps[disabled_id]
-        input_port_name = disabled_step.executor.passthrough_ports.get(current.port)
-        if input_port_name is None:
-            diagnostics.append(
-                error(
-                    DiagnosticCode.CAPABILITY_ERROR,
-                    DiagnosticReason.DISABLED_CAPABILITY_LOST,
-                    f"disabled step {disabled_id!r} cannot forward output port "
-                    f"{current.port!r}: it is not a declared pure passthrough",
-                    step_id=disabled_id,
-                    details={"port": current.port},
-                )
-            )
-            return current, current_port, tuple(via), diagnostics
-        if current.selector.kind is not SelectorKind.ALL:
-            diagnostics.append(
-                error(
-                    DiagnosticCode.COMPILE_ERROR,
-                    DiagnosticReason.SELECTOR_COMPOSITION_UNSUPPORTED,
-                    "selector composition through a disabled passthrough is not supported",
-                    step_id=disabled_id,
-                    details={"selector": current.selector.to_dict()},
-                )
-            )
-            return current, current_port, tuple(via), diagnostics
-        upstream = raw_edges.get((disabled_id, input_port_name))
+    def upstream_of(step_id: str, input_port: str) -> tuple[BindingSource, PortSpec] | None:
+        upstream = raw_edges.get((step_id, input_port))
         if upstream is None:
-            diagnostics.append(
-                error(
-                    DiagnosticCode.COMPILE_ERROR,
-                    DiagnosticReason.DISABLED_ROOT_NO_SOURCE,
-                    f"disabled step {disabled_id!r} has no upstream binding for "
-                    f"port {input_port_name!r}",
-                    step_id=disabled_id,
-                    details={"input_port": input_port_name},
-                )
-            )
-            return current, current_port, tuple(via), diagnostics
-        via.append(disabled_id)
-        current = upstream.source
-        current_port = upstream.source_port
+            return None
+        return upstream.source, upstream.source_port
+
+    current, current_port, via, diagnostics = follow_disabled_passthroughs(
+        source,
+        disabled_ids=disabled_ids,
+        passthrough_inputs=lambda step_id: all_steps[step_id].executor.passthrough_ports,
+        upstream_of=upstream_of,
+    )
     if current_port is None:
         if current.kind is SourceKind.RUN_INPUT:
             current_port = run_ports.get(current.port)
