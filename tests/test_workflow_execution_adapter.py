@@ -975,3 +975,38 @@ def test_completed_attach_checks_identity_marker_and_terminal_artifacts(tmp_path
         _attach(spec, work, service_for(size + 1, good))
     with pytest.raises(ExecutionServiceError, match="missing or changed"):
         _attach(spec, work, service_for(size, "0" * 64))
+
+
+def test_direct_adapter_manual_cancel_beacon_stop_commits_cancelled(tmp_path: Path):
+    """A manually touched CANCEL file (no service cancel) must end the run CANCELLED."""
+    input_xyz, config, work = _files(tmp_path)
+    run_id = "run-adapter-manual-beacon"
+    identity = ExecutableIdentity(sha256="7" * 64)
+
+    def runner(**kwargs):
+        beacon = Path(kwargs["cancel_beacon_file"])
+        beacon.parent.mkdir(parents=True, exist_ok=True)
+        beacon.touch()
+        raise StopRequestedError("workflow stopped by beacon")
+
+    spec = WorkflowRunSpec(
+        run_id=run_id,
+        input_xyz=(str(input_xyz),),
+        config_file=str(config),
+        work_dir=str(work),
+        cancel_beacon_file=str(work / "CANCEL"),
+    )
+    executor = ServiceWorkflowExecutor(spec, runner)
+    service = ExecutionService(
+        repository=InMemoryExecutionRepository(),
+        executor=executor,
+        identity_verifier=_StaticIdentityVerifier(identity),
+    )
+    executor.bind(service)
+    service.prepare(PrepareRequest(run_id, run_id, "a" * 64, "b" * 64, "c" * 64, identity))
+
+    assert service.execute(run_id).state in {RunState.QUEUED, RunState.RUNNING}
+    with pytest.raises(StopRequestedError):
+        executor.wait(timeout=2)
+
+    assert service.status(run_id).state is RunState.CANCELLED
