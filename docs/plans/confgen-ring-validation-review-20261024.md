@@ -58,4 +58,4 @@ PR 文档也明确承认发布集合谱系未完成追溯。合适的结论是�
 - 建议修正文档第 151–156 行的强归因措辞，并把后续门控和成本条件写清楚。保留实验代码有研究记录价值，但合并实验记录不等于生产采用；本次未合并或发布。
 - [PR #181](https://github.com/moxuezhuchen/ConfFlow/pull/181) 已于北京时间 2026-10-24 00:54 合并，merge commit `ba7fe58f`。`refactor/remove-paused-20261024` 不需要再开 PR。
 
-PR #180 的本地文档修订建议保存在 `/tmp/confgen-pr180-review-20261024.patch`，基于 head `91ffc8ed`；没有切换或改写共享分支。
+上述 PR #180 文档修订已按 `/opt/confflow-archive/experiments-20261024/ring-topology-audit/confgen-pr180-review-20261024.patch`（基于 head `91ffc8ed`）应用到本分支。
