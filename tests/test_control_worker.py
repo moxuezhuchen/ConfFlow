@@ -350,6 +350,64 @@ def test_control_cancel_waits_for_token_worker_to_stop_before_terminal_state(
     ]
 
 
+def test_control_worker_manual_cancel_beacon_ends_run_cancelled(tmp_path: Path) -> None:
+    """A manual CANCEL touch with no service cancel request must not leave RUNNING."""
+    config = tmp_path / "workflow.yaml"
+    input_xyz = tmp_path / "input.xyz"
+    work_dir = tmp_path / "work"
+    config.write_text(
+        # Formal cutover: staged configs must carry the V4 schema
+        "schema: confflow.workflow.v4\nsteps: []\n",
+        encoding="utf-8",
+    )
+    input_xyz.write_text("1\nH\nH 0 0 0\n", encoding="utf-8")
+    handoff = {
+        "content_schema": HANDOFF_SCHEMA,
+        "run_id": "worker-manual-cancel",
+        "workflow_config": {
+            "path": str(config),
+            "sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+        },
+        "tasks": [
+            {
+                "task_id": "input",
+                "input_xyz": str(input_xyz),
+                "work_dir": str(work_dir),
+                "sha256": hashlib.sha256(input_xyz.read_bytes()).hexdigest(),
+            }
+        ],
+    }
+    handoff_path = tmp_path / "handoff.json"
+    handoff_path.write_bytes(_canonical(handoff))
+    root = tmp_path / "state"
+    service = open_control_service(root, identity_executable=sys.executable)
+    service.prepare(
+        PrepareRequest(
+            run_id="worker-manual-cancel",
+            idempotency_key="worker-manual-cancel",
+            request_digest="e" * 64,
+            workflow_config_digest=handoff["workflow_config"]["sha256"],
+            input_manifest_digest=hashlib.sha256(handoff_path.read_bytes()).hexdigest(),
+            expected_executable_identity=measure_executable(sys.executable),
+        )
+    )
+    assert service.execute("worker-manual-cancel").state is RunState.QUEUED
+
+    def touch_beacon_then_stop(**kwargs):
+        Path(kwargs["cancel_beacon_file"]).touch()
+        raise StopRequestedError("workflow stopped by beacon")
+
+    state = run_control_worker(
+        state_root=root,
+        run_id="worker-manual-cancel",
+        handoff_path=handoff_path,
+        workflow_runner=touch_beacon_then_stop,
+    )
+
+    assert state is RunState.CANCELLED
+    assert service.status("worker-manual-cancel").state is RunState.CANCELLED
+
+
 def test_control_worker_rejects_tampered_handoff_digest(tmp_path: Path) -> None:
     config = tmp_path / "workflow.yaml"
     input_xyz = tmp_path / "input.xyz"
