@@ -1,0 +1,201 @@
+{
+  "method": "Frozen PR #180 ring topology rule; no xTB, no embedding or energy-based selection.",
+  "warning": "Narrower gate is post-hoc, unvalidated, and must be tested on held-out molecules.",
+  "operator_commit": "91ffc8ed",
+  "source_sha256": "0ba09f4c2172073ddd54b0aef266fb3922c2778ed0603f443076de6d602c73d8",
+  "science_head": "ba7fe58fda99dd8dcaca9d7c52d88fb6af933ecd",
+  "rows": [
+    {
+      "system": "akugod",
+      "ring": [
+        3,
+        6,
+        9,
+        12,
+        15,
+        1
+      ],
+      "elements": [
+        "C",
+        "C",
+        "C",
+        "C",
+        "C",
+        "C"
+      ],
+      "anchor": 1,
+      "anchor_is_donor": false,
+      "ring_donors": [],
+      "heavy_external_branches": 1,
+      "proposed_hypothesis_eligible": true
+    },
+    {
+      "system": "akugod",
+      "ring": [
+        20,
+        23,
+        26,
+        29,
+        32,
+        18
+      ],
+      "elements": [
+        "C",
+        "C",
+        "C",
+        "C",
+        "C",
+        "C"
+      ],
+      "anchor": 18,
+      "anchor_is_donor": false,
+      "ring_donors": [],
+      "heavy_external_branches": 1,
+      "proposed_hypothesis_eligible": true
+    },
+    {
+      "system": "akugod",
+      "ring": [
+        41,
+        44,
+        47,
+        50,
+        53,
+        39
+      ],
+      "elements": [
+        "C",
+        "C",
+        "C",
+        "C",
+        "C",
+        "C"
+      ],
+      "anchor": 39,
+      "anchor_is_donor": false,
+      "ring_donors": [],
+      "heavy_external_branches": 1,
+      "proposed_hypothesis_eligible": true
+    },
+    {
+      "system": "akugod",
+      "ring": [
+        58,
+        61,
+        64,
+        67,
+        70,
+        56
+      ],
+      "elements": [
+        "C",
+        "C",
+        "C",
+        "C",
+        "C",
+        "C"
+      ],
+      "anchor": 56,
+      "anchor_is_donor": false,
+      "ring_donors": [],
+      "heavy_external_branches": 1,
+      "proposed_hypothesis_eligible": true
+    },
+    {
+      "system": "egozuv",
+      "ring": [
+        72,
+        4,
+        81,
+        78,
+        75
+      ],
+      "elements": [
+        "C",
+        "O",
+        "C",
+        "C",
+        "C"
+      ],
+      "anchor": 4,
+      "anchor_is_donor": true,
+      "ring_donors": [
+        4
+      ],
+      "heavy_external_branches": 1,
+      "proposed_hypothesis_eligible": false
+    },
+    {
+      "system": "egozuv",
+      "ring": [
+        84,
+        5,
+        93,
+        90,
+        87
+      ],
+      "elements": [
+        "C",
+        "O",
+        "C",
+        "C",
+        "C"
+      ],
+      "anchor": 5,
+      "anchor_is_donor": true,
+      "ring_donors": [
+        5
+      ],
+      "heavy_external_branches": 1,
+      "proposed_hypothesis_eligible": false
+    },
+    {
+      "system": "al6_ts1",
+      "ring": [
+        80,
+        81,
+        82,
+        84,
+        77,
+        78
+      ],
+      "elements": [
+        "O",
+        "C",
+        "C",
+        "O",
+        "C",
+        "C"
+      ],
+      "anchor": 78,
+      "anchor_is_donor": false,
+      "ring_donors": [],
+      "heavy_external_branches": 3,
+      "proposed_hypothesis_eligible": false
+    },
+    {
+      "system": "zr7",
+      "ring": [
+        90,
+        92,
+        93,
+        94,
+        96,
+        89
+      ],
+      "elements": [
+        "C",
+        "O",
+        "C",
+        "C",
+        "O",
+        "C"
+      ],
+      "anchor": 94,
+      "anchor_is_donor": false,
+      "ring_donors": [],
+      "heavy_external_branches": 4,
+      "proposed_hypothesis_eligible": false
+    }
+  ]
+}
