@@ -53,6 +53,7 @@ _HARTREE_TO_KCAL = 627.5094740631
 _SHAPE_FIT_MARGIN = 0.2  # Å: declared-shape RMSD excess over the best shape that warns
 _KEEP_WIDENED_SCOPE = "all_classes_input_unclassified"  # search.arrangement_scope value
 _INPUT_ARRANGEMENT = "a0"  # arrangement id of the input donor arrangement
+_HIGH_CN_THRESHOLD = 7  # coordination numbers from here on have ill-defined arrangement labels
 
 
 class _ImportError(DomainError):
@@ -112,6 +113,31 @@ def _keep_scope_diagnostic(stats: Any, step_id: str, work_item: WorkItem) -> Dia
                 "targets_searched": targets,
             }
         ),
+    )
+
+
+def _high_cn_arrangement_diagnostic(
+    cn: int | None, arrangement: Any, step_id: str, work_item: WorkItem
+) -> Diagnostic | None:
+    """Warn when a high-CN search runs with ``arrangement: search``.
+
+    The schema fills the default before this layer, so an explicit ``search`` cannot be told
+    apart from the default; the message says how to silence it either way.
+    """
+    if cn is None or arrangement != "search" or cn < _HIGH_CN_THRESHOLD:
+        return None
+    return Diagnostic(
+        "confgen_high_cn_arrangement_default",
+        f"coordination number {cn} >= {_HIGH_CN_THRESHOLD}: donor-arrangement labels are "
+        "ill-defined, but search.arrangement is 'search' (the default); set "
+        "search.arrangement: keep to search only the input arrangement, or ignore this "
+        "warning if searching other arrangements is intended",
+        DiagnosticSeverity.WARNING,
+        step_id,
+        work_item.id,
+        work_item.logical_key,
+        None,
+        FrozenDict({"coordination_number": cn, "arrangement": "search"}),
     )
 
 
@@ -358,6 +384,12 @@ def _run(
         raise DomainError(f"confgen v4 search rejected: {exc}") from exc
     coord_section = science.coordination_section
     coord, shape = science.spec, science.shape
+    high_cn_diag = _high_cn_arrangement_diagnostic(
+        coord.coordination_number if coord is not None else None,
+        (section or {}).get("arrangement", "search"),
+        context.step_id,
+        work_item,
+    )
     if coord_section is not None and (coord is None or shape is None):
         raise DomainError("confgen search coordination did not resolve to one shape")
     base, natoms = int(native.get("index_base", 1)), len(driving.atoms)
@@ -704,6 +736,8 @@ def _run(
         keep_diag = _keep_scope_diagnostic(search_stats, context.step_id, work_item)
         if keep_diag is not None:
             diagnostics.append(keep_diag)
+        if high_cn_diag is not None:
+            diagnostics.append(high_cn_diag)
         arrangement_diag = _arrangement_changed_diagnostic(
             search_stats, payload.get("structures"), context.step_id, work_item
         )
@@ -770,7 +804,7 @@ def _run(
             "truncated": "the search was truncated before it found a passing structure",
         }.get(outcome_class, "none passed all audit checks")
         keep_diag = _keep_scope_diagnostic(search_stats, context.step_id, work_item)
-        extra_diagnostics = (keep_diag,) if keep_diag is not None else ()
+        extra_diagnostics = tuple(d for d in (keep_diag, high_cn_diag) if d is not None)
         return _failed(
             f"confgen search ran {generated} relaxations; none passed all audit checks; {outcome_message} "
             f"(failed checks: {', '.join(f'{k}={v}' for k, v in counts.items()) or 'none'})",

@@ -29,11 +29,14 @@ confflow v4 run --workflow <文件> --run-root <目录> [--inputs NAME=FILE ...]
 ### validate — 校验工作流字节
 
 ```bash
-confflow v4 validate --json (--workflow <文件> | --stdin)
+confflow v4 validate [--json] (--workflow <文件> | --stdin)
 ```
 
-输出 `confflow.configuration-validation.v1` 报告：`ok`、`diagnostics`（`code`/`reason`/`field_path`/`step_id`）、
-`definition_digest`、`step_ids`。
+`--json` 为可选项。带 `--json` 时输出 `confflow.configuration-validation.v1` 报告：`ok`、`diagnostics`（`code`/`reason`/`field_path`/`step_id`）、
+`definition_digest`、`step_ids`，格式与之前相同。
+
+不带 `--json` 时输出人类可读的文本：通过则在标准输出打印 `OK: workflow is valid`（若有警告，每条一行 `Warning: <code>: <message>`）；
+未通过则每个错误一行 `Error: <code>: <message>` 输出到标准错误。退出码与 `--json` 相同：通过返回 0，未通过返回非 0。
 
 ### contract / boundary — 发布契约与边界协议
 

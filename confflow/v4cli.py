@@ -60,7 +60,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--stdin", action="store_true", required=True, help="Read JSON bytes from stdin"
     )
     validate = subparsers.add_parser("validate", help="Validate V4 workflow bytes")
-    validate.add_argument("--json", action="store_true", required=True)
+    validate.add_argument(
+        "--json", action="store_true", help="Print the machine JSON report instead of text"
+    )
     source = validate.add_mutually_exclusive_group(required=True)
     source.add_argument("--workflow", help="Workflow document file")
     source.add_argument("--stdin", action="store_true", help="Read workflow bytes from stdin")
@@ -164,9 +166,18 @@ def _validate(args: argparse.Namespace) -> int:
 
     data = _read_workflow_bytes(args)
     report = validate_workflow_bytes(data)
-    payload = report.to_dict()
-    sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True))
-    sys.stdout.write("\n")
+    if args.json:
+        payload = report.to_dict()
+        sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True))
+        sys.stdout.write("\n")
+    elif report.ok:
+        print("OK: workflow is valid")
+        for item in report.diagnostics:
+            if item["severity"] == "warning":
+                print(f"Warning: {item['code']}: {item['message']}")
+    else:
+        for item in report.errors():
+            print(f"Error: {item['code']}: {item['message']}", file=sys.stderr)
     return 0 if report.ok else 1
 
 
