@@ -58,6 +58,12 @@ def _int(value: Any, name: str, minimum: int | None = None) -> int:
     return value
 
 
+def _finite_float(value: Any, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not np.isfinite(value):
+        raise _JobError(f"job field {name!r} must be a finite number, got {value!r}")
+    return float(value)
+
+
 def _text(value: Any, name: str) -> str:
     if not isinstance(value, str) or not value:
         raise _JobError(f"job field {name!r} must be a non-empty string")
@@ -180,6 +186,18 @@ def _load_job(path: str) -> dict[str, Any]:
         raise _JobError(
             "settings.ez_policy supports 'preserve' only; E/Z enumeration is not implemented"
         )
+    force_raw = section.get("restraint_force_constant")
+    force = (
+        1.0 if force_raw is None else _finite_float(force_raw, "settings.restraint_force_constant")
+    )
+    if force <= 0.0:
+        raise _JobError(f"job field 'settings.restraint_force_constant' must be > 0, got {force!r}")
+    stretch_raw = section.get("max_donor_stretch")
+    stretch = (
+        None if stretch_raw is None else _finite_float(stretch_raw, "settings.max_donor_stretch")
+    )
+    if stretch is not None and stretch <= 1.0:
+        raise _JobError(f"job field 'settings.max_donor_stretch' must be > 1, got {stretch!r}")
     settings = ExploreSettings(
         budget=max(cap, budget),
         adaptive=adaptive,
@@ -202,8 +220,10 @@ def _load_job(path: str) -> dict[str, Any]:
         ez_policy=ez_policy,
         bond_scale=float(scale),
         time_limit_seconds=None if time_limit is None else float(time_limit),
+        max_donor_stretch=stretch,
     )
     job = dict(raw)
+    job["restraint_force_constant"] = force
     job["reference"] = ref
     job["graph"] = graph
     job["graph_doc"] = raw["graph"]
@@ -225,7 +245,18 @@ def _comment(r: search.SearchRecord, low: float) -> str:
     if r.actual_target is not None:
         text = f"{text} actual={r.actual_target}"
     arrangement = getattr(r, "arrangement", None)
-    return text if arrangement is None else f"{text} arrangement={arrangement}"
+    if arrangement is not None:
+        text = f"{text} arrangement={arrangement}"
+    distances = getattr(r, "reaction_distances", ())
+    if distances:
+        text = f"{text} rxn=" + ",".join(f"{d:.3f}" for d in distances)
+    stretch = getattr(r, "donor_stretch", None)
+    if stretch is not None:
+        text = f"{text} donor_stretch={stretch:.3f}"
+    flips = getattr(r, "state_flips", None)
+    if flips is not None:
+        text = f"{text} flips=" + (",".join(str(int(k)) for k in flips) if flips else "-")
+    return text
 
 
 def _write_json(path: Path, document: dict[str, Any]) -> None:
@@ -310,7 +341,15 @@ def _run(job_path: str) -> int:
     _write_input_baseline(baseline_path, job, version)
     settings: ExploreSettings = job["settings"]
     calc = XtbCalculator(
-        exe, work, els, job["charge"], job["uhf"], job["max_cycles"], job["cores"], version
+        exe,
+        work,
+        els,
+        job["charge"],
+        job["uhf"],
+        job["max_cycles"],
+        job["cores"],
+        version,
+        restraint_force_constant=job["restraint_force_constant"],
     )
     _ACTIVE[:] = [calc]
     if _STOP.is_set():

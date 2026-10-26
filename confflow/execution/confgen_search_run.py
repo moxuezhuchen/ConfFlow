@@ -54,6 +54,7 @@ _SHAPE_FIT_MARGIN = 0.2  # Å: declared-shape RMSD excess over the best shape th
 _KEEP_WIDENED_SCOPE = "all_classes_input_unclassified"  # search.arrangement_scope value
 _INPUT_ARRANGEMENT = "a0"  # arrangement id of the input donor arrangement
 _HIGH_CN_THRESHOLD = 7  # coordination numbers from here on have ill-defined arrangement labels
+_DONOR_STRETCH_WARN = 1.25  # max metal-donor distance / input distance before a donor is flagged
 
 
 class _ImportError(DomainError):
@@ -242,6 +243,83 @@ def _state_change_diagnostic(
         None,
         FrozenDict(
             {"aligned": changes.get("aligned"), "units": tuple(FrozenDict(u) for u in units)}
+        ),
+    )
+
+
+def _finite_number(value: Any) -> float | None:
+    """Return *value* as a float when it is a finite real number (bools excluded)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
+
+
+def _donor_stretch_diagnostic(
+    rows: Any, step_id: str, work_item: WorkItem, base: int
+) -> Diagnostic | None:
+    """Warn when a published structure has a donor moved far away from the metal."""
+    stretched: list[tuple[float, Any]] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, Mapping):
+            continue
+        ratio = _finite_number(row.get("donor_stretch"))
+        if ratio is not None and ratio > _DONOR_STRETCH_WARN:
+            stretched.append((ratio, row.get("donor_stretch_atom")))
+    if not stretched:
+        return None
+    worst, worst_atom = max(stretched, key=lambda item: item[0])
+    atom = None
+    if isinstance(worst_atom, int) and not isinstance(worst_atom, bool):
+        atom = worst_atom + base
+    atom_text = f"donor atom {atom}" if atom is not None else "donor atom unknown"
+    return Diagnostic(
+        "confgen_donor_stretched",
+        f"{len(stretched)} published structure(s) with a donor stretched beyond "
+        f"{_DONOR_STRETCH_WARN:.2f}x the input metal-donor distance (worst {worst:.2f}x, "
+        f"{atom_text}): a donor moved away from the metal; check these structures (members "
+        "carry search_donor_stretch); set search.max_donor_stretch to reject them",
+        DiagnosticSeverity.WARNING,
+        step_id,
+        work_item.id,
+        work_item.logical_key,
+        None,
+        FrozenDict(
+            {
+                "count": len(stretched),
+                "worst": worst,
+                "atom": atom,
+                "threshold": _DONOR_STRETCH_WARN,
+            }
+        ),
+    )
+
+
+def _input_gap_diagnostic(
+    input_baseline: Any, step_id: str, work_item: WorkItem
+) -> Diagnostic | None:
+    """Report how far the input structure lies above (or below) the lowest published structure."""
+    if not isinstance(input_baseline, Mapping):
+        return None
+    delta = _finite_number(input_baseline.get("lowest_final_delta_kcal"))
+    if delta is None:
+        return None
+    gap = -delta  # delta = lowest published energy minus input energy
+    relation = "above" if gap >= 0 else "below"
+    disposition = input_baseline.get("disposition")
+    return Diagnostic(
+        "confgen_input_gap",
+        f"the input structure is {abs(gap):.2f} kcal/mol {relation} the lowest published "
+        f"structure (input disposition: {disposition})",
+        DiagnosticSeverity.INFO,
+        step_id,
+        work_item.id,
+        work_item.logical_key,
+        None,
+        FrozenDict(
+            {
+                "gap_kcal": gap,
+                "disposition": disposition if isinstance(disposition, str) else None,
+            }
         ),
     )
 
@@ -661,6 +739,9 @@ def _run(
                             "search_arrangement": rec.get("arrangement"),
                             "search_start": rec.get("start"),
                             "search_actual_target": rec.get("actual_target"),
+                            "search_reaction_distances": rec.get("reaction_distances") or [],
+                            "search_donor_stretch": rec.get("donor_stretch"),
+                            "search_state_flips": rec.get("state_flips"),
                             "search_release": release,
                         }
                     ),
@@ -746,6 +827,12 @@ def _run(
         state_diag = _state_change_diagnostic(search_stats, context.step_id, work_item, base)
         if state_diag is not None:
             diagnostics.append(state_diag)
+        donor_diag = _donor_stretch_diagnostic(ordered, context.step_id, work_item, base)
+        if donor_diag is not None:
+            diagnostics.append(donor_diag)
+        gap_diag = _input_gap_diagnostic(payload.get("input_baseline"), context.step_id, work_item)
+        if gap_diag is not None:
+            diagnostics.append(gap_diag)
         structures = StructureSet(tuple(members))
         return _result(WorkItemStatus.COMPLETED, structures, tuple(diagnostics), artifacts)
 

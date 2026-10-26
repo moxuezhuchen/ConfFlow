@@ -137,6 +137,8 @@ ConfFlow 不给出 DFT 能量。
 | `bond_scale` | `1.25` | 审计阶段重新感知键时的尺度（与 `tolerances.bond_scale` 独立） |
 | `fragment_charges` | `[]` | DG 片段电荷覆盖：`{atom, charge}`，`atom` 使用本步骤的 `index_base` |
 | `fixed_states` | `[]` | 需保持侧别的二面角，每项为 4 个不同原子（有顺序，使用本步骤的 `index_base`），判定规则见第 5 节 |
+| `restraint_force_constant` | 不设（= `1.0`） | xTB `$constrain` 的力常数（Eh/bohr²）。xTB 只有弹簧式距离约束，没有严格约束，最终距离会偏离目标零点零几 Å；调高可减小偏离。一个约束块只有一个力常数，搜索阶段同时作用于金属–给体距离，收尾（release）阶段只剩反应对，此时只作用于反应对。实测见下文 |
+| `max_donor_stretch` | 不设 | 不设时只报告：每个发布结构记录最大的金属–给体距离与输入距离之比（`donor_stretch`），超过 1.25 时给出 WARNING `confgen_donor_stretched`。设为数值（须 >1）时，任何阶段（含收尾）比值超过它的结构被拒，失败原因计为 `donor_stretch` |
 
 `starts` 为 `null`（或缺省）时按上表规则在搜索内解析。不设 `budget` 时预算自适应：低能区很快饱和的体系停得早（axurer 约 2100 次），
 低能构象多的体系继续（cnetpa 约 4000 次；奥司他韦、四条正丁基链到 8000 上限），耗时可达固定 1500 次的 3 倍以上，覆盖显著提高
@@ -144,6 +146,11 @@ ConfFlow 不给出 DFT 能量。
 8000 的上限对柔性分子也够用：2026-10 在 GEOM 的 7 个柔性分子（14–19 个可转动键）上把单次搜索拉长到 15000–20000 次，最低构象都在 8000 次以内已找到，1 kcal/mol 内的构象只多出 0–7 %（r16_02 例外），耗时约翻倍；同样的成本改用两个种子各跑 8000 次再合并，1 kcal/mol 内的构象更多（r16_02：两种子合并 43 个，单种子 20000 次 35 个；r14_08：9 个对 7 个，能量相差 <0.01 kcal/mol 视为同一构象）。需要更全的低能构象时，用不同 `seed` 分别运行再合并结果，不要只加大 `budget`。
 2026-10 原型验证（TMCONF 配合物、奥司他韦、TS1）的摘要与指标见
 [`docs/plans/confgen-explore-engine.md`](plans/confgen-explore-engine.md)。
+
+`restraint_force_constant` 实测（2026-10-26，TS1 金标准 7 个结构，只约束反应对 O74–C79、目标 1.6955 Å，模拟收尾阶段，
+本地 xTB dynacc 构建）：力常数 1 / 2 / 5 时最终距离的最大偏离为 0.0135 / 0.0067 / 0.0027 Å（平均 0.0090 / 0.0045 / 0.0018 Å），
+偏离与力常数大致成反比；优化步数（平均 176 / 181 / 184）与耗时基本不变；能量与力常数 1 时相差 +0.03～+0.33 kcal/mol。
+需要跨运行比较能量时，建议所有运行用同一个力常数（例如 5）；不同力常数的运行之间能量不宜直接比较。默认仍为 1.0。
 
 过渡态只需声明反应对，不必列出全部共价键，例如 `topology: {add_bond: [{atoms: [2, 4], kind: FORMING}]}`。
 搜索模式下未声明 `topology.bonds` 时，图的键感知使用 `tolerances.bond_scale`（默认 1.15），
@@ -217,13 +224,16 @@ worker 记录 xTB 的 `xtb version … (commit)` 行到 `summary.json`。已完�
 
 ## 6. 输出与退出语义
 
-- `structures.xyz`：发布的构象，每个唯一极小一条，能量升序，只含 `window_kcal` 内的构象；注释行格式不变，
-  为 `target=<来源> start=<n> energy_eh=<e> rel_kcal=<r>`，实际类可判定时（有金属的搜索）末尾追加
-  ` actual=<实际目标>`，无金属时不追加。
+- `structures.xyz`：发布的构象，每个唯一极小一条，能量升序，只含 `window_kcal` 内的构象；注释行
+  为 `target=<来源> start=<n> energy_eh=<e> rel_kcal=<r>`，之后按需依次追加：实际类可判定时（有金属的搜索）
+  ` actual=<实际目标>`；有排布时 ` arrangement=<aN>`；有反应对时 ` rxn=<d1>,<d2>`（Å，按反应对顺序）；
+  有金属时 ` donor_stretch=<比值>`（最大金属–给体距离/输入距离）；状态扫描运行时 ` flips=<编号>`（该结构相对输入翻转的
+  `state_changes` 单元，1 起编号，与 `summary.json` 中 `state_changes.units` 的顺序一致；无翻转为 ` flips=-`）。
 - `summary.json`：
   - `settings`：设置（含解析后的 `starts`、`arrangement`、xTB 身份）；
   - `structures`：只列发布的极小，每个唯一极小一条。`target` 为实际类 id（无金属为 `t00`，
-    无法归入任何理想多面体的为 `unclassified`），`start` 为极小 id，`passed` 为 `true`；
+    无法归入任何理想多面体的为 `unclassified`），`start` 为极小 id，`passed` 为 `true`；另有
+    `reaction_distances`、`donor_stretch`、`donor_stretch_atom`（0 基）与 `state_flips`，含义同注释行；
   - `totals`：`generated` 为全部优化次数（含收尾），`relaxed` 为收敛数，`passed` 为发布数；
   - `search`：`relaxations`（搜索阶段的优化次数）、`stop`（搜索结束原因：`budget` 用完预算、`saturated`
     自适应判定低能区不再增长、`no_moves` 没有可用的父构象或移动、`no_minima` 没有任何构象被接受、`time_limit` 到达运行时限）、
@@ -247,6 +257,10 @@ worker 记录 xTB 的 `xtb version … (commit)` 行到 `summary.json`。已完�
 - 找发布的结构：`run_result.json` 的 `artifacts[]` 中，`locator` 以 `search_run/structures.xyz` 结尾的条目（`role` 为 `search_structures`）
   即 `structures.xyz`；同目录的 `summary.json` 的 `role` 为 `search_summary`。每帧注释行含 `energy_eh=` 与 `rel_kcal=`，
   有排布时末尾另有 ` arrangement=<aN>`。`summary.json` 的 `search` 下有 `input_seed`（输入种子状态）与 `state_changes`（提示层扫描结果）。
+- 新增诊断：`confgen_donor_stretched`（WARNING，见 `max_donor_stretch`）；`confgen_input_gap`（INFO，输入结构比最低发布结构
+  高多少 kcal/mol，取自 `input_baseline.lowest_final_delta_kcal`，与最终结构同一约束状态）；`confgen_high_cn_arrangement_default`
+  （WARNING，CN≥7 且 `arrangement` 为 `search`）。`confflow v4 run` 不带 `--json` 时逐步打印全部诊断
+  （`  <step>: <severity> <code>: <message>`）。
 - 成员的 `role` 为 `conformer`，`ordinal` 为能量名次（0-based），id 按 `conformer_output_id`；
   metadata 含 `seed`、`starts`、`energy_eh`、`rel_kcal`、`search_target`、`search_start`、
   `search_actual_target`、`search_release`。`search_target` 是发布的类目标，`search_start` 是极小 id，
