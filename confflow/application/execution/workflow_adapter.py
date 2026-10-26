@@ -489,7 +489,18 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
                         self._spec.cancel_beacon_file
                         and Path(self._spec.cancel_beacon_file).exists()
                     ):
-                        ExecutionLifecycle(service, request.run_id, request.token).cancelled()
+                        # A beacon stop without a service cancel intent (a
+                        # manual CANCEL file): commit it exactly as a
+                        # runner-reported cancellation is committed.
+                        _commit_v4_terminal(
+                            lifecycle=ExecutionLifecycle(service, request.run_id, request.token),
+                            service=service,
+                            run_id=request.run_id,
+                            token=request.token,
+                            v4_status="cancelled",
+                            artifacts=(),
+                            work_dir=self._spec.work_dir,
+                        )
                 except ExecutionServiceError as error:
                     # A confirmed service cancellation may have already won the
                     # race and moved the aggregate to terminal state.

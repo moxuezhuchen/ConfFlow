@@ -178,7 +178,7 @@
      "scripts/generate_dependency_locks.py (178)",
      "release/ (14 lock/checksum files)",
      ".github/workflows/release.yml (498; imports validate_dependency_inputs at :160)",
-     ".github/workflows/ci.yml:86,109 + coverage_push.yml:30 (--ignore=tests/test_install_release_wheel.py)"
+     ".github/workflows/ci.yml:86,109 (coverage_push.yml, which had a stale --ignore for this test, was removed as a duplicate of the ci.yml coverage job)"
     ],
     "hits_total": "Zero callers in confflow; in tools only refactor-acc weights + reachability entries; in scripts only the installer itself",
     "note": "R1.0 names 2 paths; R1.3 extends to locks/release.yml/CI ignores/tool entries, all covered here. Retained: install_provenance.py, __build__.py, setup.py commit stamping."

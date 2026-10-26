@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .exceptions import ValidationError
+
 __all__ = [
     "PROG_NAME_MAP",
     "ITASK_NAME_MAP",
@@ -67,6 +69,10 @@ def parse_iprog(config_or_value: Any, default: int = 2) -> int:
     else:
         iprog_val = config_or_value
 
+    # bool is an int subclass; True/False are not program ids
+    if isinstance(iprog_val, bool):
+        raise ValidationError("iprog", "expected a program name or id, not a boolean", iprog_val)
+
     # If it's a string, map to integer
     if isinstance(iprog_val, str):
         return PROG_NAME_MAP.get(iprog_val.lower(), default)
@@ -105,6 +111,10 @@ def parse_itask(config_or_value: Any, default: int = 3) -> int:
         val = config_or_value.get("itask", default)
     else:
         val = config_or_value
+
+    # bool is an int subclass; True/False are not task ids
+    if isinstance(val, bool):
+        raise ValidationError("itask", "expected a task name or id, not a boolean", val)
 
     # If it's an integer, return directly
     if isinstance(val, int):
@@ -146,10 +156,16 @@ def parse_memory(mem_str: Any, unit: str = "MB") -> int:
 
     # Extract numeric value and unit
     if "GB" in mem_str:
-        value = float(mem_str.replace("GB", ""))
+        try:
+            value = float(mem_str.replace("GB", ""))
+        except ValueError as exc:
+            raise ValidationError("memory", f"invalid memory size {mem_str!r}", mem_str) from exc
         value_mb = int(value * 1024)  # Binary: 1 GB = 1024 MB
     elif "MB" in mem_str:
-        value_mb = int(float(mem_str.replace("MB", "")))
+        try:
+            value_mb = int(float(mem_str.replace("MB", "")))
+        except ValueError as exc:
+            raise ValidationError("memory", f"invalid memory size {mem_str!r}", mem_str) from exc
     else:
         # Assume MB when no unit is given
         try:
