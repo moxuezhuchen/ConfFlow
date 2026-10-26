@@ -983,7 +983,10 @@ def test_concurrent_execute_spawns_one_worker_and_one_event_stream(tmp_path: Pat
     with ThreadPoolExecutor(max_workers=8) as pool:
         futures = [pool.submit(service.execute, run_id) for _ in range(8)]
         [future.result(timeout=15) for future in futures]
-    assert len(spy.launch_calls) == 8
+    # Callers that arrive after the worker finished see a terminal run and launch nothing, so
+    # 1..8 calls reach the executor; all carry the one launch token and one worker runs.
+    assert 1 <= len(spy.launch_calls) <= 8
+    assert len({call.token for call in spy.launch_calls}) == 1
     assert executor.worker_count == 1
     terminal = _wait_terminal(service, run_id)
     assert terminal.state is RunState.COMPLETED
