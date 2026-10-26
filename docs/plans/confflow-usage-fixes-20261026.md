@@ -84,3 +84,25 @@
 | H4 | B5、B6 文档 | `docs/CONFGEN_CAPABILITIES.md`，`docs/USAGE.md` | 内容准确（我核对） |
 
 之后我统一验收：black、changed-coverage、loc_budget、相关测试分片。
+
+## 8. PR2 设计与分工（2026-10-26）
+
+读代码后的调整：
+- `confflow v4 run` 不带 `--json` 时只打印 `run X: completed`，所有 WARNING（含已有的 state_changes、arrangement 警告）都看不到。B3 改为：文本模式下逐步打印每一步的 warning/info 诊断；另加 `confgen_input_gap` 提示（输入比最低发布结构高多少，取 `input_baseline.lowest_final_delta_kcal`，与最终结构同口径）。
+- xtb `$constrain` 一个块只有一个力常数，搜索阶段块里还有金属–配体距离。选项名改为 `search.restraint_force_constant`（release 阶段只剩反应对，此时只作用于反应对）。
+- 新选项 `restraint_force_constant`、`max_donor_stretch` 在 schema 中默认 `None`（运行时解析为 1.0 / 不拒绝），不改变已有工作流的 wire 摘要。
+
+接口（各任务按此对接）：
+- `search.SearchRecord` 新字段（均有默认值）：`reaction_distances: tuple[float, ...] = ()`（Å，按 `graph.reaction_pairs` 顺序）、`donor_stretch: float | None`（最大 M–D/输入 M–D）、`donor_stretch_atom: int | None`（0 基）、`state_flips: tuple[int, ...] | None`（该结构相对输入翻转的 state_changes 单元编号，1 基；`None` = 未扫描）。`to_dict` 同名输出。
+- `explore.SearchSettings.max_donor_stretch: float | None = None`；超限拒绝的检查名 `donor_stretch`。
+- `XtbCalculator(..., restraint_force_constant: float = 1.0)`。
+- structures.xyz 注释追加：` rxn=1.905,2.310`、` donor_stretch=1.083`、` flips=1,3`（无翻转为 `flips=-`）。
+
+| 任务 | 内容 | 负责文件 |
+|---|---|---|
+| K1（我） | 每个发布结构计算反应对距离、donor_stretch、state_flips；`max_donor_stretch` 拒绝 | `science/confgen/explore.py`、`search.py`、`state_scan.py`，新测试 `tests/v4/test_confgen_record_labels.py` |
+| K2 | schema 两个新字段；worker 解析并传递；xtb 力常数；注释行 | `workflow/v4/confgen_schema.py`、`execution/confgen_search_worker.py`、`execution/confgen_xtb.py`，新测试 `tests/v4/test_confgen_restraint_options.py` |
+| K3 | `confgen_donor_stretched` WARNING（>1.25×）、`confgen_input_gap` INFO、成员元数据；`v4 run` 文本模式打印诊断 | `execution/confgen_search_run.py`、`v4cli.py`，新测试 `tests/v4/test_confgen_usage_diagnostics.py`、`tests/test_v4cli_run_text.py` |
+| K4（我，最后） | 文档 | `docs/CONFGEN_CAPABILITIES.md`、`docs/USAGE.md` |
+
+力常数实测（B1，2026-10-26，本地，21 次 xTB 优化约 4 分钟）：TS1 金标准 7 个结构只约束 O74–C79，力常数 1/2/5 时最大距离偏离 0.0135/0.0067/0.0027 Å，步数与耗时基本不变，能量相差 ≤0.33 kcal/mol。默认保持 1.0，文档建议跨运行比较时统一用 5。脚本与原始输出在会话 scratchpad `fc/`（临时）。

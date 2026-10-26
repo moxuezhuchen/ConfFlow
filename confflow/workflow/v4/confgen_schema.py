@@ -166,6 +166,10 @@ class ConfgenSearchModel(ConfgenSpecModel):
     ``fragment_charges`` and ``freeze_core`` atoms use the model's ``index_base``.
     ``fixed_states`` lists torsions (four distinct atoms each) whose state is kept; the search
     still explores the other states of undeclared torsions.
+    ``restraint_force_constant`` is the xTB ``$constrain`` force constant (Eh/bohr^2) for every
+    distance restraint; unset means 1.0.  During release only reaction pairs are restrained, so it
+    then acts on those alone.  ``max_donor_stretch`` rejects a structure when a metal–donor
+    distance exceeds this multiple of its input distance; unset only reports the stretch.
     """
 
     budget: StrictInt | None = Field(default=None, ge=1)
@@ -181,6 +185,8 @@ class ConfgenSearchModel(ConfgenSpecModel):
     freeze_core: list[Index] = Field(default_factory=list)
     fixed_states: list[list[Index]] = Field(default_factory=list)
     ez_policy: Literal["preserve"] = "preserve"
+    restraint_force_constant: StrictFloat | None = Field(default=None, gt=0)
+    max_donor_stretch: StrictFloat | None = Field(default=None, gt=1)
 
     @model_validator(mode="after")
     def check_freeze_core(self) -> ConfgenSearchModel:

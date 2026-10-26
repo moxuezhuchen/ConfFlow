@@ -138,6 +138,9 @@ class ExploreSettings:
     round_batches: int = 4
     freeze_core: tuple[int, ...] = ()
     ez_policy: Literal["preserve"] = "preserve"
+    #: reject a structure whose metal-donor distance exceeds this multiple of the input's
+    #: (``None``: only report the largest ratio per published structure)
+    max_donor_stretch: float | None = None
     #: declared 4-atom dihedrals (0-based, in order) whose reference side every structure keeps
     fixed_states: tuple[tuple[int, int, int, int], ...] = ()
 
@@ -418,6 +421,8 @@ class _Explorer:
             search_restraints=self.restraints,
             final_restraints=(self.free_restraints if st.release else self.restraints),
         )
+        #: final-pool minimum id -> 1-based state_changes units it flips (set by the scan)
+        self.flips: dict[int, tuple[int, ...]] | None = None
         self.input_seed: dict[str, Any] = {
             "status": "pending",
             "raw_failed_checks": [],
@@ -675,6 +680,32 @@ class _Explorer:
                          "minima": int(count.get(gid, 0)), "published": int(shown.get(gid, 0))})  # fmt: skip
         return rows
 
+    def _donor_stretch(self, xyz: np.ndarray) -> tuple[float, int | None]:
+        """Return the largest metal-donor distance over its input distance, and that donor."""
+        if self.metal is None or not self.donors:
+            return 0.0, None
+        m = self.metal
+        ratios = [
+            float(np.linalg.norm(xyz[d] - xyz[m]) / np.linalg.norm(self.ref[d] - self.ref[m]))
+            for d in self.donors
+        ]
+        k = int(np.argmax(ratios))
+        return ratios[k], int(self.donors[k])
+
+    def _labels(self, m: Minimum) -> dict[str, Any]:
+        """Per-structure report fields: reaction distances, donor stretch, state flips."""
+        stretch, atom = self._donor_stretch(m.coords)
+        flips = None if self.flips is None else self.flips.get(m.id, ())
+        return {
+            "reaction_distances": tuple(
+                float(np.linalg.norm(m.coords[a] - m.coords[b]))
+                for a, b in self.graph.reaction_pairs
+            ),
+            "donor_stretch": None if atom is None else round(stretch, 4),
+            "donor_stretch_atom": atom,
+            "state_flips": flips,
+        }
+
     def _restraints(self) -> tuple[DistanceRestraint, ...]:
         """Return the reference restraints averaged over graph-equivalent atom pairs."""
         raw = search.distance_restraints(self.graph, self.spec, self.ref)
@@ -859,6 +890,9 @@ class _Explorer:
                 }
             )
         bad = [c for c in rec.failed_checks if c != "metal_donor_distance"]
+        limit = self.st.max_donor_stretch
+        if limit is not None and self.donors and self._donor_stretch(xyz)[0] > limit:
+            bad.append("donor_stretch")
         if not free:
             for r in self.restraints:
                 if abs(float(np.linalg.norm(xyz[r.i] - xyz[r.j])) - r.target) > _RESTRAINT_TOL:
@@ -1637,7 +1671,7 @@ class _Explorer:
         """Scan every minimum of the final pool for reminder states; never fails the run."""
         try:
             rows = final.ordered()
-            return state_scan.scan_states(
+            scan = state_scan.scan_states(
                 self.id,
                 self.ref,
                 [m.coords for m in rows],
@@ -1646,6 +1680,12 @@ class _Explorer:
             )
         except Exception as exc:  # reporting only: a scan fault must not fail the search
             return {"error": str(exc)[:200], "units": []}
+        flips: dict[int, list[int]] = {}
+        for number, unit in enumerate(scan["units"], 1):
+            for index in unit.pop("members", ()):
+                flips.setdefault(rows[index].id, []).append(number)
+        self.flips = {key: tuple(units) for key, units in flips.items()}
+        return scan
 
     def _scope(self) -> tuple[str | None, str | None]:
         """Return (template, arrangement scope) as reported in the stats."""
@@ -1820,6 +1860,7 @@ class _Explorer:
                 m.coords,
                 m.label,
                 arrangement=self._arrangement(final, m),
+                **self._labels(m),
                 coordination_contacts=search.audit_structure(
                     m.coords,
                     self.graph,

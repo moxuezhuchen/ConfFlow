@@ -267,6 +267,8 @@ def _run(args: argparse.Namespace) -> int:
         sys.stdout.write("\n")
     else:
         print(f"run {report.run_id}: {report.status}", file=sys.stderr)
+        for line in _text_diagnostic_lines(cast(dict[str, Any], payload["manifest"])):
+            print(line, file=sys.stderr)
     return 0 if report.status == "completed" else 1
 
 
@@ -340,3 +342,18 @@ def _step_failures(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                     }
                 )
     return failures
+
+
+def _text_diagnostic_lines(manifest: dict[str, Any]) -> list[str]:
+    """One line per diagnostic of every step of a run manifest (text mode; all severities)."""
+    lines: list[str] = []
+    for step in manifest.get("steps", ()):
+        if not isinstance(step, dict):
+            continue
+        for item in step.get("diagnostics", ()):
+            if isinstance(item, dict):
+                lines.append(
+                    f"  {step.get('id')}: {item.get('severity')} {item.get('code')}: "
+                    f"{item.get('message')}"
+                )
+    return lines

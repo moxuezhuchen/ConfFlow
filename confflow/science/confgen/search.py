@@ -178,6 +178,13 @@ class SearchRecord:
     coordination_contacts: tuple[CoordinationContact, ...] = ()
     #: donor arrangement group (``a0`` = the input's); ``None`` without a metal
     arrangement: str | None = None
+    #: reaction-pair distances (Angstrom) in ``graph.reaction_pairs`` order
+    reaction_distances: tuple[float, ...] = ()
+    #: largest metal-donor distance over its input distance, and that donor (0-based)
+    donor_stretch: float | None = None
+    donor_stretch_atom: int | None = None
+    #: 1-based ``state_changes`` units this structure flips; ``None`` when not scanned
+    state_flips: tuple[int, ...] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -192,6 +199,10 @@ class SearchRecord:
             "skipped_checks": [str(n) for n in self.skipped_checks],
             "actual_target": self.actual_target,
             "arrangement": self.arrangement,
+            "reaction_distances": [float(d) for d in self.reaction_distances],
+            "donor_stretch": self.donor_stretch,
+            "donor_stretch_atom": self.donor_stretch_atom,
+            "state_flips": None if self.state_flips is None else [int(u) for u in self.state_flips],
         }
 
 

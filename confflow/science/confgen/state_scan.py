@@ -177,6 +177,7 @@ def scan_states(
                 "theta0": round(float(t0[best]), 1),
                 "lowest_changed_kcal": float((energies[idx].min() - floor) * HARTREE_TO_KCAL),
                 "lowest_same_kcal": same,
+                "members": [int(i) for i in idx],
             }
         )
     return {"aligned": aligned, "scanned": count, "units": rows}

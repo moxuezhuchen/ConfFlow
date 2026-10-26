@@ -112,10 +112,10 @@ def read_first_frame(path: Path, n: int) -> np.ndarray | None:
     return xyz if xyz.shape == (n, 3) and bool(np.all(np.isfinite(xyz))) else None
 
 
-def _constrain_block(restraints: Sequence[Restraint]) -> str | None:
+def _constrain_block(restraints: Sequence[Restraint], force_constant: float = 1.0) -> str | None:
     if not restraints:
         return None
-    lines = ["$constrain", "  force constant=1.0"]
+    lines = ["$constrain", f"  force constant={force_constant!r}"]
     lines += [f"  distance: {r.i + 1}, {r.j + 1}, {r.target:.5f}" for r in restraints]
     return "\n".join(lines + ["$end"]) + "\n"
 
@@ -128,10 +128,14 @@ def _fixed_block(fixed_atoms: Sequence[FixedAtom]) -> str | None:
     return f"$fix\n  atoms: {indices}\n$end\n"
 
 
-def _input_blocks(restraints: Sequence[Restraint], fixed_atoms: Sequence[FixedAtom]) -> str | None:
+def _input_blocks(
+    restraints: Sequence[Restraint],
+    fixed_atoms: Sequence[FixedAtom],
+    force_constant: float = 1.0,
+) -> str | None:
     blocks = [
         block.strip()
-        for block in (_constrain_block(restraints), _fixed_block(fixed_atoms))
+        for block in (_constrain_block(restraints, force_constant), _fixed_block(fixed_atoms))
         if block is not None
     ]
     return "\n".join(blocks) + "\n" if blocks else None
@@ -155,9 +159,11 @@ class XtbCalculator:
         max_cycles: int,
         cores: int,
         version: str = "",
+        restraint_force_constant: float = 1.0,
     ) -> None:
         self._exe, self._work, self._els = exe, workdir, list(elements)
         self._charge, self._uhf, self._cycles, self._cores = charge, uhf, max_cycles, cores
+        self._force = restraint_force_constant
         self._info = CalculatorInfo(
             "xtb",
             "GFN2-xTB",
@@ -198,7 +204,7 @@ class XtbCalculator:
             return self._relax_one(
                 self._work / req.key,
                 req.coords,
-                _input_blocks(req.restraints, req.fixed_atoms),
+                _input_blocks(req.restraints, req.fixed_atoms, self._force),
                 req.fixed_atoms,
             )
 
@@ -216,7 +222,7 @@ class XtbCalculator:
             return self._relax_one(
                 self._work / req.key,
                 req.coords,
-                _input_blocks(req.restraints, req.fixed_atoms),
+                _input_blocks(req.restraints, req.fixed_atoms, self._force),
                 req.fixed_atoms,
             )
 
@@ -233,7 +239,7 @@ class XtbCalculator:
         here.mkdir(parents=True, exist_ok=True)
         write_xyz_frames(here / "in.xyz", self._els, [(request.coords, "hessian")])
         argv = [self._exe, "in.xyz", "--gfn", "2", "--hess"]
-        cinp = _input_blocks(request.restraints, request.fixed_atoms)
+        cinp = _input_blocks(request.restraints, request.fixed_atoms, self._force)
         if cinp is not None:
             (here / "c.inp").write_text(cinp, encoding="utf-8")
             argv += ["--input", "c.inp"]

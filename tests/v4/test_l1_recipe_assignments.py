@@ -206,8 +206,10 @@ def test_b1_contract_boundary_bytes_unchanged() -> None:
     # ConfGen adds formal_charge/reaction_pairs/freeze_core/ez_policy; boundary stays fixed.
     # ConfGen adds search.fixed_states (4-atom torsion states): contract digest updated, boundary fixed.
     # ConfGen search.arrangement default keep→search: contract digest updated, boundary fixed.
+    # ConfGen adds optional search.restraint_force_constant/max_donor_stretch:
+    # contract digest updated, boundary fixed.
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(env)).hexdigest() == (
-        "sha256:3f9a28150ffb79b43f72292f49e8a4b53d2a64003a76d5b48015b07407fb934d"
+        "sha256:63e1d6647e5aeb87f03c902ee8c973af3cc5b541e0c451262b4f6cb7cfe4bafd"
     )
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(bdoc)).hexdigest() == (
         "sha256:ff7491007ffd37e4e688e9dd1c73aba5301ccd699f9610d060bd2029cf370f27"
