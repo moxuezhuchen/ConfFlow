@@ -542,10 +542,11 @@ class MinimaPool:
         states = [(m.energy, m.coords, m.fingerprint) for m in self.minima]
         states += [(r[0], r[1], fp) for r, fp in zip(rows, fps)]
         energy = np.array([st[0] for st in states])
+        e_tol = idn.e_tol
         need = [
             (i, s)
             for i, (r, fp) in enumerate(zip(rows, fps))
-            for s in np.flatnonzero(np.abs(energy[: base + i] - r[0]) * HARTREE_TO_KCAL <= idn.e_tol)
+            for s in np.flatnonzero(np.abs(energy[: base + i] - r[0]) * HARTREE_TO_KCAL <= e_tol)
             if idn.close(r[0], fp, states[s][0], states[s][2])
         ]
         pairs = [(rows[i][1], states[s][1]) for i, s in need]
