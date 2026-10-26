@@ -234,8 +234,8 @@ class ExecutionRegistry:
         atomic entry as the compiler's contract: ``calculation`` resolves
         to the native work-item executor, ``confgen`` to the deterministic
         conformer-generation executor, ``structure_transform`` to the
-        pure structure-set transform executor, and ``script`` to the
-        external-script executor.  All four implement the
+        pure structure-set transform executor, ``script`` to the
+        external-script executor, and ``mlip`` to the batch MLIP executor.  All four implement the
         shared ``execute(work_item, context, *, should_cancel=None)`` seam
         (see the wave-1 integration report for the exact dispatch
         signatures owned by batch/application).
@@ -675,7 +675,7 @@ def _default_executors() -> tuple[ExecutorContract, ...]:
                     kind=PortKind.RESULT,
                     cardinality=Cardinality.MANY,
                     pairing=Pairing.SINGLE,
-                    description="N3 filter energy source: bind to the calculation step's results.",
+                    description="N3 filter energy source: bind to the calculation or mlip step's results.",
                 ),
             ),
             output_ports=(
@@ -697,6 +697,38 @@ def _default_executors() -> tuple[ExecutorContract, ...]:
             description=(
                 "Explicit structure-set transformation; never a hidden "
                 "post-processing tail of a calculation."
+            ),
+        ),
+        ExecutorContract(
+            capability=ExecutorCapability.MLIP,
+            contract_version="confflow.contract.executor.mlip.v1",
+            input_ports=(
+                _structure_port(
+                    "structure",
+                    Cardinality.ONE_OR_MORE,
+                    Pairing.SINGLE,
+                    "The whole structure set to evaluate with the MLIP.",
+                ),
+            ),
+            output_ports=(
+                _structure_port(
+                    "structures",
+                    Cardinality.MANY,
+                    Pairing.PER_STRUCTURE,
+                    "Evaluated (and, when relaxed, optimized) structure set.",
+                ),
+                _result_port("results", Cardinality.MANY, Pairing.BY_SUBJECT),
+                _artifact_port(
+                    "artifacts",
+                    Cardinality.MANY,
+                    Pairing.SINGLE,
+                    ("mlip_job", "mlip_results", "mlip_log", "mlip_structures"),
+                    "MLIP job description, per-structure results, log, and structures.",
+                ),
+            ),
+            description=(
+                "Batch machine-learning interatomic potential (UMA) single points "
+                "and constrained relaxations in one task."
             ),
         ),
         ExecutorContract(
@@ -768,6 +800,7 @@ def build_default_registry() -> ExecutionRegistry:
     from . import execution_adapters as adapter_resolvers
     from .checks_standard import CHECKS
     from .confgen_executor import ConfgenExecutor
+    from .mlip_executor import MlipExecutor
     from .profile_standard import PROFILES
     from .recovery_standard import NoneRecoveryPolicy, TsRescueScanPolicy
     from .script_executor import ScriptExecutor
@@ -780,6 +813,7 @@ def build_default_registry() -> ExecutionRegistry:
         ExecutorCapability.CONFGEN: ConfgenExecutor,
         ExecutorCapability.STRUCTURE_TRANSFORM: TransformExecutor,
         ExecutorCapability.SCRIPT: ScriptExecutor,
+        ExecutorCapability.MLIP: MlipExecutor,
     }
     for contract in _default_executors():
         registry.register_executor(contract, executor_implementations[contract.capability])

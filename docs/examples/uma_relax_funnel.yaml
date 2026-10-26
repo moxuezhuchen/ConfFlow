@@ -1,0 +1,65 @@
+# UMA single-point funnel with constrained relaxation of the best few (mlip step).
+#
+# What it does: generates conformers with ConfGen (from `inputs.structures`), runs one
+# whole-set `mlip` step that takes the UMA single-point energy of EVERY conformer,
+# relaxes only the picked ones (lowest 8 overall plus the lowest 2 in each
+# search_state_flips label), and keeps the relaxed structures within 3.0 kcal/mol of the
+# UMA minimum (`filter`, bound to the same mlip step's results).
+#
+# Prerequisites (not shipped or installed by ConfFlow):
+#   - A Python with fairchem and ASE, given as `execution.executable` below.
+#   - The UMA model file and the iso-atom reference file, given through the env vars.
+#   - Set the paths below for your machine; the values here are placeholders.
+#   - Validate first: confflow v4 validate --workflow docs/examples/uma_relax_funnel.yaml --json
+schema: confflow.workflow.v4
+
+inputs:
+  structures: {kind: structure, cardinality: many}
+
+global:
+  scientific_defaults: {charge: 0, multiplicity: 1}
+  resources: {cores_per_item: 4, memory_per_item: 8GiB}
+
+steps:
+  - id: s_gen
+    executor: confgen
+    bindings:
+      structure: {source: {run: structures}}
+    confgen:
+      schema_version: 4
+      index_base: 1
+      seed: 11
+
+  - id: s_uma
+    executor: mlip
+    bindings:
+      structure: {source: {step: s_gen, port: structures}}
+    mlip:
+      model: uma-s-1p2p1
+      task: omol
+      mode: sp_then_relax
+      index_base: 1
+      relax:
+        optimizer: precon_lbfgs
+        fmax: 0.02
+        max_steps: 600
+        # fix_distances: [[39, 95]]   # 1-based atom pairs whose distances stay exactly as input
+      pick:
+        lowest: 8
+        per_label: 2
+    resources: {cores_per_item: 12}   # workers = 12 // CONFFLOW_MLIP_THREADS (4) = 3
+    execution:
+      executable: /opt/uma/.venv-fairchem/bin/python
+      env:
+        CONFFLOW_MLIP_MODEL_PATH: /opt/uma/uma-s-1p2p1.pt
+        CONFFLOW_MLIP_REFS_PATH: /opt/uma/iso_atom_elem_refs.yaml
+        CONFFLOW_MLIP_THREADS: "4"
+
+  - id: s_window
+    executor: structure_transform
+    bindings:
+      structure: {source: {step: s_uma, port: structures}}
+      results: {source: {step: s_uma, port: results}}
+    transform:
+      kind: filter
+      native: {energy_key: electronic, energy_window_kcal: 3.0}

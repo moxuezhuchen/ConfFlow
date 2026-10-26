@@ -169,7 +169,7 @@ def _seed_free_step_science(
 ) -> dict[str, Any]:
     """Project one wire step onto its seed-free scientific identity."""
     science: dict[str, Any] = {"id": step.get("id"), "executor": step.get("executor")}
-    for block_name in ("calculation", "confgen", "transform", "analysis"):
+    for block_name in ("calculation", "confgen", "transform", "mlip", "analysis"):
         block = step.get(block_name)
         if not isinstance(block, Mapping):
             continue

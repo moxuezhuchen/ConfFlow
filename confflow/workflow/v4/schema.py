@@ -21,6 +21,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictBool,
+    StrictFloat,
     StrictInt,
     ValidationError,
     field_validator,
@@ -46,6 +47,10 @@ __all__ = [
     "ExecutionModel",
     "GlobalModel",
     "InputModel",
+    "MLIP_OPTIMIZERS",
+    "MlipModel",
+    "MlipPickModel",
+    "MlipRelaxModel",
     "RecoveryModel",
     "ResourcesModel",
     "SchedulerModel",
@@ -236,6 +241,90 @@ class TransformModel(BaseModel):
     native: dict[str, Any] = Field(default_factory=dict)
 
 
+#: MLIP optimizer vocabulary (ASE optimizers the runner supports).
+MLIP_OPTIMIZERS = ("lbfgs", "precon_lbfgs", "fire")
+
+
+class MlipRelaxModel(BaseModel):
+    """Constrained relaxation settings of an MLIP step (``relax`` / ``sp_then_relax``).
+
+    ``fix_distances`` are index pairs in the document's ``index_base``; their
+    range check against the structure atom count is applied by the executor.
+    Duplicate pairs (order-insensitive) and identical endpoints are rejected.
+    """
+
+    model_config = _STRICT
+
+    optimizer: Literal["lbfgs", "precon_lbfgs", "fire"] = "lbfgs"
+    fmax: StrictFloat = Field(default=0.02, gt=0)
+    max_steps: StrictInt = Field(default=600, ge=1)
+    fix_distances: list[tuple[StrictInt, StrictInt]] = Field(default_factory=list)
+
+    @field_validator("fix_distances")
+    @classmethod
+    def _validate_fix_distances(
+        cls, value: list[tuple[StrictInt, StrictInt]]
+    ) -> list[tuple[StrictInt, StrictInt]]:
+        seen: set[tuple[int, int]] = set()
+        for position, pair in enumerate(value):
+            first, second = int(pair[0]), int(pair[1])
+            if first < 0 or second < 0:
+                raise ValueError(f"fix_distances[{position}] indices must be >= 0")
+            if first == second:
+                raise ValueError(f"fix_distances[{position}] must name two distinct atoms")
+            canonical = (min(first, second), max(first, second))
+            if canonical in seen:
+                raise ValueError(f"fix_distances[{position}] duplicates {canonical}")
+            seen.add(canonical)
+        return value
+
+
+class MlipPickModel(BaseModel):
+    """Single-point ranking that selects which structures are relaxed."""
+
+    model_config = _STRICT
+
+    lowest: StrictInt = Field(default=0, ge=0)
+    per_label: StrictInt = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _check_selects_something(self) -> MlipPickModel:
+        if self.lowest <= 0 and self.per_label <= 0:
+            raise ValueError("pick must select at least one structure (lowest or per_label > 0)")
+        return self
+
+
+class MlipModel(BaseModel):
+    """Scientific definition of an MLIP (UMA) step: one batch task per step."""
+
+    model_config = _STRICT
+
+    model: str = Field(min_length=1)
+    task: str = "omol"
+    mode: Literal["sp", "relax", "sp_then_relax"]
+    index_base: StrictInt = 1
+    relax: MlipRelaxModel = Field(default_factory=MlipRelaxModel)
+    pick: MlipPickModel | None = None
+    reject_bond_stretch: StrictFloat | None = Field(default=None, gt=1.0)
+
+    @field_validator("index_base")
+    @classmethod
+    def _check_index_base(cls, value: int) -> int:
+        if value not in (0, 1):
+            raise ValueError("mlip index_base must be 0 or 1")
+        return value
+
+    @model_validator(mode="after")
+    def _check_mode_blocks(self) -> MlipModel:
+        if self.mode == "sp_then_relax" and self.pick is None:
+            raise ValueError("mlip mode sp_then_relax requires a pick block")
+        if self.mode != "sp_then_relax" and self.pick is not None:
+            raise ValueError("pick is only valid with mode sp_then_relax")
+        if self.mode == "sp" and self.relax != MlipRelaxModel():
+            raise ValueError("relax settings need mode relax or sp_then_relax")
+        return self
+
+
 class AnalysisModel(BaseModel):
     """Analysis step definition."""
 
@@ -299,6 +388,7 @@ class StepModel(BaseModel):
     calculation: CalculationModel | None = None
     confgen: ConfgenModelV3 | None = None
     transform: TransformModel | None = None
+    mlip: MlipModel | None = None
     analysis: AnalysisModel | None = None
     script: str | None = None
     args: list[str] = Field(default_factory=list)

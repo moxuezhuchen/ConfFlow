@@ -51,7 +51,10 @@ from ..execution.script_registry import (
 )
 from ..workflow.v4.document import SCHEMA_ID
 from ..workflow.v4.schema import (
+    MLIP_OPTIMIZERS,
     TRANSFORM_KINDS,
+    MlipModel,
+    MlipRelaxModel,
     build_workflow_json_schema,
     defaults_summary,
 )
@@ -269,6 +272,25 @@ def _script_section(registry: ExecutionRegistry) -> dict[str, Any]:
         },
         "placeholders": list(SCRIPT_PLACEHOLDERS),
         "placeholder_help": dict(SCRIPT_PLACEHOLDER_HELP),
+    }
+
+
+def _mlip_section(registry: ExecutionRegistry) -> dict[str, Any]:
+    """Describe MLIP steps statically: capability, block fields, modes, defaults."""
+    contract = registry.executor(ExecutorCapability.MLIP)
+    return {
+        "capability": contract.capability.value,
+        "contract_version": contract.contract_version,
+        "step_fields": ["mlip", "resources", "execution"],
+        "modes": ["sp", "relax", "sp_then_relax"],
+        "optimizers": list(MLIP_OPTIMIZERS),
+        "defaults": {
+            "task": MlipModel.model_fields["task"].default,
+            "index_base": MlipModel.model_fields["index_base"].default,
+            "relax": MlipRelaxModel().model_dump(mode="json"),
+        },
+        "pick_required_for": "sp_then_relax",
+        "output_channels": ["structures", "results", "artifacts"],
     }
 
 
@@ -768,6 +790,7 @@ def build_configuration_contract_v4(
         "validation_response_schema": CONFIGURATION_VALIDATION_SCHEMA,
         "transform_kinds": list(TRANSFORM_KINDS),
         "script_steps": _script_section(active),
+        "mlip_steps": _mlip_section(active),
     }
     envelope["boundary"] = boundary_section()
     envelope["contract_digest"] = canonical_sha256(
