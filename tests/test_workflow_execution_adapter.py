@@ -182,9 +182,6 @@ def test_run_workflow_service_routes_existing_states_and_terminal_errors(
         def execute(self, _run_id):
             return SimpleNamespace(state=RunState.QUEUED)
 
-        def resume(self, _run_id):
-            return SimpleNamespace(state=RunState.QUEUED)
-
         def status(self, _run_id):
             return SimpleNamespace(state=self.final)
 
@@ -203,13 +200,13 @@ def test_run_workflow_service_routes_existing_states_and_terminal_errors(
             workflow_runner=lambda **_kwargs: {"ignored": True},
         )
 
-    # The formal V4 guard precedes service state routing: even PAUSED fails
-    # closed with legacy_workflow_not_executable for a legacy document.
+    # The formal V4 guard precedes service state routing: even a CANCELLED run
+    # fails closed with legacy_workflow_not_executable for a legacy document.
     with pytest.raises(
         ConfFlowError,
         match="legacy_workflow_not_executable.*not a V4 workflow document.*migration required",
     ):
-        invoke(StubService(RunState.PAUSED), StubExecutor())
+        invoke(StubService(RunState.CANCELLED), StubExecutor())
 
 
 def test_direct_adapter_prestart_cancel_terminal_winner_is_ignored(
@@ -592,13 +589,13 @@ def test_direct_adapter_commits_lifecycle_and_manifest_artifacts(tmp_path: Path)
 
 
 def test_direct_adapter_resume_reuses_idempotency_request_and_checkpoint_boundary(tmp_path: Path):
-    # Legacy document fails closed before any pause/resume lifecycle.
+    # Legacy document fails closed before any stop/resume lifecycle.
     input_xyz, config, work = _files(tmp_path)
     calls = {"count": 0}
 
     def fake_runner(**kwargs):
         calls["count"] += 1
-        raise StopRequestedError("pause")
+        raise StopRequestedError("stop")
 
     common = dict(
         input_xyz=[str(input_xyz)],
@@ -978,3 +975,38 @@ def test_completed_attach_checks_identity_marker_and_terminal_artifacts(tmp_path
         _attach(spec, work, service_for(size + 1, good))
     with pytest.raises(ExecutionServiceError, match="missing or changed"):
         _attach(spec, work, service_for(size, "0" * 64))
+
+
+def test_direct_adapter_manual_cancel_beacon_stop_commits_cancelled(tmp_path: Path):
+    """A manually touched CANCEL file (no service cancel) must end the run CANCELLED."""
+    input_xyz, config, work = _files(tmp_path)
+    run_id = "run-adapter-manual-beacon"
+    identity = ExecutableIdentity(sha256="7" * 64)
+
+    def runner(**kwargs):
+        beacon = Path(kwargs["cancel_beacon_file"])
+        beacon.parent.mkdir(parents=True, exist_ok=True)
+        beacon.touch()
+        raise StopRequestedError("workflow stopped by beacon")
+
+    spec = WorkflowRunSpec(
+        run_id=run_id,
+        input_xyz=(str(input_xyz),),
+        config_file=str(config),
+        work_dir=str(work),
+        cancel_beacon_file=str(work / "CANCEL"),
+    )
+    executor = ServiceWorkflowExecutor(spec, runner)
+    service = ExecutionService(
+        repository=InMemoryExecutionRepository(),
+        executor=executor,
+        identity_verifier=_StaticIdentityVerifier(identity),
+    )
+    executor.bind(service)
+    service.prepare(PrepareRequest(run_id, run_id, "a" * 64, "b" * 64, "c" * 64, identity))
+
+    assert service.execute(run_id).state in {RunState.QUEUED, RunState.RUNNING}
+    with pytest.raises(StopRequestedError):
+        executor.wait(timeout=2)
+
+    assert service.status(run_id).state is RunState.CANCELLED

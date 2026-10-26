@@ -324,6 +324,74 @@ class TestQuotaRelease:
         )
         assert outcome is not None and outcome[0].exit_code == 0
 
+    @pytest.mark.parametrize("failure", ["poll", "mark_running"])
+    def test_launch_failure_stops_child_and_releases(
+        self, failure: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _active_config(monkeypatch, tmp_path, cores=2)
+        cancelled: list[str] = []
+
+        class _Broken:
+            def submit(self, request: NativeExecutionRequest) -> NativeHandle:
+                return NativeHandle(key="broken:1", pid=None)
+
+            def poll(self, handle: NativeHandle) -> NativeStatus:
+                raise RuntimeError("poll failed")
+
+            def cancel(self, handle: NativeHandle, *, grace_seconds: float = 2.0) -> None:
+                cancelled.append(handle.key)
+
+        if failure == "mark_running":
+
+            def _fail(*_args: object) -> None:
+                raise OSError("ledger lock timeout")
+
+            monkeypatch.setattr(ServerQuota, "mark_running", _fail)
+        work_dir = tmp_path / "w-broken"
+        work_dir.mkdir()
+        request = NativeExecutionRequest(
+            executable="/bin/true", argv=("/bin/true",), work_dir=str(work_dir), env=FrozenDict({})
+        )
+        resources = ResourceRequest(cores_per_item=1, memory_per_item_bytes=_GIB)
+        outcome = WorkItemExecutor()._launch_and_wait(
+            _Broken(), request, 0.01, quota=(resources, "run", "item"), should_cancel=None
+        )
+        assert outcome is None
+        assert cancelled == ["broken:1"]
+        state_file = tmp_path / "quota-state" / "server-quota.json"
+        assert json.loads(state_file.read_text(encoding="utf-8"))["leases"] == {}
+
+    def test_unconfirmed_stop_keeps_lease(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _active_config(monkeypatch, tmp_path, cores=2)
+
+        class _Unstoppable:
+            def submit(self, request: NativeExecutionRequest) -> NativeHandle:
+                return NativeHandle(key="stuck:1", pid=None)
+
+            def poll(self, handle: NativeHandle) -> NativeStatus:
+                raise RuntimeError("poll failed")
+
+            def cancel(self, handle: NativeHandle, *, grace_seconds: float = 2.0) -> None:
+                raise RuntimeError("cancel failed")
+
+        work_dir = tmp_path / "w-stuck"
+        work_dir.mkdir()
+        request = NativeExecutionRequest(
+            executable="/bin/true", argv=("/bin/true",), work_dir=str(work_dir), env=FrozenDict({})
+        )
+        resources = ResourceRequest(cores_per_item=1, memory_per_item_bytes=_GIB)
+        assert (
+            WorkItemExecutor()._launch_and_wait(
+                _Unstoppable(), request, 0.01, quota=(resources, "run", "item"), should_cancel=None
+            )
+            is None
+        )
+        # the child may still run: its lease stays until the group is reclaimed
+        state_file = tmp_path / "quota-state" / "server-quota.json"
+        assert len(json.loads(state_file.read_text(encoding="utf-8"))["leases"]) == 1
+
 
 class _StubAdapter:
 

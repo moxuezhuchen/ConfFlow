@@ -9,6 +9,8 @@ that make silent parameter changes impossible.
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from confflow.domain import FrozenDict
@@ -102,7 +104,9 @@ def test_conflicting_override_emits_conflict_warning(
 ) -> None:
     """A divergent override is never silent: it is recorded as a warning."""
     effective, diagnostics = resolve_scientific_parameters(
-        structure=structure("s1", charge=0, multiplicity=1),
+        structure=dataclasses.replace(
+            structure("s1", charge=0, multiplicity=1), source_step_id="s_up"
+        ),
         overrides=overrides,
         defaults=ScientificDefaults(),
     )
@@ -115,6 +119,9 @@ def test_conflicting_override_emits_conflict_warning(
     assert conflict[0].details["structure_id"] == "s1"
     assert conflict[0].details["structure_value"] == structure_value
     assert conflict[0].details["override_value"] == override_value
+    # left unscoped so callers attach the overriding step, not the producer
+    assert conflict[0].step_id is None
+    assert conflict[0].details["source_step_id"] == "s_up"
 
 
 @pytest.mark.parametrize(

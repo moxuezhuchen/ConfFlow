@@ -324,9 +324,10 @@ def _run(job_path: str) -> int:
         with contextlib.ExitStack() as stack:
             pmap: ParallelMap = map  # type: ignore[assignment]
             if job["cores"] > 1:
-                pool = stack.enter_context(
-                    futures.ProcessPoolExecutor(max_workers=job["cores"], mp_context=ctx)
-                )
+                pool = futures.ProcessPoolExecutor(max_workers=job["cores"], mp_context=ctx)
+                # On SIGTERM/cancel, drop queued tasks instead of draining them before exit;
+                # a normal completion still waits for every task, so its results are unchanged.
+                stack.callback(lambda: pool.shutdown(wait=True, cancel_futures=_STOP.is_set()))
 
                 # one task per worker call: the tasks are coarse (one DG start, one re-embedding,
                 # one RMSD batch) and pairing them lets one slow task hold back another

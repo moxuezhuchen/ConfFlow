@@ -619,7 +619,6 @@ def test_cancel_after_artifact_write_cleans_uncommitted_fixture_artifact(
     [
         (RunState.PREPARED, ["prepared"]),
         (RunState.RUNNING, ["prepared", "queued", "running"]),
-        (RunState.PAUSED, ["prepared", "queued", "running", "paused"]),
     ],
 )
 def test_synthetic_agent_entry_rejects_nonqueued_runs_without_side_effects(
@@ -631,14 +630,12 @@ def test_synthetic_agent_entry_rejects_nonqueued_runs_without_side_effects(
     identity = executor_identity(service)
     run_id = f"run-entry-reject-{state.value}"
     service.prepare(_request(run_id, identity))
-    if state is RunState.RUNNING or state is RunState.PAUSED:
+    if state is RunState.RUNNING:
         service.execute(run_id)
         aggregate = _aggregate(root, run_id)
         assert aggregate is not None and aggregate.launch_token is not None
         lifecycle = ExecutionLifecycle(service, run_id, aggregate.launch_token)
         lifecycle.started()
-        if state is RunState.PAUSED:
-            lifecycle.paused()
 
     before = _aggregate(root, run_id)
     assert before is not None
@@ -873,8 +870,9 @@ def test_synthetic_executor_rejects_expired_token_without_relaunch(tmp_path: Pat
     lifecycle = ExecutionLifecycle(control, run_id, first.launch_token)
     lifecycle.started()
     lifecycle.checkpoint(SYNTHETIC_CHECKPOINT_ID)
-    lifecycle.paused()
-    assert control.resume(run_id).state is RunState.QUEUED
+    # Simulate the first attempt's worker lease disappearing; recovery requeues attempt 2.
+    recovered = control.recover_abandoned_launch(run_id, token=first.launch_token)
+    assert recovered.state is RunState.QUEUED
     current = _aggregate(root, run_id)
     assert current is not None
     assert current.attempt == 2

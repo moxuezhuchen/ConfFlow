@@ -44,7 +44,6 @@ confflow control execute --state-root <absolute-path> --run-id <id> --json
 confflow control status --state-root <absolute-path> --run-id <id> --json
 confflow control events --state-root <absolute-path> --run-id <id> --after <cursor> --json
 confflow control cancel --state-root <absolute-path> --run-id <id> --json
-confflow control resume --state-root <absolute-path> --run-id <id> [--checkpoint <id>] --json
 confflow control artifacts --state-root <absolute-path> --run-id <id> --json
 ```
 
@@ -125,8 +124,7 @@ producer commits `completed`.
 | --- | --- | --- |
 | `prepared` | `queued`, `cancelled` | `prepare` is durable but non-executing |
 | `queued` | `running`, `cancelled`, `failed` | scheduler metadata is a JobDesk projection |
-| `running` | `paused`, `completed`, `failed`, `cancelled` | terminal states never regress |
-| `paused` | `queued`, `cancelled`, `failed` | `resume` validates the checkpoint |
+| `running` | `completed`, `failed`, `cancelled` | terminal states never regress; a stop is a cancellation |
 | `completed`, `failed`, `cancelled` | none | terminal |
 
 Each successful mutation assigns a strictly greater integer `revision`.  A
@@ -170,7 +168,7 @@ different payload fails closed.
 `execute` is idempotent per `run_id`: the first accepted launch must atomically
 advance `prepared` to `queued` and return that queued snapshot. Every duplicate
 returns the same run's current snapshot and must not create a second calculation
-process. A duplicate may therefore return `queued`, `running`, `paused`,
+process. A duplicate may therefore return `queued`, `running`,
 `completed`, `failed`, or `cancelled`; it cannot return `prepared` after an
 execute was accepted. A duplicate execute never uses `already_running`; that
 code is reserved for a non-idempotent operation that v1 explicitly rejects.
@@ -184,7 +182,7 @@ the other side's state.
 
 Responses use `error.code` for branching and reserve `error.message` for people.
 The v1 registry is: `invalid_request`, `unsupported_protocol`, `unknown_run`,
-`idempotency_conflict`, `invalid_state_transition`, `invalid_checkpoint`,
+`idempotency_conflict`, `invalid_state_transition`,
 `already_running`, `terminal_run`, `executable_identity_mismatch`,
 `artifact_path_invalid`, `artifact_integrity_failed`, `repository_unavailable`,
 and `internal`. `repository_unavailable` covers an unsafe root, failed ownership
@@ -221,8 +219,7 @@ fixtures for: monotonic revisions and terminal non-regression; ordered cursor
 replay, empty-page `next_cursor`, and reconnect; same-key same-digest prepare;
 same-key different-digest conflict; duplicate execute returning the current
 snapshot without another process, specifically first execute = `queued` and
-duplicate execute = the unchanged running or terminal snapshot; valid, missing,
-stale, running, and terminal resume; and normalized artifact target conflicts.
+duplicate execute = the unchanged running or terminal snapshot; and normalized artifact target conflicts.
 These are cross-frame rules, not claims that a single JSON Schema instance can
 prove.
 

@@ -379,6 +379,30 @@ def test_launch_failure_is_exit_two(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert summary["totals"]["passed"] == 0 and not out.exists()
 
 
+def test_cancelled_run_shuts_pool_down_dropping_queued_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    els, ref = _toy()
+    _stub(monkeypatch, ref)
+    job, _, _, _ = _job(tmp_path, *_metal_parts(tmp_path), cores=2)
+    shutdowns: list[bool] = []
+    real_pool = worker.futures.ProcessPoolExecutor
+
+    class RecordingPool(real_pool):  # type: ignore[valid-type,misc]
+        def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+            shutdowns.append(cancel_futures)
+            super().shutdown(wait=wait, cancel_futures=cancel_futures)
+
+    monkeypatch.setattr(worker.futures, "ProcessPoolExecutor", RecordingPool)
+    worker._STOP.set()
+    try:
+        with pytest.raises(search.SearchCancelled):
+            worker._run(job)
+    finally:
+        worker._STOP.clear()
+    assert shutdowns == [True]
+
+
 def test_request_stop_exits_nonzero(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     els, ref = _toy()
     _stub(monkeypatch, ref)

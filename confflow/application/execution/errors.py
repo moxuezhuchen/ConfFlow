@@ -13,7 +13,6 @@ class ErrorCode(str, Enum):
     UNKNOWN_RUN = "unknown_run"
     IDEMPOTENCY_CONFLICT = "idempotency_conflict"
     INVALID_STATE_TRANSITION = "invalid_state_transition"
-    INVALID_CHECKPOINT = "invalid_checkpoint"
     ALREADY_RUNNING = "already_running"
     TERMINAL_RUN = "terminal_run"
     EXECUTABLE_IDENTITY_MISMATCH = "executable_identity_mismatch"

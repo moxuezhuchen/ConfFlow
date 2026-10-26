@@ -295,7 +295,6 @@ H  -1   0.0 0.0 0.0
         input_xyz,
         config_file,
         work_dir,
-        pause_beacon_file=None,
         cancel_beacon_file=None,
         on_step_status_change=None,
     ):

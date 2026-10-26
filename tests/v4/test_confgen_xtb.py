@@ -8,11 +8,14 @@ search-worker tests.  No real xtb binary is needed.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from confflow.execution import confgen_xtb
 from confflow.execution.confgen_xtb import (
     Cancelled,
     XtbCalculator,
@@ -122,6 +125,44 @@ def test_hessian_without_output_file_is_none(
     # The fake xtb never writes the ``hessian`` file, so the parse fails and the result is None.
     monkeypatch.setenv("FAKE_XTB_MODE", "ok")
     assert _calc(fake_xtb, tmp_path).hessian(RelaxRequest("h", _COORDS)) is None
+
+
+class _StuckProcess:
+    """A child that ignores terminate and only exits once it has been killed."""
+
+    def __init__(self) -> None:
+        self.returncode: int | None = None
+        self.killed = False
+        self.reaped = False
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def terminate(self) -> None:
+        pass
+
+    def kill(self) -> None:
+        self.killed = True
+
+    def wait(self, timeout: float | None = None) -> int | None:
+        if not self.killed:
+            raise subprocess.TimeoutExpired("xtb", timeout or 0)
+        self.reaped = True
+        self.returncode = -9
+        return self.returncode
+
+
+def test_launch_reaps_process_killed_after_terminate_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proc = _StuckProcess()
+    monkeypatch.setattr(confgen_xtb.subprocess, "Popen", lambda *a, **k: proc)
+    calc = _calc("/bin/xtb", tmp_path)
+    calc._stop.set()
+    with pytest.raises(Cancelled):
+        calc._launch(["xtb"], tmp_path, dict(os.environ))
+    assert proc.killed
+    assert proc.reaped
 
 
 def test_hessian_after_cancel_raises(tmp_path: Path, fake_xtb: Path) -> None:

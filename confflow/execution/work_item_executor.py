@@ -251,6 +251,15 @@ def pure_cancelled_result(
     )
 
 
+def _stop(supervisor: Any, handle: Any) -> bool:
+    """Best-effort cancel; True when the child is known to have stopped."""
+    try:
+        outcome = supervisor.cancel(handle)
+    except Exception:
+        return False
+    return outcome is None or bool(outcome.confirmed)
+
+
 @dataclass(frozen=True, slots=True)
 class ItemExecutionContext:
     """Everything one work-item execution may read."""
@@ -1283,16 +1292,25 @@ class WorkItemExecutor:
             try:
                 manager.mark_running(lease, handle.process_group_id, handle.pid, handle.create_time)
             except Exception:
+                # A lease left "reserved" is reclaimed only when this worker exits:
+                # stop the untracked child and free its cores now.
                 logging.debug("server quota mark_running failed", exc_info=True)
+                _stop(supervisor, handle)
+                _release_quota()
+                return None
         walltime = request.walltime_seconds
         monotonic_start = time.monotonic()
         cancel_outcome: CancelOutcome | None = None
         timed_out = False
+        # Release on every exit unless the child may still run; its running
+        # lease is then reclaimed once the process group is gone.
+        keep_lease = False
         try:
             while True:
                 try:
                     status = supervisor.poll(handle)
                 except Exception:
+                    keep_lease = not _stop(supervisor, handle)
                     return None
                 if status.is_terminal:
                     break
@@ -1303,6 +1321,7 @@ class WorkItemExecutor:
                         # The stop was requested but the supervisor failed to
                         # act: the process may still run, so report an
                         # unconfirmed cancellation instead of a clean cancel.
+                        keep_lease = True
                         return (
                             NativeExecutionResult(
                                 exit_code=None,
@@ -1320,6 +1339,7 @@ class WorkItemExecutor:
                     try:
                         timeout_cancel = supervisor.cancel(handle)
                     except Exception as exc:
+                        keep_lease = True
                         return (
                             NativeExecutionResult(
                                 exit_code=None,
@@ -1334,6 +1354,7 @@ class WorkItemExecutor:
                             ),
                         )
                     if timeout_cancel is not None and not timeout_cancel.confirmed:
+                        keep_lease = True
                         return (
                             NativeExecutionResult(
                                 exit_code=None,
@@ -1351,7 +1372,6 @@ class WorkItemExecutor:
                     break
                 time.sleep(poll_interval)
             if timed_out:
-                _release_quota()
                 return (
                     NativeExecutionResult(
                         exit_code=None,
@@ -1362,9 +1382,8 @@ class WorkItemExecutor:
                     ),
                     None,
                 )
-            if cancel_outcome is not None and cancel_outcome.confirmed:
-                _release_quota()
             if cancel_outcome is not None:
+                keep_lease = not cancel_outcome.confirmed
                 return (
                     NativeExecutionResult(
                         exit_code=None,
@@ -1374,12 +1393,10 @@ class WorkItemExecutor:
                     ),
                     cancel_outcome,
                 )
-            _release_quota()
             try:
                 collected = supervisor.collect(handle)
             except Exception:
                 return None
-            _release_quota()
             return (
                 NativeExecutionResult(
                     exit_code=collected.exit_code,
@@ -1390,11 +1407,11 @@ class WorkItemExecutor:
                 None,
             )
         except Exception:
-            try:
-                supervisor.cancel(handle)
-            except Exception:
-                pass
+            keep_lease = not _stop(supervisor, handle)
             return None
+        finally:
+            if not keep_lease:
+                _release_quota()
 
     # ------------------------------------------------------------------
     # Profile / checks / recovery

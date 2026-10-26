@@ -152,7 +152,21 @@ def _canonical_completion(raw: Any) -> dict[str, Any]:
     return merged
 
 
-def _seed_free_step_science(step: Mapping[str, Any]) -> dict[str, Any]:
+def _effective_resources(step: Mapping[str, Any], global_resources: Any) -> Any:
+    """Per-item resources after inheritance: step value, then run global, then default."""
+    merged: dict[str, Any] = {}
+    for source in (global_resources, step.get("resources")):
+        if not isinstance(source, Mapping):
+            continue
+        for key in ("cores_per_item", "memory_per_item"):
+            if source.get(key) is not None:
+                merged[key] = source[key]
+    return merged
+
+
+def _seed_free_step_science(
+    step: Mapping[str, Any], global_resources: Any = None
+) -> dict[str, Any]:
     """Project one wire step onto its seed-free scientific identity."""
     science: dict[str, Any] = {"id": step.get("id"), "executor": step.get("executor")}
     for block_name in ("calculation", "confgen", "transform", "analysis"):
@@ -168,7 +182,10 @@ def _seed_free_step_science(step: Mapping[str, Any]) -> dict[str, Any]:
                 recovery_copy.pop("seed", None)
                 block_copy["recovery"] = recovery_copy
         science[block_name] = block_copy
-    science["resources"] = _normalize_resources(step.get("resources"))
+    for field in ("script", "args", "outputs"):
+        if step.get(field) is not None:
+            science[field] = copy.deepcopy(step[field])
+    science["resources"] = _normalize_resources(_effective_resources(step, global_resources))
     bindings = step.get("bindings")
     science["bindings"] = copy.deepcopy(dict(bindings)) if isinstance(bindings, Mapping) else {}
     enabled = step.get("enabled", True)
@@ -183,9 +200,15 @@ def seed_identity_for_step(step_id: str, wire_document: Mapping[str, Any]) -> di
     step_list = list(steps) if isinstance(steps, (list, tuple)) else []
     global_block = wire_document.get("global")
     scientific_defaults: Any = {}
+    global_resources: Any = None
     if isinstance(global_block, Mapping):
         scientific_defaults = copy.deepcopy(global_block.get("scientific_defaults", {}))
-    projected = [_seed_free_step_science(step) for step in step_list if isinstance(step, Mapping)]
+        global_resources = global_block.get("resources")
+    projected = [
+        _seed_free_step_science(step, global_resources)
+        for step in step_list
+        if isinstance(step, Mapping)
+    ]
     projected.sort(key=lambda item: str(item.get("id")))
     return {
         "seed_version": SEED_VERSION,

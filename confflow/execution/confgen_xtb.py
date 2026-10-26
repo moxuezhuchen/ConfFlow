@@ -273,6 +273,7 @@ class XtbCalculator:
             proc.wait(timeout=30)
         except subprocess.TimeoutExpired:
             proc.kill()
+            proc.wait()
         finally:
             with self._lock:
                 self._live.discard(proc)
@@ -376,6 +377,7 @@ class XtbCalculator:
                 proc.wait(timeout=30)
             except subprocess.TimeoutExpired:
                 proc.kill()
+                proc.wait()
             finally:
                 with self._lock:
                     self._live.discard(proc)
