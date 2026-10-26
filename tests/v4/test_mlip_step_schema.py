@@ -202,3 +202,42 @@ def test_filter_results_from_mlip_step_is_a_valid_energy_source() -> None:
     }
     assert edges[("select", "results")] == "uma"
     assert edges[("select", "structure")] == "uma"
+
+
+def test_fix_distances_accept_pair_and_pair_with_target() -> None:
+    relax = MlipRelaxModel.model_validate(
+        {"fix_distances": [[1, 2], [3, 4, 1.1], [5, 6, 2], [7, 8, 1.5e0]]}
+    )
+    assert [tuple(entry) for entry in relax.fix_distances] == [
+        (1, 2),
+        (3, 4, 1.1),
+        (5, 6, 2),
+        (7, 8, 1.5),
+    ]
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        [1, 2, 0],
+        [1, 2, 0.0],
+        [1, 2, -1.2],
+        [1, 2, float("nan")],
+        [1, 2, float("inf")],
+        [1, 2, True],
+        [1, 2, "1.1"],
+        [1, 2, 1.1, 3],
+        [1, 2.0, 1.1],
+        [-1, 2, 1.1],
+        [3, 3, 1.1],
+    ],
+)
+def test_bad_fix_distance_entries_are_rejected(entry: list[Any]) -> None:
+    with pytest.raises(ValidationError):
+        MlipRelaxModel.model_validate({"fix_distances": [entry]})
+
+
+@pytest.mark.parametrize("second", [[2, 1], [2, 1, 1.2]])
+def test_duplicate_pair_is_rejected_whatever_the_target(second: list[Any]) -> None:
+    with pytest.raises(ValidationError, match="duplicates"):
+        MlipRelaxModel.model_validate({"fix_distances": [[1, 2, 1.1], second]})

@@ -645,3 +645,39 @@ def _with_input_energy(
         )
         for record, energy in zip(records, energies)
     ]
+
+
+def test_fix_deviation_is_measured_against_the_target(monkeypatch, tmp_path):
+    # O-H1 is 0.96 A on input; the target is 1.10 A and the runner ends at 1.13 A.
+    moved = [[0.0, 0.0, 0.0], [1.13, 0.0, 0.0], [-0.24, 0.93, 0.0]]
+    _install_runner(monkeypatch, tmp_path, relax_coords={"s00001": moved})
+    native = _native(mode="relax", relax={"fix_distances": [[1, 2, 1.10]]})
+    ctx = _ctx(tmp_path, native)
+    result, _ = _run(ctx, _records())
+    out = {record.id: record for record in result.structures}["w1:mlip-relax"]
+    assert out.metadata["mlip_fix_max_dev"] == pytest.approx(0.03, abs=1e-9)
+    assert _job(ctx, _records())["fix_pairs"] == [[0, 1, 1.1]]
+
+
+def test_fix_target_entries_convert_index_base_in_job_json(monkeypatch, tmp_path):
+    _install_runner(monkeypatch, tmp_path)
+    one = _ctx(
+        tmp_path / "one", _native(mode="relax", index_base=1, relax={"fix_distances": [[1, 3, 2]]})
+    )
+    _run(one, _records())
+    assert _job(one, _records())["fix_pairs"] == [[0, 2, 2.0]]
+    mixed = _ctx(
+        tmp_path / "mixed",
+        _native(mode="relax", index_base=0, relax={"fix_distances": [[0, 2], [1, 2, 1.2]]}),
+    )
+    _run(mixed, _records())
+    assert _job(mixed, _records())["fix_pairs"] == [[0, 2], [1, 2, 1.2]]
+
+
+@pytest.mark.parametrize("target", [0, -1.0, True, "1.1"])
+def test_bad_fix_target_fails_the_step(monkeypatch, tmp_path, target):
+    _install_runner(monkeypatch, tmp_path)
+    native = _native(relax={"fix_distances": [[1, 2, target]]})
+    result, _ = _run(_ctx(tmp_path, native), _records())
+    assert result.status is WorkItemStatus.FAILED
+    assert "fix_distances" in _message(result)

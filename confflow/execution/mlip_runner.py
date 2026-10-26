@@ -44,6 +44,17 @@ def _is_num(v: Any) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
+def _valid_fix_pair(p: Any) -> bool:
+    """``[i, j]`` (hold the input distance) or ``[i, j, target]`` (target > 0 in Angstrom)."""
+    if not isinstance(p, list) or len(p) not in (2, 3):
+        return False
+    if not all(_is_int(i) and i >= 0 for i in p[:2]):
+        return False
+    if len(p) == 2:
+        return True
+    return _is_num(p[2]) and math.isfinite(p[2]) and p[2] > 0
+
+
 def _valid_structure(s: Any) -> bool:
     if not isinstance(s, dict) or not isinstance(s.get("key"), str):
         return False
@@ -69,13 +80,9 @@ def validate_job(job: Any) -> None:
     _check(job.get("mode") in MODES, "mode")
     _check(job.get("optimizer") in OPTIMIZERS, "optimizer")
     _check(_is_num(job.get("fmax")), "fmax")
-    pairs = job.get("fix_pairs")
     _check(
-        isinstance(pairs, list)
-        and all(
-            isinstance(p, list) and len(p) == 2 and all(_is_int(i) and i >= 0 for i in p)
-            for p in pairs
-        ),
+        isinstance(job.get("fix_pairs"), list)
+        and all(_valid_fix_pair(p) for p in job["fix_pairs"]),
         "fix_pairs",
     )
     pick = job.get("pick")
@@ -151,12 +158,19 @@ def _dist(a: list[float], b: list[float]) -> float:
     return math.dist(a, b)
 
 
+def _fix_ref(before: list[list[float]], pair: list[Any]) -> float:
+    """Distance a fixed pair should hold: its target when given, else the input distance."""
+    if len(pair) == 3:
+        return float(pair[2])
+    return _dist(before[pair[0]], before[pair[1]])
+
+
 def _fix_dev(
-    before: list[list[float]], after: list[list[float]], pairs: list[list[int]]
+    before: list[list[float]], after: list[list[float]], pairs: list[list[Any]]
 ) -> float | None:
     if not pairs:
         return None
-    return max(abs(_dist(after[i], after[j]) - _dist(before[i], before[j])) for i, j in pairs)
+    return max(abs(_dist(after[p[0]], after[p[1]]) - _fix_ref(before, p)) for p in pairs)
 
 
 def _compute(backend: Any, task: dict[str, Any]) -> dict[str, Any]:
@@ -403,7 +417,7 @@ class _FairchemBackend:  # pragma: no cover - needs fairchem, ASE and torch
         self,
         symbols: list[str],
         coords: list[list[float]],
-        fix_pairs: list[list[int]],
+        fix_pairs: list[list[Any]],
         optimizer: str,
         fmax: float,
         max_steps: int,
@@ -412,8 +426,11 @@ class _FairchemBackend:  # pragma: no cover - needs fairchem, ASE and torch
         from ase.optimize import FIRE, LBFGS
 
         atoms, shift = self._atoms(symbols, coords, centred=optimizer == "precon_lbfgs")
+        for pair in fix_pairs:  # targets are set before the constraint records the lengths
+            if len(pair) == 3:
+                atoms.set_distance(pair[0], pair[1], float(pair[2]), fix=0.5)
         if fix_pairs:  # tolerance 1e-8: float32 UMA forces cannot meet the 1e-13 default
-            atoms.set_constraint(FixBondLengths(fix_pairs, tolerance=1e-8))
+            atoms.set_constraint(FixBondLengths([p[:2] for p in fix_pairs], tolerance=1e-8))
         if optimizer == "precon_lbfgs":
             from ase.optimize.precon import Exp, PreconLBFGS
 

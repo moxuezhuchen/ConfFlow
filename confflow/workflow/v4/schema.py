@@ -14,6 +14,7 @@ fails closed instead of being ignored.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Literal, cast
 
 from pydantic import (
@@ -248,9 +249,12 @@ MLIP_OPTIMIZERS = ("lbfgs", "precon_lbfgs", "fire")
 class MlipRelaxModel(BaseModel):
     """Constrained relaxation settings of an MLIP step (``relax`` / ``sp_then_relax``).
 
-    ``fix_distances`` are index pairs in the document's ``index_base``; their
-    range check against the structure atom count is applied by the executor.
-    Duplicate pairs (order-insensitive) and identical endpoints are rejected.
+    ``fix_distances`` entries are ``[a, b]`` (hold the input a-b distance) or
+    ``[a, b, target]`` (first set the distance to ``target`` in Angstrom, moving both
+    atoms by half along the bond, then hold it). Indices are in the document's
+    ``index_base``; their range check against the structure atom count is applied by
+    the executor. Duplicate pairs (order-insensitive, whatever the target) and identical
+    endpoints are rejected.
     """
 
     model_config = _STRICT
@@ -258,16 +262,16 @@ class MlipRelaxModel(BaseModel):
     optimizer: Literal["lbfgs", "precon_lbfgs", "fire"] = "lbfgs"
     fmax: StrictFloat = Field(default=0.02, gt=0)
     max_steps: StrictInt = Field(default=600, ge=1)
-    fix_distances: list[tuple[StrictInt, StrictInt]] = Field(default_factory=list)
+    fix_distances: list[
+        tuple[StrictInt, StrictInt] | tuple[StrictInt, StrictInt, StrictInt | StrictFloat]
+    ] = Field(default_factory=list)
 
     @field_validator("fix_distances")
     @classmethod
-    def _validate_fix_distances(
-        cls, value: list[tuple[StrictInt, StrictInt]]
-    ) -> list[tuple[StrictInt, StrictInt]]:
+    def _validate_fix_distances(cls, value: list[Any]) -> list[Any]:
         seen: set[tuple[int, int]] = set()
-        for position, pair in enumerate(value):
-            first, second = int(pair[0]), int(pair[1])
+        for position, entry in enumerate(value):
+            first, second = int(entry[0]), int(entry[1])
             if first < 0 or second < 0:
                 raise ValueError(f"fix_distances[{position}] indices must be >= 0")
             if first == second:
@@ -276,6 +280,13 @@ class MlipRelaxModel(BaseModel):
             if canonical in seen:
                 raise ValueError(f"fix_distances[{position}] duplicates {canonical}")
             seen.add(canonical)
+            if len(entry) == 3:
+                target = float(entry[2])
+                if not math.isfinite(target) or target <= 0:
+                    raise ValueError(
+                        f"fix_distances[{position}] target must be a finite distance > 0 "
+                        f"(Angstrom), got {entry[2]!r}"
+                    )
         return value
 
 

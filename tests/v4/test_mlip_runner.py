@@ -136,6 +136,33 @@ def test_relax_without_fix_pairs_has_no_dev(tmp_path: Path) -> None:
     assert rows(tmp_path)[0]["fix_max_dev"] is None
 
 
+def test_fix_dev_is_measured_against_the_target(tmp_path: Path) -> None:
+    # Input O-H-like pair is 1.0 A apart; the fake relax ends at 1.01 A.
+    job = make_job(structs(("a", None, 1.0)), mode="relax", fix_pairs=[[0, 1, 1.5]])
+    run(tmp_path, job)
+    assert rows(tmp_path)[0]["fix_max_dev"] == pytest.approx(0.49, abs=1e-9)
+
+
+def test_fix_dev_is_max_over_mixed_pairs(tmp_path: Path) -> None:
+    # [0, 1] is held at its input 1.0 A (moves to 1.01); [0, 1, 1.01] ends on target.
+    job = make_job(structs(("a", None, 1.0)), mode="relax", fix_pairs=[[0, 1], [0, 1, 1.01]])
+    run(tmp_path, job)
+    assert rows(tmp_path)[0]["fix_max_dev"] == pytest.approx(0.01, abs=1e-9)
+
+
+def test_fix_pairs_with_target_reach_the_backend(tmp_path: Path) -> None:
+    seen: list[Any] = []
+
+    class Recording(FakeBackend):
+        def relax(self, symbols, coords, fix_pairs, *rest):  # type: ignore[override]
+            seen.append(fix_pairs)
+            return super().relax(symbols, coords, fix_pairs, *rest)
+
+    job = make_job(structs(("a", None, 1.0)), mode="relax", fix_pairs=[[0, 1, 1.5]])
+    run(tmp_path, job, Recording())
+    assert seen == [[[0, 1, 1.5]]]
+
+
 def test_sp_then_relax_union_of_lowest_and_per_label(tmp_path: Path) -> None:
     items = structs(
         ("A", "a", 1.0),
@@ -286,6 +313,11 @@ def test_sha256_and_package_version(tmp_path: Path) -> None:
         lambda j: j.update(refs_path=5),
         lambda j: j.update(fix_pairs=[[0]]),
         lambda j: j.update(fix_pairs=[[-1, 0]]),
+        lambda j: j.update(fix_pairs=[[0, 1, 0]]),
+        lambda j: j.update(fix_pairs=[[0, 1, -1.0]]),
+        lambda j: j.update(fix_pairs=[[0, 1, True]]),
+        lambda j: j.update(fix_pairs=[[0, 1, "1.1"]]),
+        lambda j: j.update(fix_pairs=[[0, 1, 1.1, 2]]),
         lambda j: j.update(mode="sp_then_relax", pick=None),
         lambda j: j.update(pick={"lowest": -1}),
         lambda j: j.update(structures={"key": "a"}),
