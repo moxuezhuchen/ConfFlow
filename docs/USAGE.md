@@ -209,3 +209,37 @@ confflow v4 run --workflow flow.yaml \
 - 简化输入（intent）：用 `confflow.intent.v1` 写"卡片 + 预设"式的简化文档，由 producer 编译成严格的 V4 文档，
   见 [`PRODUCER_INTENT.md`](PRODUCER_INTENT.md)。
 - `confflow --capabilities --json`：能力握手。
+
+## 7. 比较与去重任意 XYZ 结构
+
+`confflow compare` 与 `confflow dedupe` 不需要工作流文档，直接比较任意多帧 XYZ 文件（如 TS 搜索的输出、
+多次运行合并的构象集）中的结构是否相同。
+
+```bash
+# 两个结构是否为同一个（A.xyz 第 0 帧 与 B.xyz 第 3 帧）
+confflow compare A.xyz B.xyz@3
+
+# 合并多个文件，去掉重复，保留每组能量最低者，写入 unique.xyz
+confflow dedupe run1.xyz run2.xyz -o unique.xyz
+
+# 机器可读报告
+confflow dedupe run1.xyz run2.xyz --json
+```
+
+**什么算同一个结构**
+
+- 比较对象是对称 RMSD（考虑图自同构的最小 RMSD），只取重原子，以及杂原子上的 H 与非共价边上的 H。
+- 甲基、叔丁基上的 C–H 氢不参与比较，所以甲基转动和叔丁基三个甲基的互换不影响结果；苯环邻/间位的等价翻转同样算同一个。
+- 镜像默认算同一个（与 ConfGen 一致）；`--no-mirror` 关闭。
+- 阈值与 ConfGen 相同：对称 RMSD 小于 `--rmsd`（默认 0.2 Å），且两者能量都已知时 |ΔE| 不超过 `--e-tol`（默认 0.5 kcal/mol）。
+  能量读自注释行 `energy_eh=<Eh>` 或 ORCA 风格的 `E <数>`；读不到则只按几何判同（`--no-energy` 同样如此）。
+- 成键由第一帧的距离判定（`--bond-scale 1.15`）。金属可用 `--metal N` 指定，反应对用 `--pair I J` 声明为成键中的边；
+  两者都是 1 基序号。
+
+**输出**
+
+- `compare` 打印对称 RMSD、普通重原子 RMSD（不做置换）、ΔE 和判定 `same` / `different`。
+- `dedupe` 打印 `N frames -> M unique`，然后每帧一行，标明 `unique` 或 `duplicate of <文件>@<k>`。
+  `-o` 写出的代表帧按能量升序排列（所有帧都有能量时），注释保留原文并追加 `members=<组内帧数>`。
+
+输入不合法（XYZ 截断、坐标非数值、帧之间元素序列不一致、索引越界）时返回码为 `2`，并打印 `Error:` 说明。

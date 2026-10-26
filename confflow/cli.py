@@ -492,6 +492,10 @@ def main(
         from .config.cli import main as config_main
 
         return config_main(effective_args[1:])
+    if effective_args and effective_args[0] in ("compare", "dedupe"):
+        from .application.structure_compare import main as compare_main
+
+        return compare_main(effective_args)
     if effective_args and effective_args[0] == "workflow":
         # Architecture Diet PR-7: the only command ever exposed here,
         # ``workflow upgrade``, emitted the never-released Workflow V3 wire
