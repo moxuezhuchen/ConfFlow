@@ -183,7 +183,7 @@ def test_fixture_cli_runs_one_json_control_chain_to_fixed_manifest(capsys, tmp_p
     ]
 
 
-def test_fixture_cli_cancel_and_resume_use_standard_control_semantics(capsys, tmp_path: Path):
+def test_fixture_cli_cancel_is_terminal_under_standard_control_semantics(capsys, tmp_path: Path):
     root = tmp_path / "state"
     run_id = "run-fixture-cancel"
     request_path = tmp_path / "prepare.json"
@@ -207,13 +207,19 @@ def test_fixture_cli_cancel_and_resume_use_standard_control_semantics(capsys, tm
     )
     assert cancelled["state"] == "cancelled"
 
+    executed = _invoke(
+        capsys,
+        ["control", "execute", "--state-root", str(root), "--run-id", run_id, "--json"],
+    )
+    assert executed["state"] == "cancelled"
+
     code = fixture_main(
-        ["control", "resume", "--state-root", str(root), "--run-id", run_id, "--json"]
+        ["control", "cancel", "--state-root", str(root), "--run-id", run_id, "--json"]
     )
     captured = capsys.readouterr()
-    assert code == 2
     assert len(captured.out.splitlines()) == 1
     assert json.loads(captured.out)["error"]["code"] == "terminal_run"
+    assert code == 2
 
 
 def test_fixture_cli_reuses_typed_invalid_request_response(capsys, tmp_path: Path):

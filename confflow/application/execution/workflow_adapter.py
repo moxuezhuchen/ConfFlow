@@ -280,7 +280,6 @@ class WorkflowRunSpec:
     original_input_files: tuple[str, ...] | None = None
     resume: bool = False
     verbose: bool = False
-    pause_beacon_file: str | None = None
     cancel_beacon_file: str | None = None
     # The interactive CLI acquires this before converting any input files so
     # an active attempt protects the whole work-directory mutation boundary.
@@ -441,7 +440,6 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
                 "input_xyz": list(self._spec.input_xyz),
                 "config_file": self._spec.config_file,
                 "work_dir": self._spec.work_dir,
-                "pause_beacon_file": self._spec.pause_beacon_file,
                 # The typed V4 runner owns this supervision seam explicitly:
                 # cancel delivery (beacon pre-check plus live should_cancel
                 # polling) is real control flow, and the step-status hook
@@ -480,7 +478,6 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
             service = self._service
             if service is not None:
                 try:
-                    aggregate = service.status(request.run_id)
                     winner = arbitration.current_terminal_status(self._spec.work_dir)
                     if winner is not None:
                         # The run root's arbitration already owns a terminal
@@ -492,9 +489,18 @@ class ServiceWorkflowExecutor(WorkflowExecutor):
                         self._spec.cancel_beacon_file
                         and Path(self._spec.cancel_beacon_file).exists()
                     ):
-                        ExecutionLifecycle(service, request.run_id, request.token).cancelled()
-                    elif aggregate.state is RunState.RUNNING:
-                        ExecutionLifecycle(service, request.run_id, request.token).paused()
+                        # A beacon stop without a service cancel intent (a
+                        # manual CANCEL file): commit it exactly as a
+                        # runner-reported cancellation is committed.
+                        _commit_v4_terminal(
+                            lifecycle=ExecutionLifecycle(service, request.run_id, request.token),
+                            service=service,
+                            run_id=request.run_id,
+                            token=request.token,
+                            v4_status="cancelled",
+                            artifacts=(),
+                            work_dir=self._spec.work_dir,
+                        )
                 except ExecutionServiceError as error:
                     # A confirmed service cancellation may have already won the
                     # race and moved the aggregate to terminal state.
@@ -746,7 +752,6 @@ def run_workflow_through_service(
     run_id: str,
     resume: bool = False,
     verbose: bool = False,
-    pause_beacon_file: str | None = None,
     cancel_beacon_file: str | None = None,
     original_input_files: Sequence[str] | None = None,
     work_directory_lease: _WorkDirectoryLease | None = None,
@@ -766,7 +771,6 @@ def run_workflow_through_service(
         original_input_files=None if original_input_files is None else tuple(original_input_files),
         resume=resume,
         verbose=verbose,
-        pause_beacon_file=pause_beacon_file,
         cancel_beacon_file=cancel_beacon_file,
         work_directory_lease=work_directory_lease,
     )
@@ -819,14 +823,7 @@ def run_workflow_through_service(
             retry_resume=False,
         )
         run_id = spec.run_id
-    if snapshot.state is RunState.PAUSED:
-        if not resume:
-            raise ExecutionServiceError(
-                ErrorCode.INVALID_STATE_TRANSITION,
-                "Paused run requires resume=True",
-            )
-        snapshot = service.resume(run_id)
-    elif snapshot.state is RunState.PREPARED or snapshot.state is RunState.QUEUED:
+    if snapshot.state is RunState.PREPARED or snapshot.state is RunState.QUEUED:
         snapshot = service.execute(run_id)
     elif snapshot.state in {RunState.RUNNING, RunState.COMPLETED}:
         if snapshot.state is RunState.RUNNING:
@@ -849,8 +846,6 @@ def run_workflow_through_service(
             ) from None
         raise
     final = service.status(run_id)
-    if final.state is RunState.PAUSED:
-        raise StopRequestedError("Workflow paused by service lifecycle")
     if final.state is RunState.CANCELLED:
         # Worker exit semantics (D2): completed is the only success exit.
         # Cancelled — whether from a beacon exception or a V4

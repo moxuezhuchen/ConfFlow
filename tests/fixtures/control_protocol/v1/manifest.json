@@ -18,8 +18,6 @@
     {"path": "golden/prepare_request.json", "validator": "requests.schema.json"},
     {"path": "golden/prepare_response.json", "validator": "responses.schema.json"},
     {"path": "golden/repository_unavailable_response.json", "validator": "responses.schema.json"},
-    {"path": "golden/resume_request.json", "validator": "requests.schema.json"},
-    {"path": "golden/resume_response.json", "validator": "responses.schema.json"},
     {"path": "golden/status_request.json", "validator": "requests.schema.json"},
     {"path": "golden/status_response.json", "validator": "responses.schema.json"}
   ],

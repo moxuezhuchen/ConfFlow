@@ -59,7 +59,6 @@ def run_worker_attempt(
         work_dir=staged_tasks[0]["work_dir"],
         original_input_files=tuple(item["input_xyz"] for item in staged_tasks),
         resume=resume,
-        pause_beacon_file=str(run_paths.work / "PAUSE"),
         cancel_beacon_file=str(run_paths.work / "CANCEL"),
     )
     service, executor = service_builder(

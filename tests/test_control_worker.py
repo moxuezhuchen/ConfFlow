@@ -11,7 +11,6 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from types import SimpleNamespace
 
 import pytest
 
@@ -85,6 +84,31 @@ def test_worker_token_lease_allows_one_cross_process_owner(tmp_path: Path) -> No
         first.release()
     assert second.acquire() is True
     second.release()
+
+
+def test_worker_token_lease_closes_fd_when_marker_io_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened: list[int] = []
+    real_open = os.open
+
+    def recording_open(*args: object, **kwargs: object) -> int:
+        fd = real_open(*args, **kwargs)  # type: ignore[arg-type]
+        opened.append(fd)
+        return fd
+
+    def failing_read(fd: int, size: int) -> bytes:
+        raise OSError("injected read failure")
+
+    monkeypatch.setattr(os, "open", recording_open)
+    monkeypatch.setattr(os, "read", failing_read)
+    lease = TokenLaunchLease(tmp_path, "worker-run", "worker-run.launch.2")
+    with pytest.raises(OSError, match="injected read failure"):
+        lease.acquire()
+    assert len(opened) == 1
+    monkeypatch.undo()
+    with pytest.raises(OSError):
+        os.fstat(opened[0])
 
 
 def test_worker_token_lease_blocks_a_separate_process(tmp_path: Path) -> None:
@@ -349,6 +373,64 @@ def test_control_cancel_waits_for_token_worker_to_stop_before_terminal_state(
         "cancel_requested",
         "cancelled",
     ]
+
+
+def test_control_worker_manual_cancel_beacon_ends_run_cancelled(tmp_path: Path) -> None:
+    """A manual CANCEL touch with no service cancel request must not leave RUNNING."""
+    config = tmp_path / "workflow.yaml"
+    input_xyz = tmp_path / "input.xyz"
+    work_dir = tmp_path / "work"
+    config.write_text(
+        # Formal cutover: staged configs must carry the V4 schema
+        "schema: confflow.workflow.v4\nsteps: []\n",
+        encoding="utf-8",
+    )
+    input_xyz.write_text("1\nH\nH 0 0 0\n", encoding="utf-8")
+    handoff = {
+        "content_schema": HANDOFF_SCHEMA,
+        "run_id": "worker-manual-cancel",
+        "workflow_config": {
+            "path": str(config),
+            "sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+        },
+        "tasks": [
+            {
+                "task_id": "input",
+                "input_xyz": str(input_xyz),
+                "work_dir": str(work_dir),
+                "sha256": hashlib.sha256(input_xyz.read_bytes()).hexdigest(),
+            }
+        ],
+    }
+    handoff_path = tmp_path / "handoff.json"
+    handoff_path.write_bytes(_canonical(handoff))
+    root = tmp_path / "state"
+    service = open_control_service(root, identity_executable=sys.executable)
+    service.prepare(
+        PrepareRequest(
+            run_id="worker-manual-cancel",
+            idempotency_key="worker-manual-cancel",
+            request_digest="e" * 64,
+            workflow_config_digest=handoff["workflow_config"]["sha256"],
+            input_manifest_digest=hashlib.sha256(handoff_path.read_bytes()).hexdigest(),
+            expected_executable_identity=measure_executable(sys.executable),
+        )
+    )
+    assert service.execute("worker-manual-cancel").state is RunState.QUEUED
+
+    def touch_beacon_then_stop(**kwargs):
+        Path(kwargs["cancel_beacon_file"]).touch()
+        raise StopRequestedError("workflow stopped by beacon")
+
+    state = run_control_worker(
+        state_root=root,
+        run_id="worker-manual-cancel",
+        handoff_path=handoff_path,
+        workflow_runner=touch_beacon_then_stop,
+    )
+
+    assert state is RunState.CANCELLED
+    assert service.status("worker-manual-cancel").state is RunState.CANCELLED
 
 
 def test_control_worker_rejects_tampered_handoff_digest(tmp_path: Path) -> None:
@@ -767,84 +849,3 @@ def test_control_worker_confirms_pending_cancel_after_prior_worker_crash(
         "cancel_requested",
         "cancelled",
     ]
-
-
-def test_control_worker_keeps_paused_attempt_until_formal_resume(tmp_path: Path) -> None:
-    """A pause is resumed through the producer service, not a second prepare."""
-    config = tmp_path / "workflow.yaml"
-    input_xyz = tmp_path / "input.xyz"
-    work_dir = tmp_path / "work"
-    config.write_text(
-        # Formal cutover: staged configs must carry the V4 schema
-        "schema: confflow.workflow.v4\nsteps: []\n",
-        encoding="utf-8",
-    )
-    input_xyz.write_text("1\nH\nH 0 0 0\n", encoding="utf-8")
-    handoff = {
-        "content_schema": HANDOFF_SCHEMA,
-        "run_id": "worker-pause",
-        "workflow_config": {
-            "path": str(config),
-            "sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
-        },
-        "tasks": [
-            {
-                "task_id": "input",
-                "input_xyz": str(input_xyz),
-                "work_dir": str(work_dir),
-                "sha256": hashlib.sha256(input_xyz.read_bytes()).hexdigest(),
-            }
-        ],
-    }
-    handoff_path = tmp_path / "handoff.json"
-    handoff_path.write_bytes(_canonical(handoff))
-    root = tmp_path / "state"
-    service = open_control_service(root, identity_executable=sys.executable)
-    identity = measure_executable(sys.executable)
-    service.prepare(
-        PrepareRequest(
-            run_id="worker-pause",
-            idempotency_key="worker-pause",
-            request_digest="d" * 64,
-            workflow_config_digest=handoff["workflow_config"]["sha256"],
-            input_manifest_digest=hashlib.sha256(handoff_path.read_bytes()).hexdigest(),
-            expected_executable_identity=identity,
-        )
-    )
-    assert service.execute("worker-pause").state is RunState.QUEUED
-
-    calls = 0
-
-    def pause_then_complete(**kwargs):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            kwargs["on_step_status_change"](
-                SimpleNamespace(name="step", fail_count=0, status="completed")
-            )
-            raise StopRequestedError("pause")
-        Path(kwargs["work_dir"]).mkdir(parents=True, exist_ok=True)
-        staged_input = Path(kwargs["input_xyz"][0])
-        staged_input.with_name(f"{staged_input.stem}min.xyz").write_text(
-            "1\nH\nH 0 0 0\n", encoding="utf-8"
-        )
-        publish_completed_v4_manifest(Path(str(kwargs["work_dir"])))
-        # Worker-D contract: V4 status owns the aggregate — only an
-        # explicit ``status == "completed"`` commits COMPLETED.
-        return {"status": "completed"}
-
-    def resume_after_pause(_seconds: float) -> None:
-        open_control_service(root, identity_executable=sys.executable).resume(
-            "worker-pause", checkpoint_id="checkpoint.step.0.completed"
-        )
-
-    state = run_control_worker(
-        state_root=root,
-        run_id="worker-pause",
-        handoff_path=handoff_path,
-        workflow_runner=pause_then_complete,
-        sleep=resume_after_pause,
-    )
-
-    assert state is RunState.COMPLETED
-    assert calls == 2

@@ -18,13 +18,13 @@
         "sha256": {"$ref": "#/$defs/digest"}
       }
     },
-    "state": {"enum": ["prepared", "queued", "running", "paused", "completed", "failed", "cancelled"]},
+    "state": {"enum": ["prepared", "queued", "running", "completed", "failed", "cancelled"]},
     "error": {
       "type": "object",
       "additionalProperties": false,
       "required": ["code", "message", "retryable"],
       "properties": {
-        "code": {"enum": ["invalid_request", "unsupported_protocol", "unknown_run", "idempotency_conflict", "invalid_state_transition", "invalid_checkpoint", "already_running", "terminal_run", "executable_identity_mismatch", "artifact_path_invalid", "artifact_integrity_failed", "repository_unavailable", "internal"]},
+        "code": {"enum": ["invalid_request", "unsupported_protocol", "unknown_run", "idempotency_conflict", "invalid_state_transition", "already_running", "terminal_run", "executable_identity_mismatch", "artifact_path_invalid", "artifact_integrity_failed", "repository_unavailable", "internal"]},
         "message": {"type": "string", "minLength": 1},
         "retryable": {"type": "boolean"}
       }

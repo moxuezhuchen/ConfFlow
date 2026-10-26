@@ -48,9 +48,21 @@ class TokenLaunchLease:
             fd = os.open(self._path, flags, 0o600)
         except FileExistsError:
             return False
+        try:
+            claimed = self._claim_fd(fd)
+        except BaseException:
+            os.close(fd)
+            raise
+        if not claimed:
+            os.close(fd)
+            return False
+        self._fd = fd
+        return True
+
+    def _claim_fd(self, fd: int) -> bool:
+        """Lock and stamp an opened marker; the caller closes ``fd`` on error."""
         metadata = os.fstat(fd)
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
-            os.close(fd)
             raise ValueError("worker lease marker must be an owner-owned regular file")
         if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH | stat.S_IRGRP | stat.S_IROTH):
             os.fchmod(fd, 0o600)
@@ -58,7 +70,6 @@ class TokenLaunchLease:
             try:
                 _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
             except OSError:
-                os.close(fd)
                 return False
         os.lseek(fd, 0, os.SEEK_SET)
         existing = os.read(fd, 64 * 1024)
@@ -90,11 +101,9 @@ class TokenLaunchLease:
         while remaining:
             written = os.write(fd, remaining)
             if written <= 0:
-                os.close(fd)
                 raise OSError("worker lease marker write made no progress")
             remaining = remaining[written:]
         os.fsync(fd)
-        self._fd = fd
         return True
 
     def release(self) -> None:

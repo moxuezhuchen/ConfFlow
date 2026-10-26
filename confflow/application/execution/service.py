@@ -42,10 +42,6 @@ class ExecutionLifecycle:
         """Atomically set the current checkpoint for the matching running attempt."""
         return self._service.lifecycle_checkpoint(self._run_id, self._token, checkpoint_id)
 
-    def paused(self) -> RunSnapshot:
-        """Advance the matching running attempt to paused."""
-        return self._service.lifecycle_paused(self._run_id, self._token)
-
     def completed(self, artifacts: Sequence[Artifact] = ()) -> RunSnapshot:
         """Commit a matching terminal completion and its validated manifest."""
         return self._service.lifecycle_terminal(
@@ -198,7 +194,7 @@ class ExecutionService:
             )
         if record.state is RunState.QUEUED and not record.cancel_pending:
             return record.snapshot()
-        if record.state in {RunState.RUNNING, RunState.PAUSED} or record.state in TERMINAL_STATES:
+        if record.state is RunState.RUNNING or record.state in TERMINAL_STATES:
             return record.snapshot()
         raise ExecutionServiceError(
             ErrorCode.INVALID_STATE_TRANSITION,
@@ -241,27 +237,6 @@ class ExecutionService:
             record = self._claim_cancel(record)
         return self._ensure_cancel(record)
 
-    def resume(self, run_id: str, *, checkpoint_id: str | None = None) -> RunSnapshot:
-        """Create a new queued launch attempt from the current paused checkpoint."""
-        record = self._require(run_id)
-        if record.state in TERMINAL_STATES:
-            raise _terminal_error(run_id)
-        if record.state is not RunState.PAUSED:
-            raise ExecutionServiceError(
-                ErrorCode.INVALID_STATE_TRANSITION,
-                f"Cannot resume a run in {record.state.value} state",
-            )
-        checkpoint = record.checkpoint
-        if checkpoint is None or (
-            checkpoint_id is not None and checkpoint_id != checkpoint.checkpoint_id
-        ):
-            raise ExecutionServiceError(
-                ErrorCode.INVALID_CHECKPOINT, "Checkpoint is missing or stale"
-            )
-        self._verify_identity(record.expected_executable_identity)
-        claimed = self._claim_launch(record, checkpoint_id=checkpoint.checkpoint_id)
-        return self._ensure_launch(claimed)
-
     def artifacts(self, run_id: str) -> ArtifactManifest:
         """Expose only the manifest atomically committed with a terminal transition."""
         record = self._require(run_id)
@@ -295,16 +270,6 @@ class ExecutionService:
             event_type="checkpointed",
             mutate=lambda record: replace(record, checkpoint=Checkpoint(checkpoint_id)),
             ignore_cancel_pending=True,
-        )
-
-    def lifecycle_paused(self, run_id: str, token: str) -> RunSnapshot:
-        """Apply a token-bound running-to-paused callback."""
-        return self._lifecycle_mutate(
-            run_id,
-            token,
-            allowed_state=RunState.RUNNING,
-            event_type="paused",
-            mutate=lambda record: replace(record, state=RunState.PAUSED),
         )
 
     def lifecycle_terminal(
@@ -360,7 +325,7 @@ class ExecutionService:
                     ErrorCode.INVALID_STATE_TRANSITION,
                     "Lifecycle token does not match the active launch attempt",
                 )
-            if record.state not in {RunState.QUEUED, RunState.RUNNING, RunState.PAUSED}:
+            if record.state not in {RunState.QUEUED, RunState.RUNNING}:
                 raise ExecutionServiceError(
                     ErrorCode.INVALID_STATE_TRANSITION,
                     f"Cannot cancel a run in {record.state.value} state",
@@ -398,7 +363,7 @@ class ExecutionService:
         while True:
             if record.state is RunState.QUEUED and record.launch_token is not None:
                 return record
-            if record.state not in {RunState.PREPARED, RunState.PAUSED}:
+            if record.state is not RunState.PREPARED:
                 return record
             attempt = record.attempt + 1
             token = f"{record.run_id}.launch.{attempt}"
