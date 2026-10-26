@@ -152,6 +152,21 @@ ConfFlow 不给出 DFT 能量。
 无金属时省略 `coordination` 整节即可；`coordination_class`、`metal_donor_distance`、`donor_orientation`
 三项审计记为 `skipped`，不判失败。
 
+### 运行时限（`execution.walltime_seconds`）
+
+在步骤的 `execution` 下写 `walltime_seconds`（正整数，秒）：
+
+```yaml
+- id: dg_search
+  executor: confgen
+  execution: {walltime_seconds: 7200}   # 秒；搜索在 6480 s（0.9 倍）时停止
+```
+
+搜索 worker 收到的时限是 `walltime_seconds × 0.9`（`confflow/execution/confgen_search_run.py`），到达后搜索以 `search.stop: "time_limit"` 结束，
+仍照常写出 `structures.xyz` 与 `summary.json`；收尾受时限限制时 stderr 给出 warning，使用前应检查 `search.release`。
+执行器自身对 `walltime_seconds` 计时，超时则步骤失败、不发布结构。因此应把它设得低于集群作业的时限，留出 0.9 倍之外的余量，
+避免在作业被 Slurm 以 TIMEOUT 终止时丢失结果。
+
 ## 4. xTB 配置
 
 搜索需要 xTB 可执行文件，按 `xtb` 程序名解析：步骤的 `execution.executable` 优先，
@@ -211,7 +226,7 @@ worker 记录 xTB 的 `xtb version … (commit)` 行到 `summary.json`。已完�
     无法归入任何理想多面体的为 `unclassified`），`start` 为极小 id，`passed` 为 `true`；
   - `totals`：`generated` 为全部优化次数（含收尾），`relaxed` 为收敛数，`passed` 为发布数；
   - `search`：`relaxations`（搜索阶段的优化次数）、`stop`（搜索结束原因：`budget` 用完预算、`saturated`
-    自适应判定低能区不再增长、`no_moves` 没有可用的父构象或移动、`no_minima` 没有任何构象被接受）、
+    自适应判定低能区不再增长、`no_moves` 没有可用的父构象或移动、`no_minima` 没有任何构象被接受、`time_limit` 到达运行时限）、
     `release`（去约束收尾状态：`done`；`off` 未开启；`not_needed` 没有可去掉的约束；`failed` 收尾全部失败，
     此时发布的是仍带全部搜索约束的构象，worker 在 stderr 给出 warning）、`release_relaxations`（收尾次数）、`hessians`、
     `rotors`（转子数）、`targets_searched`、`unique_minima`、`spent`（各移动的花费）、
@@ -229,6 +244,9 @@ worker 记录 xTB 的 `xtb version … (commit)` 行到 `summary.json`。已完�
     `state_changes`（提示层）：扫描全部最终极小（含窗口外）中的离散两态二面角，远离边界 20° 以上，按相同结构集合合并，按图自同构换标。
   逐起点的失败记录不再列出（几千条），失败原因统一计入 `search.failures`。
 - worker 的 `stdout.log`、`stderr.log`（均为制品）。
+- 找发布的结构：`run_result.json` 的 `artifacts[]` 中，`locator` 以 `search_run/structures.xyz` 结尾的条目（`role` 为 `search_structures`）
+  即 `structures.xyz`；同目录的 `summary.json` 的 `role` 为 `search_summary`。每帧注释行含 `energy_eh=` 与 `rel_kcal=`，
+  有排布时末尾另有 ` arrangement=<aN>`。`summary.json` 的 `search` 下有 `input_seed`（输入种子状态）与 `state_changes`（提示层扫描结果）。
 - 成员的 `role` 为 `conformer`，`ordinal` 为能量名次（0-based），id 按 `conformer_output_id`；
   metadata 含 `seed`、`starts`、`energy_eh`、`rel_kcal`、`search_target`、`search_start`、
   `search_actual_target`、`search_release`。`search_target` 是发布的类目标，`search_start` 是极小 id，

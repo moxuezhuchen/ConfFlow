@@ -40,8 +40,8 @@ __all__ = [
 ]
 
 #: Spec-facing topology edge kinds (uppercase, matching the fixture
-#: convention). BREAKING is accepted and preserved losslessly in scope but
-#: has no lane B graph record yet.
+#: convention). BREAKING pairs are restrained like FORMING pairs: both are
+#: typed on the graph and listed in ``reaction_pairs`` for the xtb restraint.
 TOPO_EDGE_KINDS: tuple[str, ...] = ("COVALENT", "COORDINATION", "FORMING", "BREAKING")
 
 
@@ -75,6 +75,24 @@ def convert_index_list(values: Any, *, base: int, path: str) -> list[int]:
         convert_index(item, base=base, path=f"{path}[{position}]")
         for position, item in enumerate(values)
     ]
+
+
+def _pair_key(pair: Sequence[Any]) -> tuple[int, int]:
+    """Order-free identity of a reaction pair (lists, tuples or either order)."""
+    first, second = int(pair[0]), int(pair[1])
+    return (first, second) if first <= second else (second, first)
+
+
+def _unique_reaction_pairs(pairs: Sequence[Sequence[Any]]) -> list[list[int]]:
+    """Keep the first occurrence of each pair (either order), preserving order."""
+    seen: set[tuple[int, int]] = set()
+    unique: list[list[int]] = []
+    for pair in pairs:
+        key = _pair_key(pair)
+        if key not in seen:
+            seen.add(key)
+            unique.append([int(pair[0]), int(pair[1])])
+    return unique
 
 
 def convert_topo_entry(item: Any, *, base: int, path: str) -> Any:
@@ -290,13 +308,13 @@ def build_typed_graph(
         pairs = topology["bonds"]
         if isinstance(pairs, (str, bytes)) or not isinstance(pairs, Sequence):
             raise ValueError("topology.bonds must be a list of entries")
-        forming: list[list[int]] = []
+        restrained: list[list[int]] = []
         for index, item in enumerate(pairs):
             (first, second), kind, _extra = _topo_edge(item)
             _check(first, f"topology.bonds[{index}]")
             _check(second, f"topology.bonds[{index}]")
-            if kind is EdgeType.FORMING:
-                forming.append([first, second])
+            if kind in (EdgeType.FORMING, EdgeType.BREAKING):
+                restrained.append([first, second])
         declared_reactions = [
             [int(first), int(second)] for first, second in (topology.get("reaction_pairs") or [])
         ]
@@ -304,7 +322,7 @@ def build_typed_graph(
             "bonds": list(pairs),
             "atoms": list(topology.get("atoms", []) or []),
             "metal_center": metal_center,
-            "reaction_pairs": [*declared_reactions, *forming],
+            "reaction_pairs": _unique_reaction_pairs([*declared_reactions, *restrained]),
             "source": "v3-spec-explicit",
             "total_charge": getattr(structure, "charge", None),
             "multiplicity": getattr(structure, "multiplicity", None),
@@ -347,6 +365,7 @@ def build_typed_graph(
     reaction_pairs = [
         (int(first), int(second)) for first, second in (topology.get("reaction_pairs") or [])
     ]
+    restrained_keys = {_pair_key(pair) for pair in reaction_pairs}
     explicit_covalent: set[tuple[int, int]] = set()
     typed_non_covalent: set[tuple[int, int]] = set()
     for key in ("add_bond", "del_bond"):
@@ -391,8 +410,10 @@ def build_typed_graph(
                     provenance=extra.get("provenance", "add_bond"),
                 )
                 typed[(pair[0], pair[1], kind)] = edge
-                if kind is EdgeType.FORMING:
-                    reaction_pairs.append(pair)
+                if kind in (EdgeType.FORMING, EdgeType.BREAKING):
+                    if pair not in restrained_keys:
+                        restrained_keys.add(pair)
+                        reaction_pairs.append(pair)
             else:
                 if kind is not EdgeType.COVALENT:
                     raise ValueError(

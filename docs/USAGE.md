@@ -14,7 +14,7 @@ confflow --version
 
 ### 服务器安装方式
 
-服务器上使用源码安装，不使用离线 wheel 包安装：
+服务器上默认使用源码安装（离线发布流水线已退役，不再提供发布用 wheel）：
 
 ```bash
 git clone <confflow-仓库地址>     # 首次安装
@@ -27,6 +27,18 @@ pip install .
 ```bash
 git pull && pip install .
 ```
+
+### 无外网集群的临时办法（自建 wheel）
+
+集群无法联网或不便从源码构建时，可在能联网的机器上自己构建 wheel，再拷到集群安装（只作临时办法，不是发布渠道）：
+
+```bash
+pip wheel --no-deps .        # 在联网机器的仓库根目录执行，生成 confflow-*.whl
+pip install confflow-*.whl   # 在集群上执行
+```
+
+从源码构建需要 `setuptools>=82.0.1`（`pyproject.toml` 的 `[build-system] requires`）。
+`--no-deps` 只作用于构建命令；运行依赖仍由 `pyproject.toml` 的 `dependencies` 声明，集群上需另行提供。
 
 ## 2. 工作流文档
 

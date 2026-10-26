@@ -140,7 +140,7 @@ def test_typed_graph_kinds_and_covalent_separation():
     kinds = {(e.a, e.b): e.type for e in context.graph.edges}
     assert kinds[(0, 4)] is EdgeType.FORMING
     assert kinds[(1, 3)] is EdgeType.BREAKING
-    assert context.graph.reaction_pairs == ((0, 4),)
+    assert context.graph.reaction_pairs == ((0, 4), (1, 3))  # BREAKING is restrained too
     covalent = [list(row) for row in context.adjacency]
     assert covalent[0] == [1] and covalent[4] == [3]  # typed extras excluded
     assert context.graph.elements == tuple(_pentane("p").atoms)
