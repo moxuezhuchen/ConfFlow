@@ -290,8 +290,9 @@ def _run_dedupe(args: argparse.Namespace) -> int:
     rows = dedupe(identity, [entry.coords for entry in entries], energies)
     kept = [row.index for row in rows if row.representative == row.index]
     members = Counter(row.representative for row in rows)
-    if all(entry.energy is not None for entry in entries):
-        kept.sort(key=lambda index: entries[index].energy)
+    known = [entry.energy for entry in entries]
+    if all(energy is not None for energy in known):
+        kept.sort(key=lambda index: float(known[index] or 0.0))
     if args.output:
         _write_representatives(args.output, entries, kept, members)
     if args.json:

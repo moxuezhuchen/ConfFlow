@@ -155,7 +155,7 @@
         "confflow/main.py"
       ],
       "prod_files": 6,
-      "prod_loc_limit": 3031,
+      "prod_loc_limit": 3032,
       "ratchet": "DIET-2 里程碑（R1/R2/N/T1/S1）验收通过后按实际值重写本上限；此后只降不升，提高须写 reason 并经用户确认。",
       "reason": "DIET-2 里程碑后棘轮：上限=实际值(基 main 5ca27fa)。；2026-10-10 DG 搜索接入 confgen 步骤（脚本入口删除）：上限=实测值；2026-10-11 GUI G16/ORCA修复：结构转换XYZ产物导出，按实测值设上限，用户已确认本次预算增加（Q2）；2026-10-21 GPT review 修复（执行策略 allowed_executables/sandbox 落实、ConfGen 复用身份含 xTB 二进制、脚本命令/解释器进复用身份且执行 env/walltime、CLI 恢复与严格 YAML）：上限=实测值；2026-10-23 Gemini review 修复（ConfGen/脚本启动环境进入复用摘要、配额租约统一 finally 释放、科学参数冲突警告归属当前步骤）：上限=实测值（小幅增长，按用户 2026-10-10 约定无需逐次确认）；2026-10-24 删除 PAUSED 状态与 resume 控制操作：上限收紧到实测值；2026-10-26 使用问题修复 PR1（docs/plans/confflow-usage-fixes-20261026.md：BREAKING 进反应对约束、validate 文本输出、CN≥7 排布警告）：上限=实测值（小幅增长，按用户 2026-10-10 约定无需逐次确认）；2026-10-26 使用问题修复 PR2（docs/plans/confflow-usage-fixes-20261026.md 第 8 节：每结构反应对距离/给体拉伸/状态翻转标签、max_donor_stretch、restraint_force_constant、donor_stretched 与 input_gap 诊断、v4 run 文本诊断）：上限=实测值（小幅增长，按用户 2026-10-10 约定无需逐次确认）；2026-10-26 confflow compare/dedupe 命令（docs/plans/confflow-usage-fixes-20261026.md 第 9 节，用户选定 C2 先做：science/confgen/compare.py 复用 Identity、application/structure_compare.py 命令行与 XYZ 读写）：上限=实测值（新功能，entry_cli +400、confgen +144）"
     },
