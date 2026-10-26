@@ -10,6 +10,12 @@ rejected outright (see :data:`REMOVED_ENGINES_MESSAGE`).
 Only supported controls are exposed, with one explicit atom index
 convention. The ``search`` section is optional; an absent section means all
 defaults (budget 1500 relaxations, 6 kcal/mol window, search across donor arrangements).
+
+Scope: the metal has one declared donor per binding site. Under shape ``input`` a
+binding site may be declared ``optional`` (a semi-labile donor that is bound in the input
+structure): the search then runs one sub-search per bound/detached state of the optional
+sites (at most 2 optional, at least 2 required) and publishes the merged result. Dissociation
+and coordination-number changes outside those declared states remain out of scope.
 """
 
 from __future__ import annotations
@@ -31,6 +37,9 @@ from pydantic import (
 #: test): the workflow schema must not import the science package at module import time.
 INPUT_SHAPE = "input"
 INPUT_CN_MIN = 2
+#: Optional binding-site limits (2**k search states): at most 2 optional, at least 2 required.
+MAX_OPTIONAL_DONORS = 2
+MIN_REQUIRED_DONORS = 2
 
 Index = Annotated[StrictInt, Field(ge=0)]
 Positive = Annotated[float, Field(gt=0, strict=True)]
@@ -65,6 +74,8 @@ class BindingSiteModel(ConfgenSpecModel):
     kind: Literal["atom"] = "atom"
     atoms: list[Index] = Field(min_length=1, max_length=1)
     hapticity: StrictInt = Field(default=1, ge=1, le=1)
+    #: Semi-labile donor: bound in the input structure, searched both bound and detached.
+    optional: StrictBool = False
 
 
 class CoordinationConstraintModel(ConfgenSpecModel):
@@ -94,6 +105,24 @@ class CoordinationGenerationSpec(ConfgenSpecModel):
     def check_shapes_and_sites(self) -> CoordinationGenerationSpec:
         if len(set(self.shapes)) != len(self.shapes):
             raise ValueError(f"coordination shapes hold duplicates: {self.shapes!r}")
+        optional_sites = [site for site in self.binding_sites if site.optional]
+        if optional_sites:
+            if self.shapes != [INPUT_SHAPE]:
+                raise ValueError(
+                    f"optional binding sites {[s.id for s in optional_sites]!r} require "
+                    f"shapes [{INPUT_SHAPE!r}], got {self.shapes!r}"
+                )
+            if len(optional_sites) > MAX_OPTIONAL_DONORS:
+                raise ValueError(
+                    f"at most {MAX_OPTIONAL_DONORS} optional binding sites are supported, "
+                    f"got {len(optional_sites)}: {[s.id for s in optional_sites]!r}"
+                )
+            required = len(self.binding_sites) - len(optional_sites)
+            if required < MIN_REQUIRED_DONORS:
+                raise ValueError(
+                    f"at least {MIN_REQUIRED_DONORS} non-optional binding sites are required "
+                    f"alongside optional sites, got {required}"
+                )
         if self.shapes == [INPUT_SHAPE]:
             if len(self.binding_sites) < INPUT_CN_MIN:
                 raise ValueError(
@@ -255,8 +284,18 @@ class ConfgenModelV3(ConfgenSpecModel):
         return value
 
     def scientific_native(self) -> dict[str, Any]:
-        """Return the typed scope wire."""
-        return cast(
+        """Return the typed scope wire.
+
+        The ``optional`` binding-site flag is emitted only when True, so documents without
+        optional sites keep their pre-existing native (and contract digests) byte for byte.
+        """
+        native = cast(
             dict[str, Any],
             self.model_dump(mode="json", exclude_none=True),
         )
+        coordination = native.get("coordination")
+        if isinstance(coordination, dict):
+            for site in coordination.get("binding_sites", []):
+                if site.get("optional") is False:
+                    del site["optional"]
+        return native

@@ -27,6 +27,7 @@ from confflow.science.confgen.search_spec import (
     DEFAULT_SEARCH_BUDGET_CAP,
     DEFAULT_SEARCH_WINDOW_KCAL,
     build_search_context,
+    donor_states,
     resolve_search_starts,
 )
 from confflow.science.topology import should_persist_working_graph
@@ -41,6 +42,7 @@ from ..domain.structure import StructureRecord, StructureSet
 from ..domain.work_item import RecoveryInfo, Timing, WorkItem, WorkItemResult
 from .binding_resolution import effective_native_env
 from .confgen_executor import ConfgenExecutor
+from .confgen_search_worker import donor_state_label
 from .native import NativeExecutionRequest
 from .output_identity import CONFORMER_MEMBER_METADATA_KEY, conformer_output_id, endpoint_lineage
 from .quota import QuotaCancelled, QuotaError
@@ -140,6 +142,154 @@ def _high_cn_arrangement_diagnostic(
         None,
         FrozenDict({"coordination_number": cn, "arrangement": "search"}),
     )
+
+
+def _donor_states_diagnostics(
+    rows: list[Any], measured: list[Any], step_id: str, work_item: WorkItem
+) -> list[Diagnostic]:
+    """Report optional-donor states by measured state, and per sub-search re-bindings.
+
+    ``measured`` counts published structures by the donor state they measure at (not the
+    sub-search that produced them). ``rows`` count, per sub-search, every passing structure
+    and those that ended in another measured state. A declared state with no published
+    structure is a WARNING saying whether its sub-search changed state or produced nothing.
+    """
+    rows = [row for row in rows if isinstance(row, dict)]
+    measured = [row for row in measured if isinstance(row, dict)]
+    parts = [
+        f"{row.get('label') or '-'}: {row.get('published')} published"
+        + (
+            ""
+            if not row.get("published") or row.get("lowest_rel_kcal") is None
+            else f", lowest {float(row['lowest_rel_kcal']):+.2f}"
+        )
+        for row in measured
+    ]
+    clauses = [_sub_search_clause(row) for row in rows]
+    message = (
+        f"optional donor states (measured): {'; '.join(parts)}. "
+        f"Sub-searches: {'; '.join(clauses) if clauses else 'none'}."
+    )
+    info = Diagnostic(
+        "confgen_donor_states",
+        message,
+        DiagnosticSeverity.INFO,
+        step_id,
+        work_item.id,
+        work_item.logical_key,
+        None,
+        FrozenDict(
+            {"states": [dict(row) for row in rows], "measured": [dict(row) for row in measured]}
+        ),
+    )
+    out = [info]
+    missing = [row for row in measured if not row.get("published")]
+    if missing:
+        by_label = {str(row.get("label") or "-"): row for row in rows}
+        texts = [
+            _missing_state_text(row, by_label.get(str(row.get("label") or "-"))) for row in missing
+        ]
+        out.append(
+            Diagnostic(
+                "confgen_donor_state_missing",
+                "declared donor state(s) with no published structure: " + "; ".join(texts),
+                DiagnosticSeverity.WARNING,
+                step_id,
+                work_item.id,
+                work_item.logical_key,
+                None,
+                FrozenDict({"missing": [str(row.get("label") or "-") for row in missing]}),
+            )
+        )
+    return out
+
+
+def _changed_notes(row: Mapping[str, Any]) -> list[str]:
+    """``N re-bound <site>`` / ``N detached <site>`` notes of one sub-search row."""
+    return [
+        f"{count} {verb} {sid}"
+        for verb, key in (("re-bound", "rebound"), ("detached", "detached"))
+        for sid, count in sorted((row.get(key) or {}).items())
+    ]
+
+
+def _sub_search_clause(row: Mapping[str, Any]) -> str:
+    """One sub-search: passing count, what changed state, lowest energy."""
+    label = str(row.get("label") or "-")
+    passed = int(row.get("passed") or 0)
+    noun = "structure" if passed == 1 else "structures"
+    notes = _changed_notes(row)
+    text = f"{label} search: {passed} passing {noun}"
+    text += (", " + ", ".join(notes)) if notes else (", none changed donor state" if passed else "")
+    lowest = _finite_number(row.get("lowest_rel_kcal"))
+    if lowest is not None and passed:
+        text += f" (lowest {lowest:+.2f} kcal)"
+    return text
+
+
+def _missing_state_text(row: Mapping[str, Any], sub: Mapping[str, Any] | None) -> str:
+    """Why a declared state has no published structure: its sub-search changed state or not."""
+    label = str(row.get("label") or "-")
+    passed = int((sub or {}).get("passed") or 0)
+    if not passed:
+        return f"{label} (its sub-search produced no passing structures)"
+    notes = _changed_notes(sub or {})
+    noun = "structure" if passed == 1 else "structures"
+    if notes:
+        return (
+            f"{label} (its sub-search produced {passed} passing {noun}, which changed state "
+            f"({', '.join(notes)}); none was published)"
+        )
+    return (
+        f"{label} (its sub-search produced {passed} passing {noun}, none changed state; "
+        "none was published)"
+    )
+
+
+def _donor_job_fields(native: Mapping[str, Any], driving: Any, base: int) -> dict[str, Any]:
+    """Job fields for optional binding sites; empty without any (no new keys then)."""
+    try:
+        states = donor_states(native)
+    except ValueError as exc:
+        raise DomainError(f"confgen v4 search rejected: {exc}") from exc
+    if len(states) == 1 and not states[0].label:
+        return {}
+    coordination = native.get("coordination")
+    sites = coordination.get("binding_sites") if isinstance(coordination, Mapping) else None
+    donor_sites = [
+        [str(site.get("id")), int(site["atoms"][0]) - base]
+        for site in (sites or [])
+        if isinstance(site, Mapping) and site.get("optional", False) is True
+    ]
+    entries: list[dict[str, Any]] = []
+    for state in states:
+        built = build_search_context(driving, state.native)
+        section = built.coordination_section
+        entries.append(
+            {
+                "label": state.label,
+                "coordination": thaw_value(section) if isinstance(section, Mapping) else None,
+            }
+        )
+    return {"donor_states": entries, "donor_sites": donor_sites}
+
+
+def _optional_bound_of(rec: Mapping[str, Any]) -> dict[int, bool] | None:
+    raw = rec.get("optional_bound")
+    if raw is None:
+        return None
+    return {int(k): bool(v) for k, v in raw.items()}
+
+
+def _donor_metadata(rec: Mapping[str, Any], sites: list[tuple[str, int]]) -> dict[str, Any]:
+    """Member keys for the measured donor state (none without optional donors)."""
+    bound = _optional_bound_of(rec)
+    if bound is None or not sites:
+        return {}
+    return {
+        "search_optional_bound": {str(atom + 1): flag for atom, flag in sorted(bound.items())},
+        "search_donor_state": donor_state_label(sites, bound),
+    }
 
 
 def _arrangement_changed_diagnostic(
@@ -471,6 +621,7 @@ def _run(
     if coord_section is not None and (coord is None or shape is None):
         raise DomainError("confgen search coordination did not resolve to one shape")
     base, natoms = int(native.get("index_base", 1)), len(driving.atoms)
+    donor_doc = _donor_job_fields(spec, driving, base)
     raw_charges = section.get("fragment_charges", []) if isinstance(section, Mapping) else []
     frag = tuple((int(e["atom"]) - base, int(e["charge"])) for e in raw_charges)
     for atom, _ in frag:
@@ -594,6 +745,7 @@ def _run(
         "input_baseline_file": os.path.join(rundir, "input_baseline.json"),
         # Leave time for worker setup/final serialization before the outer hard deadline.
         "time_limit_seconds": None if walltime is None else max(0.001, walltime * 0.9),
+        **donor_doc,
     }
     with open(job_path, "w", encoding="utf-8") as handle:
         handle.write(json.dumps(job_doc, sort_keys=True, indent=2) + "\n")
@@ -710,6 +862,7 @@ def _run(
         search_stats = payload.get("search")
         search_stats = search_stats if isinstance(search_stats, dict) else {}
         release = search_stats.get("release")
+        donor_sites = [(str(sid), int(atom)) for sid, atom in donor_doc.get("donor_sites", [])]
         members: list[StructureRecord] = []
         for rank, rec in enumerate(ordered):
             energy = rec.get("energy_eh")
@@ -743,6 +896,7 @@ def _run(
                             "search_donor_stretch": rec.get("donor_stretch"),
                             "search_state_flips": rec.get("state_flips"),
                             "search_release": release,
+                            **_donor_metadata(rec, donor_sites),
                         }
                     ),
                     inherit_patch,
@@ -830,6 +984,16 @@ def _run(
         donor_diag = _donor_stretch_diagnostic(ordered, context.step_id, work_item, base)
         if donor_diag is not None:
             diagnostics.append(donor_diag)
+        if isinstance(search_stats.get("donor_states"), list):
+            measured = search_stats.get("donor_measured")
+            diagnostics.extend(
+                _donor_states_diagnostics(
+                    search_stats["donor_states"],
+                    measured if isinstance(measured, list) else [],
+                    context.step_id,
+                    work_item,
+                )
+            )
         gap_diag = _input_gap_diagnostic(payload.get("input_baseline"), context.step_id, work_item)
         if gap_diag is not None:
             diagnostics.append(gap_diag)

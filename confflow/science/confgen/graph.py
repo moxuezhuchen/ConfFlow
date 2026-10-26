@@ -265,10 +265,13 @@ class BindingSite:
     kind: str = "atom"
     atoms: tuple[int, ...] = ()
     hapticity: int = 1
+    optional: bool = False
 
     def __post_init__(self) -> None:
         if not self.id or not isinstance(self.id, str):
             raise UnsupportedTopologyError("binding site id must be a non-empty string")
+        if not isinstance(self.optional, bool):
+            raise UnsupportedTopologyError(f"binding site {self.id!r}: optional must be a bool")
         if self.kind != "atom":
             raise UnsupportedTopologyError(
                 f"binding site {self.id!r}: only kind='atom' is supported, got {self.kind!r}"
@@ -558,6 +561,9 @@ class CoordinationSpec:
     constraints: tuple[ForbiddenTrans, ...] = ()
     witnesses: tuple[tuple[int, ...], ...] = ()
     budgets: Mapping[str, int] | None = None
+    #: Zero-based atoms of optional binding sites declared detached in this search state. They
+    #: are neither donors nor metal-bound restraints; they only stay declared (never a clash).
+    detached_donors: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.metal_center, int) or self.metal_center < 0:
@@ -569,6 +575,17 @@ class CoordinationSpec:
             raise UnsupportedTopologyError("duplicate donor atoms across binding sites")
         if self.metal_center in donors:
             raise UnsupportedTopologyError("metal center must not be a donor atom")
+        detached = tuple(self.detached_donors)
+        object.__setattr__(self, "detached_donors", detached)
+        for atom in detached:
+            if isinstance(atom, bool) or not isinstance(atom, int) or atom < 0:
+                raise UnsupportedTopologyError("detached donor must be a non-negative int")
+        if len(set(detached)) != len(detached):
+            raise UnsupportedTopologyError("duplicate detached donor atoms")
+        if set(detached) & set(donors):
+            raise UnsupportedTopologyError("detached donor atoms must not be bound donors")
+        if self.metal_center in detached:
+            raise UnsupportedTopologyError("metal center must not be a detached donor atom")
         cn = len(sites)
         shapes = tuple(self.shapes)
         if shapes == (INPUT_SHAPE,):

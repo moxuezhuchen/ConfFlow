@@ -7,7 +7,7 @@ names an engine.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal
 
@@ -21,7 +21,13 @@ from confflow.science.confgen.calculator import (
     RelaxOutcome as RelaxOutcome,  # re-exported: search.RelaxOutcome predates the protocol
 )
 from confflow.science.confgen.coordination import enumeration, perception, shapes
-from confflow.science.confgen.dg_seed import DGSeedError, DGSeedSettings, generate_dg_seeds
+from confflow.science.confgen.dg_seed import (
+    DETACHED_DISTANCE_FACTOR,
+    DGSeedError,
+    DGSeedSettings,
+    detached_donors_of,
+    generate_dg_seeds,
+)
 from confflow.science.confgen.graph import INPUT_SHAPE, CoordinationSpec, EdgeType, TypedGraph
 from confflow.science.confgen.stereo import (
     DoubleBondState,
@@ -42,7 +48,8 @@ from confflow.science.data import get_atomic_number
 __all__ = (
     "CHECKS AuditRecord CoordinationContact InputBaseline RelaxOutcome SearchCancelled SearchError SearchRecord "
     "SearchRun SearchSettings SearchStart SearchStarts SearchTarget audit_structure "
-    "distance_restraints generate_starts plan_targets"
+    "DETACHED_DISTANCE_FACTOR detached_restraints distance_restraints generate_starts "
+    "optional_bound_state plan_targets"
 ).split()
 
 CHECKS = tuple(
@@ -185,9 +192,11 @@ class SearchRecord:
     donor_stretch_atom: int | None = None
     #: 1-based ``state_changes`` units this structure flips; ``None`` when not scanned
     state_flips: tuple[int, ...] | None = None
+    #: optional donor (0-based atom index) -> bound at its measured distance; ``None`` if unused
+    optional_bound: dict[int, bool] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "target": self.target,
             "start": int(self.start),
             "energy_eh": self.energy_eh,
@@ -204,6 +213,9 @@ class SearchRecord:
             "donor_stretch_atom": self.donor_stretch_atom,
             "state_flips": None if self.state_flips is None else [int(u) for u in self.state_flips],
         }
+        if self.optional_bound is not None:
+            payload["optional_bound"] = {int(k): bool(v) for k, v in self.optional_bound.items()}
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -412,6 +424,47 @@ def distance_restraints(
     return tuple(DistanceRestraint(i, j, float(np.linalg.norm(ref[i] - ref[j]))) for i, j in wanted)
 
 
+def detached_restraints(
+    graph: TypedGraph, spec: CoordinationSpec | None, reference: np.ndarray
+) -> tuple[DistanceRestraint, ...]:
+    """Equality restraints holding each detached optional donor at its detached distance.
+
+    Restrained stage only: the explorer keeps them out of the release (reaction pairs only),
+    so a released structure decides its donor state by measurement.
+    """
+    metal = graph.metal_center
+    if metal is None or spec is None:
+        return ()
+    ref = np.asarray(reference, dtype=float)
+    return tuple(
+        DistanceRestraint(
+            int(metal),
+            int(d),
+            DETACHED_DISTANCE_FACTOR * float(np.linalg.norm(ref[metal] - ref[d])),
+        )
+        for d in detached_donors_of(spec)
+    )
+
+
+def optional_bound_state(
+    coords: np.ndarray,
+    metal: int,
+    optional_refs: Mapping[int, float],
+    slack: float = 1.3,
+) -> dict[int, bool]:
+    """Return ``{atom: bound}`` for optional donors, bound iff distance <= slack x reference.
+
+    ``optional_refs`` maps 0-based donor indices to their input metal-donor distances.
+    """
+    if not np.isfinite(slack) or slack <= 0:
+        raise SearchError(f"slack must be positive, got {slack!r}")
+    xyz = np.asarray(coords, dtype=float)
+    return {
+        int(atom): bool(_dist(xyz, metal, int(atom)) <= slack * float(ref))
+        for atom, ref in sorted(optional_refs.items())
+    }
+
+
 def _radius(symbol: str) -> float:
     radius = covalent_radius(get_atomic_number(symbol))
     if radius is None:
@@ -428,6 +481,7 @@ def _coordination_contacts(
     ref: np.ndarray,
     graph: TypedGraph,
     donors: Sequence[int],
+    detached: Sequence[int] = (),
 ) -> tuple[CoordinationContact, ...]:
     """Explain new near contacts using the fixed covalent graph and local geometry.
 
@@ -455,7 +509,8 @@ def _coordination_contacts(
         "Ba",
         "Ra",
     }
-    declared = set(donors) | {metal}
+    # A detached optional donor is declared: nearing the metal again is not a new contact.
+    declared = set(donors) | set(detached) | {metal}
     result = []
     for j, element in enumerate(elements):
         if j in declared:
@@ -629,7 +684,8 @@ def audit_structure(
         if shape == INPUT_SHAPE:
             # the donor arrangement is checked by the explorer; here only new coordination counts
             actual = tuple(range(spec.coordination_number))
-            coordination_contacts = _coordination_contacts(new, ref, graph, donors)
+            detached = detached_donors_of(spec)
+            coordination_contacts = _coordination_contacts(new, ref, graph, donors, detached)
             if any(contact.changed for contact in coordination_contacts):
                 failed.append("coordination_class")
         else:

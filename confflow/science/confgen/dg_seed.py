@@ -44,6 +44,11 @@ _CHARGE_ORDER: tuple[int, ...] = (0, -1, 1, -2, 2, -3, 3, -4)
 #: bounds must contain it.
 _INPUT_ADMIT_TOL: float = 0.25
 
+#: Detached optional donor distance (x its input reference distance to the metal). It is the DG
+#: lower bound and the equality restraint of the restrained stage: the donor may leave the metal
+#: but must not close back onto it. Defined here (search imports dg_seed, not the reverse).
+DETACHED_DISTANCE_FACTOR: float = 1.5
+
 
 @dataclass(frozen=True, slots=True, eq=False)
 class _InputTemplate:
@@ -251,6 +256,13 @@ def _split_fragments(
     return fragments
 
 
+def detached_donors_of(spec: CoordinationSpec | None) -> tuple[int, ...]:
+    """Return the 0-based optional donors declared off in this sub-search (empty by default)."""
+    if spec is None:
+        return ()
+    return tuple(int(d) for d in getattr(spec, "detached_donors", ()) or ())
+
+
 def _validate_inputs(
     graph: TypedGraph,
     spec: CoordinationSpec | None,
@@ -324,6 +336,17 @@ def _validate_inputs(
             raise DGSeedError(f"donor atom {donor!r} is out of range")
         if donor == metal:
             raise DGSeedError("metal center must not be a donor atom")
+    detached = detached_donors_of(spec)
+    if detached:
+        if shape != INPUT_SHAPE:
+            raise DGSeedError("detached donors need shape 'input'")
+        if len(set(detached)) != len(detached):
+            raise DGSeedError("detached donors contain duplicate atom indices")
+        for donor in detached:
+            if not 0 <= donor < graph.natoms:
+                raise DGSeedError(f"detached donor {donor!r} is out of range")
+            if donor == metal or donor in donors:
+                raise DGSeedError(f"detached donor {donor!r} is also a bound donor or metal")
     if shape == INPUT_SHAPE:
         # indices are validated above, so the template reads only real atoms
         template = _InputTemplate(
@@ -826,6 +849,15 @@ def generate_dg_seeds(
             if pair in reactions:
                 tol = settings.forming_neighbor_tolerance
             _set_pair(metal, peer, _ref_dist(metal, peer), tol)
+    if metal is not None:
+        # Detached optional donors: open above, bounded below, never in the core template.
+        # Set after the donor-neighbour loop so no metal-substituent bound survives on them.
+        for donor in detached_donors_of(spec):
+            low, high = (metal, donor) if metal < donor else (donor, metal)
+            bounds[low, high] = 1000.0
+            bounds[high, low] = DETACHED_DISTANCE_FACTOR * float(
+                np.linalg.norm(ref[metal] - ref[donor])
+            )
     core = [] if metal is None else [metal] + list(donors)
     free = settings.free_arrangement and metal is not None
     base_bounds = bounds.copy()
