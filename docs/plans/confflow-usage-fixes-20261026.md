@@ -106,3 +106,32 @@
 | K4（我，最后） | 文档 | `docs/CONFGEN_CAPABILITIES.md`、`docs/USAGE.md` |
 
 力常数实测（B1，2026-10-26，本地，21 次 xTB 优化约 4 分钟）：TS1 金标准 7 个结构只约束 O74–C79，力常数 1/2/5 时最大距离偏离 0.0135/0.0067/0.0027 Å，步数与耗时基本不变，能量相差 ≤0.33 kcal/mol。默认保持 1.0，文档建议跨运行比较时统一用 5。脚本与原始输出在会话 scratchpad `fc/`（临时）。
+
+## 9. C2 去重/比较命令（2026-10-26）
+
+问题（notes 10-25/10-26）：普通重原子 RMSD 不认对称置换（tBu/甲基、苯环邻/间位翻转），同一个 TS 的副本被当成不同结构（TS1 两帧 ΔE 0.004 kcal、RMSD 1.01 Å；TS2 16 个"唯一"实为 10 个）。
+
+做法：复用 ConfGen 搜索内部已经在用的 `identity.Identity`（图自同构 + 镜像的 RMSD、距离轮廓下界），不新写判同算法。
+- 只比较重原子、杂原子上的 H 和非共价边上的 H；C–H 氢（甲基、tBu）不参与，所以甲基转动和 tBu 置换不影响结果。
+- 图从第一帧按距离感知（`bond_scale` 默认 1.15）；只有一个金属时其边记为配位；`--pair` 声明的反应对记为 FORMING 边。整组结构共用这一张图。
+- 判同：对称 RMSD < `--rmsd`（默认 0.2 Å，同 ConfGen）且（两者能量都已知时）|ΔE| ≤ `--e-tol`（默认 0.5 kcal/mol，同 ConfGen）。镜像默认算同一个（同 ConfGen），`--no-mirror` 关闭。
+- 能量从注释行读取：`energy_eh=`，或 ORCA 的 `E <数>`；读不到就只按几何判同。
+
+命令：
+- `confflow compare A.xyz[@k] B.xyz[@k]`：打印对称 RMSD、普通重原子 RMSD、是否同一结构。
+- `confflow dedupe IN.xyz [IN2.xyz ...] -o OUT.xyz`：有能量时按能量升序处理，每组保留最低者；打印"N 帧 → M 个唯一"和每帧归属；`--json` 输出机器可读报告。输出帧保留原注释，追加 `members=<n>`。
+
+接口：
+- `confflow/science/confgen/compare.py`（纯计算，我写）：`structure_identity(elements, coords, *, bond_scale=1.15, metal=None, reaction_pairs=(), r_tol=R_TOL, mirror=True, e_tol=E_TOL) -> Identity`；`pair_rmsd(identity, x, y) -> tuple[float, float]`（对称、普通）；`dedupe(identity, frames, energies) -> list[DedupeRow]`，`DedupeRow(index, representative, rmsd, delta_kcal)`，每个输入帧一行，按输入顺序。`Identity` 增加 `e_tol` 属性（默认 `E_TOL`，行为不变）。
+- `confflow/application/structure_compare.py`（I/O 与参数，子代理写）；`confflow/cli.py` 分派 `compare`/`dedupe`。
+
+验证：TS1 试点 stage 4 的 37 个通过 TS（用户手工规则判为 15 个唯一）。
+
+| 任务 | 内容 | 负责文件 |
+|---|---|---|
+| D1（我） | 纯计算模块与测试 | `science/confgen/compare.py`、`identity.py`（`e_tol`），新测试 `tests/v4/test_confgen_structure_compare.py` |
+| D2 | CLI、xyz 读写、能量解析、文档 | `application/structure_compare.py`、`cli.py`、`docs/COMMAND_REFERENCE.md`、`docs/USAGE.md`，新测试 `tests/test_structure_compare_cli.py` |
+
+验证结果（2026-10-26，本地，`compare.dedupe` 直接调用）：
+- TS1 试点 stage 4 的 37 个通过 TS（UMA，能量 Eh）：默认阈值（0.2 Å / 0.5 kcal）→ 15 个唯一，22 个重复的归属与用户手工规则（|ΔE|<0.02 kcal 且排序重原子距离差 <0.01 Å）逐条相同；收紧到 0.1/0.1、0.05/0.02 结果不变。3 秒（122 原子，图自同构 5184 个）。
+- fc_results 的 5 个力收敛 TS：笔记中的例子 new0126_b / new0126c 与 poolHm0301_b 普通重原子 RMSD 1.013 Å，对称 RMSD 0.000、ΔE 0.000 → 判为同一结构；5 → 3。

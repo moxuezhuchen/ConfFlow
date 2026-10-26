@@ -86,6 +86,51 @@ confflow --stop
 `--rerun-failed` / `--step` / `-o/--output` 已退役：仍可解析（`--help` 标注 `retired; fails closed`），
 但一经传入即以 `legacy_workflow_not_executable` 失败关闭。
 
+## confflow compare / dedupe（结构比较与去重）
+
+判断任意多帧 XYZ 中的结构是否为同一个（对称等价、镜像默认视为同一个）。细节见 [`USAGE.md`](USAGE.md) 第 7 节。
+
+```bash
+confflow compare A.xyz[@k] B.xyz[@k] [选项] [--json]
+confflow dedupe IN.xyz [IN2.xyz ...] [-o OUT.xyz] [选项] [--json]
+```
+
+- `PATH@k`：0 基帧号，默认 `@0`。
+- `compare` 以 A 的图（第一个选中帧）为准，打印对称 RMSD、普通重原子 RMSD、ΔE（两者能量都已知时）和判定 `same` / `different`。
+- `dedupe` 以第一个输入文件的第一帧为准建图；有能量时按能量升序，每组保留最低者；打印 `N frames -> M unique` 和每帧归属。
+- 两个命令都只要不出错就返回 0（判同结果不影响退出码）。
+
+| 参数 | 说明 |
+| --- | --- |
+| `--rmsd 0.2` | 对称 RMSD 阈值（Å，严格小于才算同一结构；同 ConfGen） |
+| `--e-tol 0.5` | 能量容差（kcal/mol，`|ΔE| <= e_tol` 才算同一结构；同 ConfGen） |
+| `--no-mirror` | 不把镜像像视为同一结构（默认视为同一个） |
+| `--bond-scale 1.15` | 由距离判定成键时的系数（建图用第一帧） |
+| `--metal N` | 金属原子的 1 基序号（默认自动识别；只有一个金属时其边记为配位） |
+| `--pair I J` | 1 基反应对（声明为成键中的边，可重复） |
+| `--no-energy` | 忽略能量，只按几何判同 |
+| `--json` | 打印 JSON 报告，而不是文本 |
+| `-o/--output`（仅 dedupe） | 写出每组代表帧；注释保留原文并追加 ` members=<组内帧数>` |
+
+能量从帧注释行读取：`energy_eh=<Eh>` 优先，其次 ORCA 风格的 `E <数>`；都读不到则只按几何判同。
+
+`compare --json` 报告键：`a`、`b`（`file`、`frame`）、`symmetry_rmsd`、`heavy_atom_rmsd`、`delta_kcal`（未知为 `null`）、`rmsd_threshold`、`e_tol`、`verdict`。
+
+`dedupe --json` 报告键：`total`、`unique`、`output`（未给 `-o` 时为 `null`）、`frames`（每帧一项：`file`、`frame`、`representative_file`、`representative_frame`、`rmsd`、`delta_kcal`；代表帧的 `rmsd`/`delta_kcal` 为 `null`）。
+
+输入错误（XYZ 截断、坐标非数值、帧之间元素序列不一致、索引越界、选项非法、文件不可读）打印 `Error: <消息>` 并返回 `2`。
+
+示例输出（数字仅示意格式）：
+
+```text
+$ confflow dedupe ts1_pilot.xyz -o ts1_unique.xyz
+37 frames -> 15 unique
+ts1_pilot.xyz@0: unique
+ts1_pilot.xyz@1: duplicate of ts1_pilot.xyz@0 (rmsd 0.05 A, dE 0.01 kcal/mol)
+...
+wrote ts1_unique.xyz (15 frames)
+```
+
 ## 返回码
 
 - `0`：成功

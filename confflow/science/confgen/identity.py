@@ -156,8 +156,11 @@ class Identity:
         mirror: bool = True,
         fixed_atoms: Sequence[int] = (),
         stereo_states: tuple[DoubleBondState, ...] | None = None,
+        e_tol: float = E_TOL,
     ) -> None:
         self.graph = graph
+        #: kcal/mol: larger energy differences are always different minima
+        self.e_tol = float(e_tol)
         self.double_bond_states = stereo_states
         self.r_tol = float(r_tol)
         self.mirror = mirror
@@ -454,7 +457,7 @@ class Identity:
 
         A NaN energy (unknown) skips the energy test.
         """
-        if abs(e1 - e2) * HARTREE_TO_KCAL > E_TOL:
+        if abs(e1 - e2) * HARTREE_TO_KCAL > self.e_tol:
             return False
         return self._bound(f1, f2) < self.r_tol
 
@@ -542,7 +545,7 @@ class MinimaPool:
         need = [
             (i, s)
             for i, (r, fp) in enumerate(zip(rows, fps))
-            for s in np.flatnonzero(np.abs(energy[: base + i] - r[0]) * HARTREE_TO_KCAL <= E_TOL)
+            for s in np.flatnonzero(np.abs(energy[: base + i] - r[0]) * HARTREE_TO_KCAL <= idn.e_tol)
             if idn.close(r[0], fp, states[s][0], states[s][2])
         ]
         pairs = [(rows[i][1], states[s][1]) for i, s in need]
