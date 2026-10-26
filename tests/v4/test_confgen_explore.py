@@ -276,9 +276,12 @@ def test_adaptive_budget_stops_once_saturated() -> None:
     assert 64 <= run.stats["relaxations"] < 600
     fixed = explore.explore(graph, None, ref, None, _settings(**kw), _FakeCalc(), map)
     assert fixed.stats["adaptive"] is False and fixed.stats["relaxations"] == 600
-    assert {round(r.energy_eh, 6) for r in fixed.passing} == {
-        round(r.energy_eh, 6) for r in run.passing
-    }
+    # Same minima; a longer run may keep a slightly lower duplicate (within the identity
+    # tolerance) as the representative, so compare energies pairwise within 1e-5 Eh.
+    longer = sorted(float(r.energy_eh) for r in fixed.passing)
+    shorter = sorted(float(r.energy_eh) for r in run.passing)
+    assert len(longer) == len(shorter)
+    assert all(abs(a - b) < 1e-5 for a, b in zip(longer, shorter))
 
 
 def test_adaptive_budget_never_stops_before_its_minimum() -> None:
