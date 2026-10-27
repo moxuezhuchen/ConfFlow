@@ -814,7 +814,7 @@ def _validate_filter_energy_binding(
                     DiagnosticCode.BINDING_ERROR,
                     DiagnosticReason.FILTER_RESULTS_REQUIRED,
                     "filter steps using energy parameters must bind the 'results' "
-                    "input port to a calculation step's results output port",
+                    "input port to a calculation or mlip step's results output port",
                     step_id=step.id,
                     field_path=f"{field_path}.bindings.results",
                     details={
@@ -855,6 +855,10 @@ def _validate_refine_results_binding(
     )
 
 
+#: Executors whose ``results`` output may feed a filter/refine energy source.
+_RESULTS_SOURCE_CAPABILITIES = frozenset({ExecutorCapability.CALCULATION, ExecutorCapability.MLIP})
+
+
 def _results_source_diagnostics(
     step: StepDefinition,
     *,
@@ -865,8 +869,8 @@ def _results_source_diagnostics(
 ) -> list[Diagnostic]:
     """Shared N3 source rule for a bound 'results' port of a transform step.
 
-    The 'results' input must come from a calculation step's ``results`` output
-    and that calculation must be the producer of the ``structure`` input.
+    The 'results' input must come from a calculation or mlip step's ``results``
+    output, and that step must be the producer of the ``structure`` input.
     Returns no diagnostics when the step has no 'results' binding.
     """
     field_path = f"steps.{step.id}"
@@ -900,7 +904,7 @@ def _results_source_diagnostics(
     if (
         effective_results is not None
         and effective_results.kind is SourceKind.STEP_OUTPUT
-        and producer_capability is ExecutorCapability.CALCULATION
+        and producer_capability in _RESULTS_SOURCE_CAPABILITIES
         and effective_results.port == "results"
         and effective_structure_id == effective_results.step_id
     ):
@@ -909,7 +913,7 @@ def _results_source_diagnostics(
         error(
             DiagnosticCode.BINDING_ERROR,
             reason,
-            f"{kind} 'results' must bind the same calculation step's results "
+            f"{kind} 'results' must bind the same calculation or mlip step's results "
             "port the 'structure' input comes from",
             step_id=step.id,
             field_path=f"{field_path}.bindings.results",

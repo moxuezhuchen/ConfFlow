@@ -48,7 +48,7 @@ pip install confflow-*.whl   # 在集群上执行
 - `global`：运行级默认值：`scientific_defaults`（电荷、多重度、freeze）、`resources`、`scheduler`。它们是**默认值**，步骤级声明会覆盖。
 - `steps`：每步恰好一个 `executor`，用 `bindings` 声明输入来自哪里（`source.run` 或 `source.step` + `port`）。
   依赖关系只来自 bindings，不来自文件名或列表顺序。
-- 步骤类型：`confgen`（构象生成）、`calculation`（Gaussian / ORCA 计算）、`structure_transform`（精修 `refine`、
+- 步骤类型：`confgen`（构象生成）、`calculation`（Gaussian / ORCA 计算）、`mlip`（UMA 整批单点与约束弛豫，见 §2 对应小节）、`structure_transform`（精修 `refine`、
   `deduplicate`、`filter`，YAML 块名 `transform`）、`script`（服务器登记脚本，见 `CONFGEN_CAPABILITIES.md` §1）。
   `analysis`（反应/PES 分析）已于 R2.2（`383a1f6`）退役：`confflow/analysis/` 不存在，默认 registry 无此
   capability，`contract --json` 的 `analysis_capabilities` 为空。
@@ -151,6 +151,8 @@ UMA 是机器学习势能，ConfFlow 不附带也不安装 UMA 或它的 Gaussia
 推荐流程：ConfGen（引擎本身用 GFN2-xTB 优化，无需另外设置）→ 对**全部**已发布构象做 UMA-s 单点 → 用 `filter` 配合 `energy_window_kcal` 筛选（`results` 绑定到同一个 UMA 步骤）→ DFT。
 完整可校验的例子见 `docs/examples/uma_rescoring.yaml`。
 
+需要约束弛豫，或按单点能挑选少数结构再弛豫时，改用 `mlip` 步骤（见下一小节）。
+
 基准：5 个体系，各取 GFN2 能量最低的 40 个构象（均在 GFN2 6 kcal/mol 窗口内），以 r2SCAN-3c 单点为参照。每格为相对能量的平均绝对偏差（kcal/mol）/ DFT 最低构象在该方法下的名次。
 
 | 体系 | GFN2 | g-xTB | UMA-s | UMA-m |
@@ -167,6 +169,155 @@ UMA 是机器学习势能，ConfFlow 不附带也不安装 UMA 或它的 Gaussia
   DFT 之前用约 3 kcal/mol 的 `energy_window_kcal`，而不是先用窄的 GFN2 窗口截断。
 - UMA-m 略更准确，但慢 5–7 倍。
 
+
+### 用 UMA 单点与约束弛豫（mlip 步骤）
+
+`mlip` 步骤把输入的全部结构放进一个工作项：UMA 模型在一次运行里只加载一次（集群 lustre 上加载约 3–13 分钟），
+之后由运行器内部按 `workers × threads` 并行。逐结构起进程会把加载时间乘以结构数，因此不这样做。
+需要"全部单点、挑少数再弛豫"或约束弛豫时用它；只做单点且已有 `uma_s` 包装脚本时，也可以继续用上一节的 Gaussian 路线。
+
+**前提**（ConfFlow 不安装它们）：
+
+- `execution.executable` 指向装有 fairchem 与 ASE 的 Python。
+- 模型文件与可选的参考能量文件通过 `execution.env` 给出，不写进工作流（它们属于机器配置）：
+  - `CONFFLOW_MLIP_MODEL_PATH`：模型文件路径（必填）。
+  - `CONFFLOW_MLIP_REFS_PATH`：参考能量文件路径（可选）。
+  - `CONFFLOW_MLIP_DEVICE`：默认 `cpu`。
+  - `CONFFLOW_MLIP_THREADS`：每个 worker 的线程数，默认 4。worker 数 = `resources.cores_per_item // CONFFLOW_MLIP_THREADS`，至少 1。
+
+**工作流写法**（注释给出每个字段的默认值；`relax`、`pick` 按模式出现）：
+
+```yaml
+- id: s_uma
+  executor: mlip
+  bindings:
+    structure: {source: {step: s_gen, port: structures}}
+  mlip:
+    model: uma-s-1p2p1            # 必填：模型名（科学身份）
+    task: omol                    # 默认 omol
+    mode: sp_then_relax           # 必填：sp | relax | sp_then_relax
+    index_base: 1                 # 默认 1；0 或 1
+    relax:                        # 默认整节缺省；mode 含 relax 时才能写
+      optimizer: precon_lbfgs     # lbfgs | precon_lbfgs | fire，默认 lbfgs
+      fmax: 0.02                  # eV/Å，默认 0.02，必须 > 0
+      max_steps: 600              # 默认 600，≥ 1
+      fix_distances: [[39, 95], [12, 40, 2.10]]  # 默认 []；[a, b] 保持输入距离，[a, b, target] 先设为 target(Å) 再固定
+    pick:                         # sp_then_relax 必填；其它模式不能写
+      lowest: 8                   # 默认 0
+      per_label: 2                # 默认 0；lowest 与 per_label 至少一个 > 0
+    reject_bond_stretch: null     # 默认 null（只标记）；设为 > 1 的数，如 1.25，则超限结构丢弃
+  resources: {cores_per_item: 12}
+  execution:
+    executable: /opt/uma/.venv-fairchem/bin/python
+    env:
+      CONFFLOW_MLIP_MODEL_PATH: /opt/uma/uma-s-1p2p1.pt
+      CONFFLOW_MLIP_REFS_PATH: /opt/uma/iso_atom_elem_refs.yaml
+      CONFFLOW_MLIP_THREADS: "4"
+```
+
+完整可校验的例子见 `docs/examples/uma_relax_funnel.yaml`（单点 → 挑 8+2 个弛豫 → 3 kcal/mol 能量窗口）。
+
+**三种模式**
+
+- `sp`：全部输入做单点，几何不变，全部输出，能量为 UMA 电子能。不能写 `relax` 与 `pick`。
+- `relax`：全部输入做约束弛豫后输出。不能写 `pick`。
+- `sp_then_relax`：先对全部输入做单点，再弛豫按下面规则挑中的结构；**只输出被挑中的结构**（弛豫后的几何与能量），
+  未挑中的结构不进入输出，它们的单点能只用于校准诊断。
+
+挑选规则：挑中集合 = 单点能最低的 `lowest` 个，与每个 `search_state_flips` 标签组内单点能最低的 `per_label` 个的并集。
+没有该标签的结构视为同一组。能量相同时按结构 key 排序决定先后。
+
+**约束与优化器**
+
+- `fix_distances` 的原子序号按 `index_base` 解释。执行器检查序号范围、同一原子对自身，以及重复的原子对（与顺序无关），不合法则整步失败。
+  `[a, b, target]` 先把两原子距离设为 target（Å，> 0，两原子各移一半）再固定；偏差按 target 计（无 target 时按输入距离）。同一对不论 target 都不能重复。
+  弛豫用 ASE 的 FixBondLengths（tolerance 1e-8），因此被固定的距离与目标（或输入）精确一致；每个输出的偏差记在 `mlip_fix_max_dev`。
+- `optimizer` 可选 `lbfgs`、`precon_lbfgs`、`fire`。优化器会改变 UMA 的重排结果：在一个 144 原子的算例中，换优化器使 UMA 排序最多改变 6.6 kcal/mol。
+  因此每个结构都记录所用优化器（`mlip_optimizer`），比较不同运行的能量时要先核对它。
+
+**键检查**
+
+- 每个输出结构与输入比较：输入的每条键（固定的原子对除外）在弛豫后的伸长比取最大，记为 `mlip_max_bond_stretch`，对应的键记为 `mlip_stretched_bond`（1 基）。
+  伸长比超过 1.25 时发 WARNING `mlip_bond_stretched`。
+- `mlip_graph_changed` 标记键图是否变化（有新成键或断键）；变化的结构发 WARNING `mlip_graph_changed`。
+- 默认 `reject_bond_stretch` 为 null，只标记、不丢弃。设为数值后，伸长比超过它的结构被丢弃，并在 `mlip_dropped` 中列出。
+
+**输出**
+
+- `structures`：每个结构带以下 metadata：`mlip_energy_eh`、`mlip_model`、`mlip_stage`（`sp` 或 `relax`）、`mlip_optimizer`、`mlip_converged`、
+  `mlip_n_steps`、`mlip_n_evals`（计算器调用次数）、`mlip_wall_s`、`mlip_fix_max_dev`、`mlip_input_energy_eh`、`mlip_sp_energy_eh`、
+  `mlip_max_bond_stretch`、`mlip_stretched_bond`、`mlip_graph_changed`。`search_state_flips` 等输入 metadata 保留。
+- `results`：每个输出结构的 UMA 电子能（Eh）。`filter` 与 `refine` 的 `results` 可以绑定到 `mlip` 步骤，来源规则与计算步骤相同。
+- 未收敛的结构照常输出，`mlip_converged=false`，并发 WARNING `mlip_not_converged`。出错的结构丢弃，原因写入 `mlip_dropped` 诊断，并列在 `mlip_completed` 的 `error_rows` 中。
+- 产物：`job.json`、`mlip_results.jsonl`（每个结构每个阶段一行，含能量、步数、评估次数、墙钟与错误）、`mlip_done.json`（模型哈希、fairchem/ASE 版本、总墙钟、挑中的 key）、
+  `mlip_runner.log`、`mlip_structures.xyz`（注释行含能量与上述字段）。
+- 诊断：INFO `mlip_completed`（输入数、单点数、弛豫数、未收敛数、丢弃数、总墙钟、平均评估次数与墙钟）；
+  WARNING `mlip_not_converged`、`mlip_bond_stretched`、`mlip_graph_changed`、`mlip_dropped`；
+  INFO `mlip_calibration`：输入带 `energy_eh` 时，报告输入能量与 UMA 能量排序的 Spearman 系数，以及输入最低者在 UMA 下高出最低者多少 kcal/mol。
+  sp 模式下 basis 为 `sp_all_inputs`（全部输入的单点），`relax` 模式下为 `relaxed_outputs`（输出结构）。
+
+**线程建议**
+
+- 笔记本：`workers × threads` 用 3×4 或 2×6，总线程不超过 12。笔记本上用满 16 线程实测约慢 6 倍。
+
+
+### 过渡态（TS）优化与检查
+
+推荐流程（完整可校验的例子见 `docs/examples/uma_ts_funnel.yaml`）：
+
+1. **ConfGen**：用 `confgen.topology.reaction_pairs` 声明反应对（1 基），例如 `[[39, 95]]`，使其成键并保留在构象图中。
+2. **mlip `sp_then_relax`**：对全部构象做 UMA 单点，挑出的少数构象在 `relax.fix_distances: [[39, 95, 1.73]]` 下弛豫，
+   把反应对先设到 UMA 鞍点距离（1.73 Å）再固定，使 TS 优化从鞍点附近开始。
+3. **calculation（Gaussian External UMA）**：关键字
+   `opt=(calcfc,ts,noeigentest) freq external="uma_s"`，`checks` 列出下面五项，`scheduler` 与 `completion` 见后文。
+   ts_mode 需要同一作业内的频率计算：Gaussian 关键字里要有 `freq`，ORCA 用 `OptTS Freq`。
+4. **refine**：绑定 TS 步骤的 `results` 去重（见精修一节）。
+5. **DFT**：对精修后的 TS 结构做 DFT 优化（如 ORCA r2SCAN-3c）。
+
+**五项检查**（都是 `calculation` 步骤的 `checks` 与 `check_params`）
+
+| 检查 | 参数（默认值） | 通过条件 |
+|---|---|---|
+| `normal_termination` | 无 | 计算正常结束 |
+| `imaginary_frequency_count` | `expected`（默认 0，TS 应写 1） | 虚频个数等于 `expected` |
+| `distance_window` | `distances`：`[a, b, lo, hi]` 列表（必填，1 基，Å，闭区间） | 输出几何中每个距离都在 `[lo, hi]` 内；失败时列出每个距离的实测值 |
+| `ts_mode` | `pairs`：反应对列表（必填）；`min_overlap`（默认 0.2，取值 [0, 1]） | 最低虚频的位移向量在声明反应对键伸缩向量张成的子空间上的投影，占其长度的比例不低于 `min_overlap` |
+| `graph_unchanged` | `bond_scale`（默认 1.15）；`ignore_pairs`（默认空，填反应对） | 输入与输出的共价图（按 `bond_scale` 感知）除 `ignore_pairs` 外相同；失败时列出新增与断开的键 |
+
+各检查说明：
+
+- `distance_window` 用于拦住滑向错误鞍点的优化。例：`[[39, 95, 1.6, 2.1], [95, 96, 1.24, 1.30], [95, 97, 1.33, 1.40]]`。
+- `ts_mode` 读取最低（最负）虚频的位移向量。转子（甲基、叔丁基氢的旋转）模式与反应对几乎无关，重叠接近 0；
+  反应键伸缩模式重叠接近 1。`pairs` 对应的重叠由声明的成键伸缩向量给出；没有虚频或没有位移数据时失败，原因分开报告。
+- `graph_unchanged` 检查反应对以外的键没有变化，`ignore_pairs` 中的反应对不计入比较。
+
+**标定数据**（2026-10-26，现有 UMA Hessian 计算）：
+
+- 真实 UMA 过渡态的成键对重叠约 0.47–0.48：TS1（poolHm0358，O39–C95，−175 cm⁻¹）为 0.472，TS2（c7，C95–O97，−185 cm⁻¹）为 0.479。
+  模式里还有配体的协同运动，所以重叠不接近 1。
+- HCN→HNC 的 N–H 重叠 0.56，C–H 重叠 0.18（两对合用 0.66），说明它能区分反应键与旁边的键。
+- 转子模式的重叠接近 0。
+- stage 4 的 37 个失败的 TS 优化里，15 个停在 1.47–1.55 Å，16 个停在 2.44–2.70 Å，这 31 个都能被 `distance_window`（1.6–2.1 Å）拦下；其余 6 个键长在范围内，是成键图/给体/进攻面检查不过。
+  `ts_mode` 是第二道保险。
+
+**失败项与部分成功**
+
+默认一个工作项失败会让步骤失败。要让失败的 TS 优化不影响其余构象，在计算步骤上设置：
+
+```yaml
+scheduler: {on_failure: continue}       # 失败后继续运行剩余项（默认即为 continue，写出来便于阅读）
+completion: {mode: allow_partial, partial_output: allow}
+```
+
+- `completion.mode: allow_partial` 允许步骤部分成功；`partial_output: allow` 允许下游使用其中已完成的子集。
+- 下游绑定要同时声明 `partial_consumption: accept_subset`（默认 `require_complete` 会拒绝消费部分成功的上游，校验时会报错）。
+- 用于下游的 `structure` 与 `results` 两个绑定都需要写上。
+
+失败项不会自动重试，也不会换起点重算。请按报告（每个检查的失败原因）重新提交失败的构象或改输入。
+
+**优化收敛设置**
+
+使用 Gaussian 默认的收敛标准，不要用 `tight`。`tight` 在软模（转子、弱键）上常常不收敛，会把本来可用的 TS 判为失败。
 
 ## 3. 校验与运行
 

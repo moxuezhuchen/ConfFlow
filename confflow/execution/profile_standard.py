@@ -383,6 +383,21 @@ class StandardResultProfile:
                     )
                 )
 
+        imaginary_mode = native_result.native_metadata.get("imaginary_mode")
+        if isinstance(imaginary_mode, FrozenDict):
+            results.append(
+                ScientificResult(
+                    **_result_kwargs(
+                        kind="imaginary_mode",
+                        value=dict(imaginary_mode),
+                        unit=None,
+                        subject_id=subject_id,
+                        context=context,
+                        provenance=provenance,
+                    )
+                )
+            )
+
         terminated = bool(native_result.terminated_normally)
         termination = Diagnostic(
             code=NATIVE_TERMINATION_CODE,

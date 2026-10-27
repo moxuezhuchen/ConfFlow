@@ -10,7 +10,10 @@ stable ``reason`` (re-coded by the executor): ``abnormal_termination``;
 ``geometry_missing``; ``frequencies_missing``; ``imaginary_count_mismatch``,
 ``frequencies_missing``, ``invalid_check_parameter``; ``rmsd_exceeded``,
 ``rmsd_uncomputable`` (fail closed), ``invalid_check_parameter``;
-``bond_drift_exceeded``, ``bond_atoms_missing``, ``invalid_check_parameter``.
+``bond_drift_exceeded``, ``bond_atoms_missing``, ``invalid_check_parameter``;
+``distance_out_of_window``, ``bond_atoms_missing``, ``invalid_check_parameter``;
+``graph_changed``, ``graph_uncomputable``, ``invalid_check_parameter``; ``ts_mode``
+failures are documented in :mod:`checks_ts`.
 With no parsed frequency data the imaginary-count check passes only when the
 expectation is zero; ``frequencies_required`` covers the requested-but-unparsed case.
 """
@@ -22,16 +25,30 @@ from typing import Any
 
 import numpy as np
 
-from ..domain._immutable import FrozenDict
-from ..domain.diagnostics import Diagnostic, DiagnosticSeverity
+from ..domain.elements import atomic_number
+from ..domain.errors import DomainError
 from ..domain.structure import StructureRecord
-from .checks import CHECK_DEFAULTS, CheckContext, CheckOutcome, parse_bond_atom_pair
+from ..science.bonds import perceive_adjacency
+from .checks import (
+    CHECK_DEFAULTS,
+    CHECK_FAILED_CODE,
+    CheckContext,
+    CheckOutcome,
+    check_failure,
+    coords_array,
+    output_structure,
+    parse_bond_atom_pair,
+    strict_pair,
+)
+from .checks_ts import TsModeCheck
 from .profile_standard import NATIVE_TERMINATION_CODE
 from .profiles import GeometrySemantics
 
 __all__ = [
     "BondDriftCheck",
     "CHECKS",
+    "DistanceWindowCheck",
+    "GraphUnchangedCheck",
     "CHECK_FAILED_CODE",
     "FrequenciesRequiredCheck",
     "GeometryRequiredCheck",
@@ -42,54 +59,6 @@ __all__ = [
     "kabsch_aligned_rmsd",
     "parse_bond_atoms",
 ]
-
-#: Transport diagnostic code for every check failure (see module docstring).
-CHECK_FAILED_CODE = "check_failed"
-
-
-def _failure(
-    context: CheckContext,
-    reason: str,
-    message: str,
-    extra: dict[str, Any] | None = None,
-) -> CheckOutcome:
-    """Build a failed outcome with the executor mapping contract."""
-    details: dict[str, Any] = {"check": context.check_name, "reason": reason}
-    if extra:
-        details.update(extra)
-    return CheckOutcome(
-        passed=False,
-        diagnostic=Diagnostic(
-            code=CHECK_FAILED_CODE,
-            message=message,
-            severity=DiagnosticSeverity.ERROR,
-            step_id=context.step_id,
-            work_item_id=context.work_item_id,
-            logical_key=context.logical_key,
-            details=FrozenDict(details),
-        ),
-    )
-
-
-def _output_structure(context: CheckContext) -> StructureRecord | None:
-    """Return the single output structure, or ``None`` when absent."""
-    structures = context.profile_output.structures
-    if structures.is_empty:
-        return None
-    return structures[0]
-
-
-def _coords_array(record: StructureRecord) -> np.ndarray | None:
-    """Return an ``(N, 3)`` coordinate array, or ``None`` when unusable."""
-    try:
-        array = np.array(record.coordinates, dtype=float)
-    except (TypeError, ValueError):
-        return None
-    if array.ndim != 2 or array.shape[1] != 3 or array.shape[0] == 0:
-        return None
-    if not np.all(np.isfinite(array)):
-        return None
-    return array
 
 
 def kabsch_aligned_rmsd(first: np.ndarray, second: np.ndarray) -> float | None:
@@ -172,13 +141,13 @@ class NormalTerminationCheck:
                 continue
             if diagnostic.details.get("terminated") is True:
                 return CheckOutcome(passed=True)
-            return _failure(
+            return check_failure(
                 context,
                 "abnormal_termination",
                 "Native program did not terminate normally.",
                 {"terminated": diagnostic.details.get("terminated")},
             )
-        return _failure(
+        return check_failure(
             context,
             "abnormal_termination",
             "Normal termination could not be established: no termination fact recorded.",
@@ -206,7 +175,7 @@ class GeometryRequiredCheck:
             and output.geometry_semantics is GeometrySemantics.PRODUCED
         ):
             return CheckOutcome(passed=True)
-        return _failure(
+        return check_failure(
             context,
             "geometry_missing",
             "No produced geometry available: output is passthrough or absent.",
@@ -233,7 +202,7 @@ class FrequenciesRequiredCheck:
                 continue
             if isinstance(result.value, (list, tuple)) and len(result.value) > 0:
                 return CheckOutcome(passed=True)
-        return _failure(
+        return check_failure(
             context,
             "frequencies_missing",
             "No frequency information was parsed from the native output.",
@@ -259,7 +228,7 @@ class ImaginaryFrequencyCountCheck:
         try:
             expected = int(context.param("expected", default_expected))
         except (TypeError, ValueError):
-            return _failure(
+            return check_failure(
                 context,
                 "invalid_check_parameter",
                 "Check parameter 'expected' must be an integer.",
@@ -269,7 +238,7 @@ class ImaginaryFrequencyCountCheck:
         if observed_result is None:
             if expected == 0:
                 return CheckOutcome(passed=True)
-            return _failure(
+            return check_failure(
                 context,
                 "frequencies_missing",
                 f"Expected {expected} imaginary frequencies but no frequency data "
@@ -279,7 +248,7 @@ class ImaginaryFrequencyCountCheck:
         try:
             observed = int(observed_result.value)  # type: ignore[arg-type]
         except (TypeError, ValueError):
-            return _failure(
+            return check_failure(
                 context,
                 "imaginary_count_mismatch",
                 "Parsed imaginary-frequency count is not an integer.",
@@ -289,7 +258,7 @@ class ImaginaryFrequencyCountCheck:
             return CheckOutcome(passed=True)
         lowest_result = context.profile_output.results.first("lowest_frequency")
         lowest = lowest_result.value if lowest_result is not None else None
-        return _failure(
+        return check_failure(
             context,
             "imaginary_count_mismatch",
             f"Expected {expected} imaginary frequencies, observed {observed}.",
@@ -315,36 +284,36 @@ class MaxRmsdFromInputCheck:
         default_threshold = CHECK_DEFAULTS["max_rmsd_from_input"]["threshold_angstrom"]
         threshold = _float_param(context.param("threshold_angstrom", default_threshold))
         if threshold is None:
-            return _failure(
+            return check_failure(
                 context,
                 "invalid_check_parameter",
                 "Check parameter 'threshold_angstrom' must be a non-negative number.",
                 {"parameter": "threshold_angstrom"},
             )
-        output = _output_structure(context)
+        output = output_structure(context)
         if output is None:
-            return _failure(
+            return check_failure(
                 context,
                 "rmsd_uncomputable",
                 "RMSD could not be computed: no output structure present.",
             )
-        initial = _coords_array(context.inputs.structure)
-        final = _coords_array(output)
+        initial = coords_array(context.inputs.structure)
+        final = coords_array(output)
         if initial is None or final is None or initial.shape != final.shape:
-            return _failure(
+            return check_failure(
                 context,
                 "rmsd_uncomputable",
                 "RMSD could not be computed: coordinates unparseable or mismatched.",
             )
         rmsd = kabsch_aligned_rmsd(final, initial)
         if rmsd is None:
-            return _failure(
+            return check_failure(
                 context,
                 "rmsd_uncomputable",
                 "RMSD could not be computed: non-finite coordinates.",
             )
         if rmsd > threshold:
-            return _failure(
+            return check_failure(
                 context,
                 "rmsd_exceeded",
                 f"Aligned RMSD {rmsd:.3f} A exceeds threshold {threshold:.3f} A.",
@@ -371,7 +340,7 @@ class BondDriftCheck:
         default_threshold = CHECK_DEFAULTS["bond_drift"]["threshold_angstrom"]
         threshold = _float_param(context.param("threshold_angstrom", default_threshold))
         if threshold is None:
-            return _failure(
+            return check_failure(
                 context,
                 "invalid_check_parameter",
                 "Check parameter 'threshold_angstrom' must be a non-negative number.",
@@ -380,18 +349,18 @@ class BondDriftCheck:
         atoms = context.param("atoms", context.param("bond_atoms", None))
         pair = parse_bond_atoms(atoms)
         if pair is None:
-            return _failure(
+            return check_failure(
                 context,
                 "bond_atoms_missing",
                 "Bond drift requires a declared atom pair ('atoms': two 1-based indices).",
             )
         atom_a, atom_b = pair
-        output = _output_structure(context)
+        output = output_structure(context)
         target = output if output is not None else context.inputs.structure
         initial_length = bond_length_angstrom(context.inputs.structure, atom_a, atom_b)
         final_length = bond_length_angstrom(target, atom_a, atom_b)
         if initial_length is None or final_length is None:
-            return _failure(
+            return check_failure(
                 context,
                 "bond_atoms_missing",
                 f"Bond atoms {atom_a},{atom_b} do not resolve against the structures.",
@@ -399,7 +368,7 @@ class BondDriftCheck:
             )
         drift = abs(final_length - initial_length)
         if drift > threshold:
-            return _failure(
+            return check_failure(
                 context,
                 "bond_drift_exceeded",
                 f"Critical bond drift |dR|={drift:.3f} A exceeds threshold "
@@ -416,6 +385,188 @@ class BondDriftCheck:
         return CheckOutcome(passed=True)
 
 
+def _finite_float(value: Any) -> float | None:
+    """Coerce a plain (non-bool) numeric parameter to a finite float, or ``None``."""
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _parse_distance_windows(value: Any) -> list[tuple[int, int, float, float]] | None:
+    """Parse ``distances`` as a non-empty list of ``[a, b, lo, hi]`` entries."""
+    if not isinstance(value, (list, tuple)) or len(value) == 0:
+        return None
+    windows: list[tuple[int, int, float, float]] = []
+    for entry in value:
+        if not isinstance(entry, (list, tuple)) or len(entry) != 4:
+            return None
+        pair = strict_pair(list(entry[:2]))
+        lo = _finite_float(entry[2])
+        hi = _finite_float(entry[3])
+        if pair is None or lo is None or hi is None or lo < 0.0 or hi < lo:
+            return None
+        windows.append((pair[0], pair[1], lo, hi))
+    return windows
+
+
+class DistanceWindowCheck:
+    """Require declared interatomic distances to lie inside closed windows."""
+
+    @property
+    def name(self) -> str:
+        """Return the check name as declared in workflow documents."""
+        return "distance_window"
+
+    @property
+    def contract_version(self) -> str:
+        """Return the check contract version (folded into digests)."""
+        return "confflow.contract.check.distance_window.v1"
+
+    def run(self, context: CheckContext) -> CheckOutcome:
+        """Pass iff every declared distance is computable and inside its window."""
+        windows = _parse_distance_windows(context.param("distances", None))
+        if windows is None:
+            return check_failure(
+                context,
+                "invalid_check_parameter",
+                "Check parameter 'distances' must be a non-empty list of "
+                "[a, b, lo, hi] with distinct 1-based atoms and 0 <= lo <= hi (Angstrom).",
+                {"parameter": "distances"},
+            )
+        output = output_structure(context)
+        target = output if output is not None else context.inputs.structure
+        entries: list[dict[str, Any]] = []
+        unresolved: list[list[int]] = []
+        for atom_a, atom_b, lo, hi in windows:
+            observed = bond_length_angstrom(target, atom_a, atom_b)
+            if observed is None:
+                unresolved.append([atom_a, atom_b])
+                continue
+            entries.append(
+                {
+                    "atoms": [atom_a, atom_b],
+                    "observed": observed,
+                    "window": [lo, hi],
+                    "within": lo <= observed <= hi,
+                }
+            )
+        if unresolved:
+            return check_failure(
+                context,
+                "bond_atoms_missing",
+                f"Distance atoms {unresolved} do not resolve against the structure.",
+                {"atoms": unresolved},
+            )
+        violations = [entry for entry in entries if not entry["within"]]
+        if violations:
+            listing = "; ".join(
+                f"{entry['atoms'][0]}-{entry['atoms'][1]} = {entry['observed']:.3f} A "
+                f"(window [{entry['window'][0]:.3f}, {entry['window'][1]:.3f}] A)"
+                for entry in entries
+            )
+            return check_failure(
+                context,
+                "distance_out_of_window",
+                f"Distance(s) outside declared window: {listing}.",
+                {"distances": entries, "violations": violations},
+            )
+        return CheckOutcome(passed=True)
+
+
+def _perceived_pairs(record: StructureRecord, bond_scale: float) -> frozenset[tuple[int, int]]:
+    """Covalent bonds (0-based sorted pairs) of *record*, as ``perceive_bonds`` does."""
+    numbers = [atomic_number(symbol) for symbol in record.atoms]
+    adjacency = perceive_adjacency(numbers, record.coordinates, bond_scale=bond_scale)
+    return frozenset(
+        (min(i, j), max(i, j)) for i, row in enumerate(adjacency) for j in row if i != j
+    )
+
+
+class GraphUnchangedCheck:
+    """Require the perceived covalent graph to match the input, bar declared pairs."""
+
+    @property
+    def name(self) -> str:
+        """Return the check name as declared in workflow documents."""
+        return "graph_unchanged"
+
+    @property
+    def contract_version(self) -> str:
+        """Return the check contract version (folded into digests)."""
+        return "confflow.contract.check.graph_unchanged.v1"
+
+    def run(self, context: CheckContext) -> CheckOutcome:
+        """Pass iff input and output graphs agree after ignoring declared pairs."""
+        defaults = CHECK_DEFAULTS["graph_unchanged"]
+        bond_scale = _finite_float(context.param("bond_scale", defaults["bond_scale"]))
+        if bond_scale is None or bond_scale <= 0.0:
+            return check_failure(
+                context,
+                "invalid_check_parameter",
+                "Check parameter 'bond_scale' must be a positive number.",
+                {"parameter": "bond_scale"},
+            )
+        raw_ignore = context.param("ignore_pairs", defaults["ignore_pairs"])
+        if not isinstance(raw_ignore, (list, tuple)):
+            return check_failure(
+                context,
+                "invalid_check_parameter",
+                "Check parameter 'ignore_pairs' must be a list of [a, b] pairs.",
+                {"parameter": "ignore_pairs"},
+            )
+        ignored: set[tuple[int, int]] = set()
+        for entry in raw_ignore:
+            pair = strict_pair(entry)
+            if pair is None:
+                return check_failure(
+                    context,
+                    "invalid_check_parameter",
+                    "Check parameter 'ignore_pairs' entries must be [a, b] of "
+                    "distinct positive 1-based integers.",
+                    {"parameter": "ignore_pairs"},
+                )
+            ignored.add((min(pair) - 1, max(pair) - 1))
+        output = output_structure(context)
+        initial_record = context.inputs.structure
+        target = output if output is not None else initial_record
+        if len(initial_record.atoms) != len(target.atoms):
+            return check_failure(
+                context,
+                "graph_uncomputable",
+                "Covalent graph could not be compared: atom counts differ.",
+            )
+        try:
+            initial = _perceived_pairs(initial_record, bond_scale) - ignored
+            final = _perceived_pairs(target, bond_scale) - ignored
+        except (DomainError, ValueError) as exc:
+            return check_failure(
+                context,
+                "graph_uncomputable",
+                f"Covalent graph could not be perceived: {exc}",
+            )
+        formed = sorted(final - initial)
+        broken = sorted(initial - final)
+        if not formed and not broken:
+            return CheckOutcome(passed=True)
+        formed_text = [f"{i + 1}-{j + 1}" for i, j in formed]
+        broken_text = [f"{i + 1}-{j + 1}" for i, j in broken]
+        return check_failure(
+            context,
+            "graph_changed",
+            f"Covalent graph changed: formed {formed_text}, broken {broken_text}.",
+            {
+                "formed": formed_text,
+                "broken": broken_text,
+                "bond_scale": bond_scale,
+                "ignored": sorted(f"{i + 1}-{j + 1}" for i, j in ignored),
+            },
+        )
+
+
 #: Check instances keyed by declared check name, for the executor to consume.
 CHECKS: dict[str, Any] = {
     "normal_termination": NormalTerminationCheck(),
@@ -424,4 +575,7 @@ CHECKS: dict[str, Any] = {
     "imaginary_frequency_count": ImaginaryFrequencyCountCheck(),
     "max_rmsd_from_input": MaxRmsdFromInputCheck(),
     "bond_drift": BondDriftCheck(),
+    "distance_window": DistanceWindowCheck(),
+    "graph_unchanged": GraphUnchangedCheck(),
+    "ts_mode": TsModeCheck(),
 }

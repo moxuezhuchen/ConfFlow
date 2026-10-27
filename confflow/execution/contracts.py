@@ -46,6 +46,7 @@ class ExecutorCapability(str, Enum):
     CONFGEN = "confgen"
     STRUCTURE_TRANSFORM = "structure_transform"
     SCRIPT = "script"
+    MLIP = "mlip"
 
 
 _STRUCTURE_PORT_PAIRINGS = frozenset({Pairing.SINGLE, Pairing.PER_STRUCTURE, Pairing.BY_GROUP_KEY})

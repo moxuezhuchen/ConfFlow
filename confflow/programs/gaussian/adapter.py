@@ -45,7 +45,7 @@ __all__ = [
 ADAPTER_VERSION: str = "confflow.program.gaussian.v2"
 
 #: Parser contract version folded into digests.
-PARSER_VERSION: str = "confflow.program.gaussian.parser.v4"
+PARSER_VERSION: str = "confflow.program.gaussian.parser.v5"
 
 #: Media types recorded on discovered artifacts, keyed by file extension.
 MEDIA_TYPES_BY_EXTENSION: dict[str, str] = {
@@ -561,6 +561,9 @@ class GaussianProgramAdapter:
             "gibbs_correction_source": sources.get("gibbs_correction", "absent"),
             "energy_semantics": ("verified" if semantics_problem is None else semantics_problem),
         }
+        imaginary_mode = _parsing.parse_imaginary_mode(text)
+        if imaginary_mode is not None:
+            metadata["imaginary_mode"] = imaginary_mode
         parser_diagnostics: tuple[Diagnostic, ...] = ()
         if semantics_problem is not None:
             parser_diagnostics = (

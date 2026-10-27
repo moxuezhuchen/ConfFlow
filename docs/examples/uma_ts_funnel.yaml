@@ -1,0 +1,118 @@
+# UMA transition-state funnel: ConfGen with a declared reaction pair, UMA single points and
+# constrained relaxation near the saddle distance, Gaussian External UMA TS optimisation with
+# frequency, geometric and reaction-mode checks, refinement of the converged TS set, and DFT.
+#
+# What it does:
+#   1. s_gen:   ConfGen conformers; O39-C95 is declared as a reaction pair (bonded in the graph).
+#   2. s_uma:   mlip sp_then_relax. UMA single points for every conformer; the lowest 8 and the
+#               lowest 2 per search_state_flips label are relaxed with O39-C95 held at 1.73 A
+#               (the UMA saddle distance), so the TS search starts close to the saddle.
+#   3. s_ts:    Gaussian External UMA TS optimisation (calcfc, ts, noeigentest) with frequency
+#               in the same job. Checks: normal termination, one imaginary frequency, distance
+#               windows, reaction-mode overlap (ts_mode), and unchanged bond graph apart from the
+#               reaction pair. Failed items do not stop the step (on_failure: continue), and the
+#               step may complete partially (allow_partial). Failed items are not retried:
+#               resubmit them after reading the report.
+#   4. s_refine: refine the passed TS structures, bound to the TS step's results (energy-aware).
+#   5. s_dft:   ORCA r2SCAN-3c optimisation of the refined TS set.
+#
+# Prerequisites (not shipped or installed by ConfFlow):
+#   - A Python with fairchem and ASE, given as `execution.executable` in s_uma.
+#   - The UMA model file and the iso-atom reference file, given through the env vars.
+#   - A Gaussian wrapper script `uma_s` on PATH (Gaussian External interface, prints `Recovered energy=`).
+#   - ORCA with r2SCAN-3c available to the calculation executor.
+#   - Set the paths below for your machine; the values here are placeholders.
+#   - Validate first: confflow v4 validate --workflow docs/examples/uma_ts_funnel.yaml --json
+schema: confflow.workflow.v4
+
+inputs:
+  structures: {kind: structure, cardinality: many}
+
+global:
+  scientific_defaults: {charge: 0, multiplicity: 1}
+  resources: {cores_per_item: 4, memory_per_item: 8GiB}
+
+steps:
+  - id: s_gen
+    executor: confgen
+    bindings:
+      structure: {source: {run: structures}}
+    confgen:
+      schema_version: 4
+      index_base: 1
+      seed: 11
+      topology:
+        reaction_pairs: [[39, 95]]   # 1-based; the forming/breaking bond kept in the graph
+
+  - id: s_uma
+    executor: mlip
+    bindings:
+      structure: {source: {step: s_gen, port: structures}}
+    mlip:
+      model: uma-s-1p2p1
+      task: omol
+      mode: sp_then_relax
+      index_base: 1
+      relax:
+        optimizer: precon_lbfgs
+        fmax: 0.02
+        max_steps: 600
+        fix_distances: [[39, 95, 1.73]]   # hold O39-C95 at the UMA saddle distance (Angstrom)
+      pick:
+        lowest: 8
+        per_label: 2
+    resources: {cores_per_item: 12}   # workers = 12 // CONFFLOW_MLIP_THREADS (4) = 3
+    execution:
+      executable: /opt/uma/.venv-fairchem/bin/python
+      env:
+        CONFFLOW_MLIP_MODEL_PATH: /opt/uma/uma-s-1p2p1.pt
+        CONFFLOW_MLIP_REFS_PATH: /opt/uma/iso_atom_elem_refs.yaml
+        CONFFLOW_MLIP_THREADS: "4"
+
+  - id: s_ts
+    executor: calculation
+    bindings:
+      structure: {source: {step: s_uma, port: structures}}
+    calculation:
+      program: gaussian
+      role: ts
+      native:
+        keyword: 'opt=(calcfc,ts,noeigentest) freq external="uma_s"'
+      checks: [normal_termination, imaginary_frequency_count, distance_window, ts_mode, graph_unchanged]
+      check_params:
+        imaginary_frequency_count: {expected: 1}
+        distance_window:
+          distances:
+            - [39, 95, 1.6, 2.1]     # forming O-C bond
+            - [95, 96, 1.24, 1.30]   # C=O (carbonyl-type) bond
+            - [95, 97, 1.33, 1.40]   # C-O bond
+        ts_mode:
+          pairs: [[39, 95]]          # reaction pair; overlap = projection of the lowest imaginary mode
+          min_overlap: 0.2           # default; real UMA TS modes give about 0.47-0.48
+        graph_unchanged:
+          bond_scale: 1.15
+          ignore_pairs: [[39, 95]]
+    scheduler: {on_failure: continue}
+    completion: {mode: allow_partial, partial_output: allow}
+
+  - id: s_refine
+    executor: structure_transform
+    bindings:
+      structure: {source: {step: s_ts, port: structures}, partial_consumption: accept_subset}
+      results: {source: {step: s_ts, port: results}, partial_consumption: accept_subset}
+    transform:
+      kind: refine
+      native:
+        rmsd_threshold_angstrom: 0.2
+        topology_bonds:
+          reaction_pairs: [[39, 95]]
+
+  - id: s_dft
+    executor: calculation
+    bindings:
+      structure: {source: {step: s_refine, port: structures}}
+    calculation:
+      program: orca
+      role: opt
+      native: {keyword: "r2SCAN-3c Opt"}
+      checks: [normal_termination, geometry_required]
