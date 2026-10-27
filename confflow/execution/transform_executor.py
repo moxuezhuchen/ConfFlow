@@ -83,6 +83,22 @@ REFINE_NATIVE_KEYS = frozenset(
 )
 
 
+def _topology_fingerprint(record: StructureRecord) -> tuple[Any, ...] | None:
+    """Return a renumbering-invariant summary of the working topology, or ``None``.
+
+    The sorted multiset of ``(element, sorted neighbour elements)`` per atom does not depend
+    on atom labels, so renumbered copies of one molecule share it.  Equal fingerprints do not
+    prove isomorphism; ``_cluster`` still runs the graph isomorphism check within the group.
+    """
+    rows = record.working_topology
+    if rows is None:
+        return None
+    atoms = record.atoms
+    return tuple(
+        sorted((atoms[i], tuple(sorted(atoms[j] for j in row))) for i, row in enumerate(rows))
+    )
+
+
 def _topology_identity(record: StructureRecord) -> tuple[Any, ...]:
     """Return the topology half of the scientific-identity grouping key."""
     patch = record.topology_patch
@@ -92,10 +108,7 @@ def _topology_identity(record: StructureRecord) -> tuple[Any, ...]:
             tuple(patch.add_edges),
             tuple(patch.delete_edges),
         )
-    graph_key = None
-    if record.working_topology is not None:
-        graph_key = tuple(tuple(row) for row in record.working_topology)
-    return (patch_key, graph_key)
+    return (patch_key, _topology_fingerprint(record))
 
 
 def _scientific_group(record: StructureRecord) -> tuple[Any, ...]:
