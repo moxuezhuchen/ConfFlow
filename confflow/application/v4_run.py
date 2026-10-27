@@ -325,6 +325,15 @@ def _stamp_each_entity_grouping(name: str, structures: Any) -> StructureSet:
     return StructureSet.of(*stamped)
 
 
+def _definition_mismatch_error(recorded: str, requested: str) -> DomainError:
+    """Return the refusal for reusing a run root under a different definition."""
+    return DomainError(
+        "run root already holds a different workflow definition "
+        f"(was {recorded!r}, now {requested!r}); "
+        "use a fresh run root or explicit migration"
+    )
+
+
 def _save_run_state_fenced(run_root: str, state: RunState, generation_id: str) -> None:
     """Write the step lifecycle state under the generation publication fence."""
     with arbitration.generation_publication_scope(
@@ -390,17 +399,27 @@ class V4RunApplication:
         state = self._load_or_init_run_state(
             run_root=run_root, run_id=run_id, definition_digest=plan.definition_digest
         )
-        for planned in plan.steps:
-            state = ensure_step(state, planned.step_id)
         # Install this generation as the run root's current owner BEFORE any
         # step state or publication is written.  A superseded writer loses
-        # publication authority permanently at this point (CONTRACT 7).
-        arbitration.begin_generation(
-            run_root,
-            generation_id=generation_id,
-            run_id=run_id,
-            definition_digest=plan.definition_digest,
+        # publication authority permanently at this point (CONTRACT 7).  The
+        # ledger refuses a different definition under the generation lock; a
+        # refusal writes nothing, so the generation never started.
+        try:
+            arbitration.begin_generation(
+                run_root,
+                generation_id=generation_id,
+                run_id=run_id,
+                definition_digest=plan.definition_digest,
+            )
+        except arbitration.DefinitionMismatchError as exc:
+            raise _definition_mismatch_error(exc.recorded_digest, exc.requested_digest) from exc
+        # The state read before the lock may predate another generation's
+        # writes, so the digest check runs again under ownership.
+        state = self._load_or_init_run_state(
+            run_root=run_root, run_id=run_id, definition_digest=plan.definition_digest
         )
+        for planned in plan.steps:
+            state = ensure_step(state, planned.step_id)
         _save_run_state_fenced(run_root, state, generation_id)
         context.state = state
         context.generation_started = True
@@ -642,11 +661,7 @@ class V4RunApplication:
             existing.definition_digest is not None
             and existing.definition_digest != definition_digest
         ):
-            raise DomainError(
-                "run root already holds a different workflow definition "
-                f"(was {existing.definition_digest!r}, now {definition_digest!r}); "
-                "use a fresh run root or explicit migration"
-            )
+            raise _definition_mismatch_error(existing.definition_digest, definition_digest)
         if existing.definition_digest is None:
             return RunState(
                 run_id=existing.run_id,
