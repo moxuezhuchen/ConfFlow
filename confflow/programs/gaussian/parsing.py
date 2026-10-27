@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 import os
 import re
+from typing import Any
 
 from ...domain.elements import ELEMENT_SYMBOLS
 
@@ -26,6 +27,7 @@ __all__ = [
     "parse_energies",
     "parse_final_geometry",
     "parse_frequencies",
+    "parse_imaginary_mode",
     "read_log_text",
     "symbol_for_atomic_number",
     "termination_reached",
@@ -470,3 +472,89 @@ def optimization_converged(text: str) -> bool:
     normal termination and an orientation table alone, is not sufficient.
     """
     return "Optimization completed." in text and "-- Stationary point found." in text
+
+
+_ATOM_ROW_PATTERN = re.compile(r"^\s*(\d+)\s+(\d+)((?:\s+[-+]?\d+\.\d+){3,})\s*$")
+
+
+def parse_imaginary_mode(text: str) -> dict[str, Any] | None:
+    """Return the most negative imaginary mode of the last frequency section.
+
+    Parameters
+    ----------
+    text : str
+        Full log file content.
+
+    Returns
+    -------
+    dict | None
+        ``{"frequency_cm": float, "displacements": [[dx, dy, dz], ...]}``
+        for the most negative committed frequency below the noise floor, or
+        ``None`` when there is no imaginary mode or no displacement rows for
+        it.  Sections are committed exactly as in :func:`parse_frequencies`.
+    """
+    committed: tuple[list[float], list[list[list[float]]]] | None = None
+    cand_freqs: list[float] = []
+    cand_disp: list[list[list[float]]] = []
+    in_section = False
+    in_atoms = False
+    block_start = 0
+    block_size = 0
+    for raw_line in text.splitlines():
+        if "Zero-point correction=" in raw_line:
+            if cand_freqs:
+                committed = (cand_freqs, cand_disp)
+                cand_freqs, cand_disp = [], []
+            in_section = False
+            in_atoms = False
+            continue
+        if "Harmonic frequencies" in raw_line:
+            cand_freqs, cand_disp = [], []
+            in_section = True
+            in_atoms = False
+            continue
+        match = _FREQUENCIES_PATTERN.search(raw_line)
+        if match is not None:
+            if not in_section:
+                cand_freqs, cand_disp = [], []
+                in_section = True
+            values = [v for v in (_to_float(t) for t in match.group(1).split()) if v is not None]
+            block_start = len(cand_freqs)
+            block_size = len(values)
+            cand_freqs.extend(values)
+            cand_disp.extend([] for _ in values)
+            in_atoms = False
+            continue
+        if not in_section:
+            continue
+        if "Atom" in raw_line and " AN" in raw_line:
+            in_atoms = True
+            continue
+        if not in_atoms:
+            continue
+        row = _ATOM_ROW_PATTERN.match(raw_line)
+        if row is None:
+            if raw_line.strip():
+                in_atoms = False
+            continue
+        numbers = [float(token) for token in row.group(3).split()]
+        for offset in range(block_size):
+            vector = numbers[3 * offset : 3 * offset + 3]
+            if len(vector) == 3:
+                cand_disp[block_start + offset].append(vector)
+    if committed is None:
+        return None
+    frequencies, displacements = committed
+    imaginary = [
+        index for index, value in enumerate(frequencies) if value < -FREQUENCY_NOISE_FLOOR_CM
+    ]
+    if not imaginary:
+        return None
+    index = min(imaginary, key=lambda position: frequencies[position])
+    vectors = displacements[index]
+    if not vectors:
+        return None
+    return {
+        "frequency_cm": frequencies[index],
+        "displacements": [list(vector) for vector in vectors],
+    }

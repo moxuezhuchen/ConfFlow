@@ -22,6 +22,8 @@
   只读该步骤的能量与频率。实现见 `confflow/execution/energy_filter.py`。
 - `script` 步骤：工作流只能按 id 引用服务器上已登记的脚本，不写任意命令。
   登记与校验见 `confflow/execution/script_registry.py`。
+- `mlip` 步骤：UMA（fairchem）整批单点与约束弛豫，执行器为 `confflow/execution/mlip_executor.py`，运行器为独立脚本 `mlip_runner.py`。
+  整批一个工作项（模型只加载一次），不逐结构起进程；输出结构与 `results`（UMA 电子能）都可被 `filter` 使用。字段与诊断见 [`USAGE.md`](USAGE.md) 对应小节。
 - recipe（目录见 `confflow/producer/recipes.py` 的 `RECIPE_IDS_V4`，共 8 个）：
   - `confgen_search`：迭代 DG 搜索，种子与起始数需用户确认；
   - `monomer_conformers`：ORCA `XTB2` 预优化 → ConfGen DG 搜索 → 去重；

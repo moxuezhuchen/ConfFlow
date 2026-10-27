@@ -162,7 +162,7 @@ def run_check(
 class TestCheckDefaults:
     """Single-source default parameters."""
 
-    def test_all_six_checks_have_defaults(self) -> None:
+    def test_all_builtin_checks_have_defaults(self) -> None:
         assert set(CHECK_DEFAULTS) == set(CHECKS)
         assert set(CHECK_DEFAULTS) == {
             "normal_termination",
@@ -171,6 +171,9 @@ class TestCheckDefaults:
             "imaginary_frequency_count",
             "max_rmsd_from_input",
             "bond_drift",
+            "distance_window",
+            "graph_unchanged",
+            "ts_mode",
         }
 
     def test_threshold_values(self) -> None:

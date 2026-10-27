@@ -78,6 +78,9 @@ __all__ = [
 #: Durable run-result manifest filename at the run root. The final name is
 #: lead-owned; recorded here so publisher and consumers agree meanwhile.
 RUN_RESULT_FILENAME = "run_result.json"
+#: Pure executors whose process launches take their binding from the step's
+#: ``execution`` block; their interpreter is checked by the executor itself.
+_EXECUTION_BINDING_CAPABILITIES = frozenset({ExecutorCapability.SCRIPT, ExecutorCapability.MLIP})
 
 
 @dataclass(frozen=True, slots=True)
@@ -788,7 +791,7 @@ class V4RunApplication:
             )
             provenance = None
         else:
-            # Pure executors (confgen/transform): no native program,
+            # Pure executors (confgen/transform/script/mlip): no native program,
             # hence no binding and no binary measurement.  The measured
             # implementation environment uses the shared helper with the
             # real registered executor contract version, so implementation
@@ -798,8 +801,8 @@ class V4RunApplication:
 
             implementation = f"confflow.{contract.capability.value}"
             binding = _search_xtb_binding(planned, request)
-            if planned.executor is ExecutorCapability.SCRIPT:
-                # scripts honour the declared env, walltime and policy of their binding
+            if planned.executor in _EXECUTION_BINDING_CAPABILITIES:
+                # scripts and MLIP honour the declared env, walltime and policy of their binding
                 binding = planned.execution
             identity = _pure_executable_identity(planned, binding)
             metadata: dict[str, object] = {"step_id": planned.step_id}
@@ -832,8 +835,8 @@ class V4RunApplication:
             if binding is not None:
                 from ..execution.execution_policy import enforce_execution_policy
 
-                # the script executor checks its interpreter once it is resolved
-                is_script = planned.executor is ExecutorCapability.SCRIPT
+                # the script/MLIP executors check their interpreter once it is resolved
+                is_script = planned.executor in _EXECUTION_BINDING_CAPABILITIES
                 enforce_execution_policy(
                     binding,
                     executable=None if is_script else binding.executable,
