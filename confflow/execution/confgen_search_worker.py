@@ -206,7 +206,22 @@ def _load_job(path: str) -> dict[str, Any]:
     )
     if stretch is not None and stretch <= 1.0:
         raise _JobError(f"job field 'settings.max_donor_stretch' must be > 1, got {stretch!r}")
+    state_kwargs: dict[str, Any] = {}
+    state_raw = section.get("state_window_kcal")
+    if state_raw is not None:
+        state_kwargs["state_window_kcal"] = _finite_float(state_raw, "settings.state_window_kcal")
+        if not state_kwargs["state_window_kcal"] > 0.0:
+            raise _JobError(
+                f"job field 'settings.state_window_kcal' must be > 0, got {state_raw!r}"
+            )
+        state_kwargs["state_max"] = _int(section.get("state_max", 2), "settings.state_max", 1)
+        state_kwargs["state_max_states"] = _int(
+            section.get("state_max_states", 12), "settings.state_max_states", 1
+        )
+    elif "state_max" in section or "state_max_states" in section:
+        raise _JobError("job fields 'settings.state_max' need 'settings.state_window_kcal'")
     settings = ExploreSettings(
+        **state_kwargs,
         budget=max(cap, budget),
         adaptive=adaptive,
         min_budget=budget,
@@ -310,6 +325,8 @@ def _comment(r: search.SearchRecord, low: float, sites: Sequence[tuple[str, int]
     flips = getattr(r, "state_flips", None)
     if flips is not None:
         text = f"{text} flips=" + (",".join(str(int(k)) for k in flips) if flips else "-")
+    if getattr(r, "kept_by", None) == "state":
+        text = f"{text} kept=state"
     bound = getattr(r, "optional_bound", None)
     if bound is not None and sites:
         text = f"{text} donors={donor_state_label(sites, bound)}"

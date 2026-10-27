@@ -106,6 +106,8 @@ ConfGen 只有一个生成引擎（迭代 DG 搜索：全局 DG 出发、势阱�
 
 半不稳定给体用 `binding_sites` 位点上的 `optional: true` 声明（仅 `shapes: [input]`，最多 2 个，且须在输入中已配位）：每个配位状态分别搜索，合并后发布，结构带 ` donors=` 标记。规则、诊断与限制见 [`CONFGEN_CAPABILITIES.md`](CONFGEN_CAPABILITIES.md) 的「可选配位位点」一节。
 
+构象状态超出能量窗口时，可在 `search` 中设 `state_window_kcal`（默认关闭）开启每状态窗口：每个翻转状态若最低者在该窗口内，补入其最低的 `state_max`（默认 2）个极小，总数不超过 `state_max_states`（默认 12）。补入结构带 `kept=state` 标记，规则与成本见 [`CONFGEN_CAPABILITIES.md`](CONFGEN_CAPABILITIES.md) 的搜索字段表。
+
 - `index_base`（0 或 1）、`seed`（整数）、`topology`（`bonds`/`add_bond`/`del_bond`/`atoms`）、
   `tolerances.bond_scale`、`coordination`（可选）、`search`（可选，整节缺席即全部默认）。
 - `schema_version: 3` 文档被拒绝，并提示环、扭转、路径与配位实现引擎已删除，应改用 `schema_version: 4`。

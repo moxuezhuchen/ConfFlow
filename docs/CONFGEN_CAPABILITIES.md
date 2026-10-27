@@ -140,6 +140,11 @@ ConfFlow 不给出 DFT 能量。
 | `fixed_states` | `[]` | 需保持侧别的二面角，每项为 4 个不同原子（有顺序，使用本步骤的 `index_base`），判定规则见第 5 节 |
 | `restraint_force_constant` | 不设（= `1.0`） | xTB `$constrain` 的力常数（Eh/bohr²）。xTB 只有弹簧式距离约束，没有严格约束，最终距离会偏离目标零点零几 Å；调高可减小偏离。一个约束块只有一个力常数，搜索阶段同时作用于金属–给体距离，收尾（release）阶段只剩反应对，此时只作用于反应对。实测见下文 |
 | `max_donor_stretch` | 不设 | 不设时只报告：每个发布结构记录最大的金属–给体距离与输入距离之比（`donor_stretch`），超过 1.25 时给出 WARNING `confgen_donor_stretched`。设为数值（须 >1）时，任何阶段（含收尾）比值超过它的结构被拒，失败原因计为 `donor_stretch` |
+| `state_window_kcal` | `null`（关闭） | 每状态能量窗口（kcal/mol，须 >0）。打开后，按翻转签名分组的每个构象状态，若其最低者距全局最低不超过本值，则补入该状态最低的 `state_max` 个极小（见下段）；关闭时搜索与旧版逐字节相同 |
+| `state_max` | `2` | 每个入选状态补入的极小数上限（须 ≥1）；仅在设置 `state_window_kcal` 时有效 |
+| `state_max_states` | `12` | 补入状态总数上限，按状态最低能量从低到高截断，其余计为 truncated；仅在设置 `state_window_kcal` 时有效 |
+
+`state_window_kcal` 打开后，在选收尾候选之前，对约束阶段的整个池做一次与 `confgen_conformational_states` 相同的二面角状态扫描（同一函数、同一 `fixed_states`），按翻转签名（翻转单元集合）分组；空签名（输入所在状态）不参与，因为全局窗口已覆盖它。每个非输入状态若其最低者在全局最低 `state_window_kcal` 之内，取该状态最低的 `state_max` 个并入收尾候选；全部状态合计最多 `state_max_states` 个（最低者优先）。补入的极小同样经过收尾（release）。收尾后仍属该状态的按 `search_kept_by: "state"` 发布，XYZ 注释行带 ` kept=state`；收尾后已变状态的只按普通窗口规则处理。选择用的是约束阶段（restrained）能量，所以补入结构收尾后可能高于窗口；诊断 INFO `confgen_state_window` 会注明 "selected on restrained energies"、收尾后最低能量，以及超出 `state_max_states` 被截断的状态数。成本：每补入一个结构多一次收尾优化，额外收尾次数最多为 `state_max × state_max_states`。
 
 `starts` 为 `null`（或缺省）时按上表规则在搜索内解析。不设 `budget` 时预算自适应：低能区很快饱和的体系停得早（axurer 约 2100 次），
 低能构象多的体系继续（cnetpa 约 4000 次；奥司他韦、四条正丁基链到 8000 上限），耗时可达固定 1500 次的 3 倍以上，覆盖显著提高

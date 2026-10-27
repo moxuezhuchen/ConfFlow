@@ -143,6 +143,51 @@ class ExploreSettings:
     max_donor_stretch: float | None = None
     #: declared 4-atom dihedrals (0-based, in order) whose reference side every structure keeps
     fixed_states: tuple[tuple[int, int, int, int], ...] = ()
+    #: keep, besides the window, the lowest ``state_max`` minima of every reminder state (torsion
+    #: flip signature) whose lowest lies within this many kcal/mol of the lowest; ``None``: off
+    state_window_kcal: float | None = None
+    state_max: int = 2
+    #: at most this many states are kept (lowest first); the rest are counted as truncated
+    state_max_states: int = 12
+
+
+def select_state_minima(
+    entries: Sequence[tuple[int, float, frozenset[int]]],
+    window_kcal: float,
+    state_max: int,
+    state_max_states: int,
+) -> dict[str, Any]:
+    """Pick the lowest ``state_max`` minima of each reminder state within ``window_kcal``.
+
+    ``entries`` hold (minimum id, energy in Eh, flip signature). The empty signature is the input
+    state, which the ordinary window already covers, so it is skipped. A state qualifies when its
+    lowest is within ``window_kcal`` of the lowest entry overall; the ``state_max_states`` lowest
+    qualifying states are kept and the others counted as ``truncated``.
+    """
+    if not entries:
+        return {"ids": [], "states": [], "truncated": 0}
+    low = min(energy for _, energy, _ in entries)
+    groups: dict[frozenset[int], list[tuple[float, int]]] = {}
+    for mid, energy, signature in entries:
+        if signature:
+            groups.setdefault(signature, []).append((energy, mid))
+    qualifying: list[tuple[float, list[int], float, list[tuple[float, int]]]] = []
+    for signature, members in groups.items():
+        members.sort()
+        rel = (members[0][0] - low) * HARTREE_TO_KCAL
+        if rel <= window_kcal:
+            qualifying.append((members[0][0], sorted(signature), rel, members))
+    qualifying.sort(key=lambda row: (row[0], row[1]))
+    kept = qualifying[:state_max_states]
+    ids: list[int] = []
+    states: list[dict[str, Any]] = []
+    for _, units, rel, members in kept:
+        chosen = [mid for _, mid in members[:state_max]]
+        ids += chosen
+        states.append(
+            {"signature": units, "lowest_kcal": float(rel), "ids": chosen, "minima": len(members)}
+        )
+    return {"ids": ids, "states": states, "truncated": len(qualifying) - len(kept)}
 
 
 # ----------------------------------------------------------------------------- worker tasks
@@ -445,6 +490,12 @@ class _Explorer:
         )
         #: final-pool minimum id -> 1-based state_changes units it flips (set by the scan)
         self.flips: dict[int, tuple[int, ...]] | None = None
+        #: final-pool minimum id -> torsion units (atoms) it flips, for the state window reconfirm
+        self.flip_atoms: dict[int, frozenset[tuple[int, ...]]] | None = None
+        #: restrained-pool state selection (``None`` when the state window is off)
+        self.state_pick: dict[str, Any] | None = None
+        #: published state-added final minimum id -> restrained minimum id it came from
+        self.state_kept: dict[int, int] = {}
         self.input_seed: dict[str, Any] = {
             "status": "pending",
             "raw_failed_checks": [],
@@ -1612,6 +1663,7 @@ class _Explorer:
 
     def _release(self) -> MinimaPool:
         """Release the independent input first, then the ordinary search-window minima."""
+        self.state_pick = self._state_window_pick()
         baseline = self.baseline.search_record
         if not self.st.release or self.free_restraints == self.restraints:
             self.release_status = "off" if not self.st.release else "not_needed"
@@ -1630,6 +1682,11 @@ class _Explorer:
                 self.baseline = replace(self.baseline, status="release_deferred")
             return self.pool
         near = self._publishable(self.pool, extra=2.0)
+        if self.state_pick is not None and self.state_pick["ids"]:
+            picked = set(self.state_pick["ids"])
+            have = {m.id for m in near}
+            extra = [m for m in self.pool.minima if m.id in picked and m.id not in have]
+            near = sorted(near + extra, key=lambda m: m.energy)
         out = MinimaPool(self.id)
         self.arr_of.pop(id(out), None)  # a recycled id must not inherit stale groups
         before = self.released
@@ -1708,6 +1765,9 @@ class _Explorer:
         final = self._release()
         stats = self._stats()
         stats["state_changes"] = self._state_changes(final)
+        if self.state_pick is not None:
+            self.state_kept = self._state_kept(final)
+            stats["state_window"] = self._state_window_stats(final)
         return final, stats
 
     def _state_changes(self, final: MinimaPool) -> dict[str, Any]:
@@ -1724,11 +1784,136 @@ class _Explorer:
         except Exception as exc:  # reporting only: a scan fault must not fail the search
             return {"error": str(exc)[:200], "units": []}
         flips: dict[int, list[int]] = {}
+        atoms: dict[int, set[tuple[int, ...]]] = {}
         for number, unit in enumerate(scan["units"], 1):
+            key = tuple(int(a) for a in unit.get("atoms", ()))
             for index in unit.pop("members", ()):
                 flips.setdefault(rows[index].id, []).append(number)
+                atoms.setdefault(rows[index].id, set()).add(key)
         self.flips = {key: tuple(units) for key, units in flips.items()}
+        self.flip_atoms = {key: frozenset(units) for key, units in atoms.items()}
         return scan
+
+    def _state_window_pick(self) -> dict[str, Any] | None:
+        """Scan the restrained pool for reminder states and pick the minima to keep.
+
+        ``None`` when the state window is off. A failed scan is reported, never raised.
+        """
+        st = self.st
+        if st.state_window_kcal is None:
+            return None
+        if not len(self.pool):
+            return {"ids": [], "states": [], "truncated": 0, "atoms": {}}
+        rows = self.pool.ordered()
+        try:
+            scan = state_scan.scan_states(
+                self.id,
+                self.ref,
+                [m.coords for m in rows],
+                [m.energy for m in rows],
+                declared=self.fixed_quads,
+            )
+        except Exception as exc:  # the window is an add-on: a scan fault must not fail the search
+            return {"error": str(exc)[:200], "ids": [], "states": [], "truncated": 0, "atoms": {}}
+        units = scan["units"]
+        sig: dict[int, set[int]] = {}
+        atoms: dict[int, set[tuple[int, ...]]] = {}
+        for number, unit in enumerate(units, 1):
+            key = tuple(int(a) for a in unit["atoms"])
+            for index in unit["members"]:
+                sig.setdefault(rows[index].id, set()).add(number)
+                atoms.setdefault(rows[index].id, set()).add(key)
+        entries = [(m.id, m.energy, frozenset(sig.get(m.id, ()))) for m in rows]
+        pick = select_state_minima(entries, st.state_window_kcal, st.state_max, st.state_max_states)
+        unit_atoms = {
+            number: tuple(int(a) for a in u["atoms"]) for number, u in enumerate(units, 1)
+        }
+        for state in pick["states"]:
+            state["atoms"] = [list(unit_atoms[number]) for number in state["signature"]]
+        pick["atoms"] = {mid: frozenset(v) for mid, v in atoms.items()}
+        return pick
+
+    def _release_map(self, final: MinimaPool) -> dict[int, int]:
+        """Restrained minimum id -> the id of its released version in ``final``."""
+        if final is self.pool:
+            return {m.id: m.id for m in self.pool.minima}
+        out: dict[int, int] = {}
+        for m in final.minima:
+            if m.origin.startswith("release:") and m.origin[8:].isdigit():
+                out.setdefault(int(m.origin[8:]), m.id)
+        return out
+
+    def _state_kept(self, final: MinimaPool) -> dict[int, int]:
+        """Return the final ids of the state-picked minima still in their state.
+
+        A released version is kept when its torsion units after release overlap the units it had
+        before (a minimum that changed state is published under the ordinary window rule only).
+        Without a usable final scan the restrained scan's verdict stands.
+        """
+        pick = self.state_pick
+        if not pick or not pick["ids"]:
+            return {}
+        mapping = self._release_map(final)
+        kept: dict[int, int] = {}
+        for rid in pick["ids"]:
+            fid = mapping.get(rid)
+            if fid is None:
+                continue
+            if self.flip_atoms is None:
+                kept[fid] = rid
+            elif self.flip_atoms.get(fid, frozenset()) & pick["atoms"].get(rid, frozenset()):
+                kept[fid] = rid
+        return kept
+
+    def _state_window_stats(self, final: MinimaPool) -> dict[str, Any]:
+        """Report of the state window, after release.
+
+        ``lowest_kcal`` of each state is on the restrained pool (where it was selected);
+        ``released_lowest_kcal`` is the lowest of its added structures after release, relative to
+        the final lowest. Selection is on restrained energies, so the two can differ.
+        """
+        pick = self.state_pick or {}
+        st = self.st
+        window_ids = {m.id for m in self._publishable(final)}
+        added = {fid: rid for fid, rid in self.state_kept.items() if fid not in window_ids}
+        energy = {m.id: m.energy for m in final.minima}
+        low = final.lowest() if len(final) else 0.0
+        states = []
+        for state in pick.get("states", []):
+            ids = set(state["ids"])
+            members = [fid for fid, rid in added.items() if rid in ids]
+            released = None
+            if members:
+                released = float((min(energy[fid] for fid in members) - low) * HARTREE_TO_KCAL)
+            states.append(
+                {
+                    "atoms": state["atoms"],
+                    "lowest_kcal": state["lowest_kcal"],
+                    "minima": state["minima"],
+                    "added": len(members),
+                    "released_lowest_kcal": released,
+                }
+            )
+        report: dict[str, Any] = {
+            "window_kcal": float(st.state_window_kcal or 0.0),
+            "state_max": st.state_max,
+            "state_max_states": st.state_max_states,
+            "selected_on": "restrained",
+            "states": states,
+            "added_states": sum(1 for s in states if s["added"]),
+            "states_no_added": sum(1 for s in states if not s["added"]),
+            "added_structures": len(added),
+            "truncated": int(pick.get("truncated", 0)),
+        }
+        if "error" in pick:
+            report["error"] = pick["error"]
+        return report
+
+    def _kept_by(self, mid: int, window_ids: set[int]) -> str | None:
+        """``window``/``state`` for a published minimum; ``None`` when the state window is off."""
+        if self.state_pick is None:
+            return None
+        return "state" if mid in self.state_kept and mid not in window_ids else "window"
 
     def _scope(self) -> tuple[str | None, str | None]:
         """Return (template, arrangement scope) as reported in the stats."""
@@ -1842,6 +2027,10 @@ class _Explorer:
 
     def _result(self, final: MinimaPool, stats: dict[str, Any]) -> search.SearchRun:
         rows = self._publishable(final)
+        window_ids = {m.id for m in rows}
+        if self.state_kept:
+            extra = [m for m in final.minima if m.id in self.state_kept and m.id not in window_ids]
+            rows = sorted(rows + extra, key=lambda m: m.energy)
         stats["arrangements"] = self._arrangement_table(final, rows)
         seed = dict(self.input_seed)
         if seed["minimum_id"] is not None:
@@ -1904,6 +2093,7 @@ class _Explorer:
                 m.label,
                 arrangement=self._arrangement(final, m),
                 optional_bound=self._optional_bound(m.coords),
+                kept_by=self._kept_by(m.id, window_ids),
                 **self._labels(m),
                 coordination_contacts=search.audit_structure(
                     m.coords,

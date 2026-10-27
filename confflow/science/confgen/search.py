@@ -195,6 +195,8 @@ class SearchRecord:
     state_flips: tuple[int, ...] | None = None
     #: optional donor (0-based atom index) -> bound at its measured distance; ``None`` if unused
     optional_bound: dict[int, bool] | None = None
+    #: ``window`` (inside the energy window) or ``state`` (kept by the state window); ``None`` off
+    kept_by: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -216,6 +218,8 @@ class SearchRecord:
         }
         if self.optional_bound is not None:
             payload["optional_bound"] = {int(k): bool(v) for k, v in self.optional_bound.items()}
+        if self.kept_by is not None:
+            payload["kept_by"] = self.kept_by
         return payload
 
 

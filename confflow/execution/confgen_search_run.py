@@ -397,6 +397,82 @@ def _state_change_diagnostic(
     )
 
 
+def _state_window_diagnostic(
+    stats: Any, step_id: str, work_item: WorkItem, base: int = 1
+) -> Diagnostic | None:
+    """Report the states the state window added beyond the energy window (feature on only).
+
+    Only states that contributed structures are listed, lowest released energy first; atoms are
+    reported with the step's index base, as the other state diagnostics do.
+    """
+    if not isinstance(stats, Mapping):
+        return None
+    window = stats.get("state_window")
+    if not isinstance(window, Mapping):
+        return None
+    window_kcal = _finite_number(window.get("window_kcal")) or 0.0
+    rows = [s for s in window.get("states") or () if isinstance(s, Mapping)]
+    listed = [s for s in rows if int(s.get("added") or 0) > 0]
+
+    def released_order(row: Mapping[str, Any]) -> float:
+        value = _finite_number(row.get("released_lowest_kcal"))
+        return float("inf") if value is None else value
+
+    listed.sort(key=released_order)
+    states = []
+    for s in listed:
+        released = _finite_number(s.get("released_lowest_kcal"))
+        atoms = [[int(a) + base for a in unit] for unit in s.get("atoms") or ()]
+        over = released is not None and released > window_kcal
+        states.append(
+            {
+                "atoms": atoms,
+                "added": int(s.get("added") or 0),
+                "restrained_lowest_kcal": _finite_number(s.get("lowest_kcal")),
+                "released_lowest_kcal": released,
+                "selected_on": "restrained",
+                "exceeds_window": over,
+            }
+        )
+    lines = []
+    for s in states[:5]:
+        head = f"{s['atoms']}: {s['added']} added, released lowest {s['released_lowest_kcal']:.2f} kcal/mol"
+        if s["exceeds_window"]:
+            head += (
+                f"; selected on restrained energies; released lowest "
+                f"{s['released_lowest_kcal']:.2f} kcal/mol is above the {window_kcal:.2f} window"
+            )
+        lines.append(head)
+    more = f" (first 5 of {len(states)} shown)" if len(states) > 5 else ""
+    truncated = int(window.get("truncated") or 0)
+    cut = f"; {truncated} further state(s) cut by state_max_states" if truncated else ""
+    error = f"; scan error: {window['error']}" if window.get("error") else ""
+    return Diagnostic(
+        "confgen_state_window",
+        f"state window kept {int(window.get('added_structures') or 0)} structure(s) from "
+        f"{len(states)} state(s) outside the energy window{more}{cut}{error}"
+        + (": " + "; ".join(lines) if lines else ""),
+        DiagnosticSeverity.INFO,
+        step_id,
+        work_item.id,
+        work_item.logical_key,
+        None,
+        FrozenDict(
+            {
+                "window_kcal": window_kcal,
+                "state_max": window.get("state_max"),
+                "state_max_states": window.get("state_max_states"),
+                "states": tuple(FrozenDict(st) for st in states),
+                "states_selected": len(rows),
+                "states_already_in_window": int(window.get("states_no_added") or 0),
+                "added_states": len(states),
+                "added_structures": window.get("added_structures"),
+                "truncated": truncated,
+            }
+        ),
+    )
+
+
 def _finite_number(value: Any) -> float | None:
     """Return *value* as a float when it is a finite real number (bools excluded)."""
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
@@ -896,6 +972,9 @@ def _run(
                             "search_donor_stretch": rec.get("donor_stretch"),
                             "search_state_flips": rec.get("state_flips"),
                             "search_release": release,
+                            **(
+                                {"search_kept_by": "state"} if rec.get("kept_by") == "state" else {}
+                            ),
                             **_donor_metadata(rec, donor_sites),
                         }
                     ),
@@ -981,6 +1060,9 @@ def _run(
         state_diag = _state_change_diagnostic(search_stats, context.step_id, work_item, base)
         if state_diag is not None:
             diagnostics.append(state_diag)
+        window_diag = _state_window_diagnostic(search_stats, context.step_id, work_item, base)
+        if window_diag is not None:
+            diagnostics.append(window_diag)
         donor_diag = _donor_stretch_diagnostic(ordered, context.step_id, work_item, base)
         if donor_diag is not None:
             diagnostics.append(donor_diag)

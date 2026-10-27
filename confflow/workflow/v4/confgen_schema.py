@@ -199,6 +199,11 @@ class ConfgenSearchModel(ConfgenSpecModel):
     distance restraint; unset means 1.0.  During release only reaction pairs are restrained, so it
     then acts on those alone.  ``max_donor_stretch`` rejects a structure when a metal–donor
     distance exceeds this multiple of its input distance; unset only reports the stretch.
+    ``state_window_kcal`` opens the per-state window: each flip state (flip signature) whose
+    lowest member lies within this many kcal/mol of the global lowest adds up to ``state_max``
+    members to the finalist pool, so a state outside the global window can still publish.
+    ``state_max_states`` caps how many states are added in total.  Unset (default) keeps the
+    search byte-identical; ``state_max`` and ``state_max_states`` need ``state_window_kcal``.
     """
 
     budget: StrictInt | None = Field(default=None, ge=1)
@@ -216,6 +221,17 @@ class ConfgenSearchModel(ConfgenSpecModel):
     ez_policy: Literal["preserve"] = "preserve"
     restraint_force_constant: StrictFloat | None = Field(default=None, gt=0)
     max_donor_stretch: StrictFloat | None = Field(default=None, gt=1)
+    state_window_kcal: StrictFloat | None = Field(default=None, gt=0)
+    state_max: StrictInt = Field(default=2, ge=1)
+    state_max_states: StrictInt = Field(default=12, ge=1)
+
+    @model_validator(mode="after")
+    def check_state_window(self) -> ConfgenSearchModel:
+        if self.state_window_kcal is None and (
+            "state_max" in self.model_fields_set or "state_max_states" in self.model_fields_set
+        ):
+            raise ValueError("search.state_max / search.state_max_states needs state_window_kcal")
+        return self
 
     @model_validator(mode="after")
     def check_freeze_core(self) -> ConfgenSearchModel:
@@ -298,4 +314,10 @@ class ConfgenModelV3(ConfgenSpecModel):
             for site in coordination.get("binding_sites", []):
                 if site.get("optional") is False:
                     del site["optional"]
+        search = native.get("search")
+        if isinstance(search, dict):
+            if search.get("state_max") == 2:
+                del search["state_max"]
+            if search.get("state_max_states") == 12:
+                del search["state_max_states"]
         return native
