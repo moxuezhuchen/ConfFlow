@@ -147,6 +147,7 @@ class TestOmittedCapabilitiesExcluded:
         assert [entry["capability"] for entry in envelope["executors"]] == [
             "calculation",
             "confgen",
+            "mlip",
             # N2 声明：新增 script 外部脚本能力（静态 contract 只描述能力
             # 本身；已登记脚本列表走运行时 capabilities，不进静态 contract）。
             "script",

@@ -338,6 +338,7 @@ _EXECUTOR_BLOCK_BY_CAPABILITY = {
     "structure_transform": "transform",
     "analysis": "analysis",
     "script": "script",
+    "mlip": "mlip",
 }
 
 
@@ -353,6 +354,7 @@ def _build_scientific(
         "transform": step.transform,
         "analysis": step.analysis,
         "script": step.script,
+        "mlip": step.mlip,
     }
     present = [name for name, block in blocks.items() if block is not None]
     expected_block = _EXECUTOR_BLOCK_BY_CAPABILITY.get(step.executor)
@@ -473,6 +475,35 @@ def _build_scientific(
                 result_profile="standard",
                 native=FrozenDict(step.transform.native),
                 transform=step.transform.kind,
+            )
+        except DomainError as exc:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.SCHEMA_ERROR,
+                    DiagnosticReason.INVALID_VALUE,
+                    str(exc),
+                    step_id=step.id,
+                    field_path=field_path,
+                )
+            )
+            return None, True, diagnostics
+        return scientific, True, diagnostics
+    if block_name == "mlip":
+        if step.mlip is None:
+            diagnostics.append(
+                error(
+                    DiagnosticCode.CAPABILITY_ERROR,
+                    DiagnosticReason.MISSING_EXECUTOR_BLOCK,
+                    "mlip steps require an mlip block",
+                    step_id=step.id,
+                    field_path=field_path,
+                )
+            )
+            return None, True, diagnostics
+        try:
+            scientific = ScientificDefinition(
+                result_profile="standard",
+                native=FrozenDict(step.mlip.model_dump(mode="json")),
             )
         except DomainError as exc:
             diagnostics.append(

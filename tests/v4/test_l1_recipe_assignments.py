@@ -209,7 +209,7 @@ def test_b1_contract_boundary_bytes_unchanged() -> None:
     # ConfGen adds optional search.restraint_force_constant/max_donor_stretch:
     # contract digest updated, boundary fixed.
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(env)).hexdigest() == (
-        "sha256:63e1d6647e5aeb87f03c902ee8c973af3cc5b541e0c451262b4f6cb7cfe4bafd"
+        "sha256:c2c68e77e0e5392601cc7b141c64fc11fe7af93a3c284a309b9704f4142e602d"
     )
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(bdoc)).hexdigest() == (
         "sha256:ff7491007ffd37e4e688e9dd1c73aba5301ccd699f9610d060bd2029cf370f27"
