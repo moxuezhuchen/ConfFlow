@@ -17,6 +17,10 @@ import os
 import signal
 import sys
 import threading
+import time
+from collections import Counter
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -32,9 +36,13 @@ from confflow.execution.confgen_xtb import (
 )
 from confflow.science.confgen.explore import ExploreSettings, ParallelMap, explore
 from confflow.science.confgen.graph import TypedGraph
-from confflow.science.confgen.search_spec import resolve_search_coordination
+from confflow.science.confgen.search_spec import CoordinationSpec, resolve_search_coordination
 
 HARTREE_TO_KCAL = 627.5094740631
+
+#: one donor state of the job: (sub-search label, its coordination spec); no optional donors
+#: means one state labelled ``""`` with the job's own spec
+_DonorState = tuple[str, CoordinationSpec | None]
 
 _STOP = threading.Event()
 _ACTIVE: list[XtbCalculator] = []
@@ -222,7 +230,10 @@ def _load_job(path: str) -> dict[str, Any]:
         time_limit_seconds=None if time_limit is None else float(time_limit),
         max_donor_stretch=stretch,
     )
+    donor_states, donor_sites = _load_donor_states(raw, spec, len(els))
     job = dict(raw)
+    job["donor_states"] = donor_states
+    job["donor_sites"] = donor_sites
     job["restraint_force_constant"] = force
     job["reference"] = ref
     job["graph"] = graph
@@ -239,7 +250,50 @@ def _load_job(path: str) -> dict[str, Any]:
     return job
 
 
-def _comment(r: search.SearchRecord, low: float) -> str:
+def _load_donor_states(
+    raw: Mapping[str, Any], spec: CoordinationSpec | None, natoms: int
+) -> tuple[list[_DonorState], list[tuple[str, int]]]:
+    """Read the optional-donor state table (absent: one state, the job's own spec).
+
+    ``donor_sites`` lists ``[site id, 0-based atom]`` of the optional binding sites in
+    binding-site order; ``donor_states`` lists ``{"label", "coordination"}`` per donor state.
+    """
+    raw_states = raw.get("donor_states")
+    if raw_states is None:
+        return [("", spec)], []
+    if not isinstance(raw_states, list) or not raw_states:
+        raise _JobError("job field 'donor_states' must be a non-empty list")
+    raw_sites = raw.get("donor_sites")
+    if not isinstance(raw_sites, list) or not raw_sites:
+        raise _JobError("job field 'donor_sites' must list the optional binding sites")
+    for entry in raw_sites:
+        if not isinstance(entry, list) or len(entry) != 2 or not isinstance(entry[0], str):
+            raise _JobError(f"job donor site {entry!r} must be [site id, atom]")
+        if _int(entry[1], "donor_sites atom", 0) >= natoms:
+            raise _JobError(f"job donor site atom {entry[1]!r} is out of range")
+    states: list[_DonorState] = []
+    for entry in raw_states:
+        if not isinstance(entry, dict) or not isinstance(entry.get("label"), str):
+            raise _JobError("job donor state must hold a 'label' string")
+        coord_raw = entry.get("coordination")
+        if coord_raw is None:
+            states.append((entry["label"], None))
+            continue
+        if not isinstance(coord_raw, dict):
+            raise _JobError("job donor state 'coordination' must be a mapping or null")
+        try:
+            states.append((entry["label"], resolve_search_coordination(coord_raw)))
+        except ValueError as exc:
+            raise _JobError(f"job donor state coordination is malformed: {exc}") from exc
+    return states, [(str(sid), int(atom)) for sid, atom in raw_sites]
+
+
+def donor_state_label(sites: Sequence[tuple[str, int]], bound: Mapping[int, bool]) -> str:
+    """Join ``<site id>+`` (bound) / ``<site id>-`` (detached) per optional site in order."""
+    return ",".join(f"{sid}{'+' if bound[atom] else '-'}" for sid, atom in sites if atom in bound)
+
+
+def _comment(r: search.SearchRecord, low: float, sites: Sequence[tuple[str, int]] = ()) -> str:
     energy = float(r.energy_eh or 0.0)
     text = f"target={r.target} start={r.start} energy_eh={energy:.6f} rel_kcal={(energy - low) * HARTREE_TO_KCAL:.3f}"
     if r.actual_target is not None:
@@ -256,6 +310,9 @@ def _comment(r: search.SearchRecord, low: float) -> str:
     flips = getattr(r, "state_flips", None)
     if flips is not None:
         text = f"{text} flips=" + (",".join(str(int(k)) for k in flips) if flips else "-")
+    bound = getattr(r, "optional_bound", None)
+    if bound is not None and sites:
+        text = f"{text} donors={donor_state_label(sites, bound)}"
     return text
 
 
@@ -325,11 +382,250 @@ def _write_input_baseline(
     )
 
 
+def _explore_states(
+    job: dict[str, Any], calc: XtbCalculator, pmap: Any, publish: Any
+) -> search.SearchRun:
+    """Run one search, or one search per donor state merged into one published run.
+
+    Each state gets an equal share of the budget and starts (at least 1), seed ``seed + index``,
+    and the wall limit left over divided among the states still to run.
+    """
+    settings: ExploreSettings = job["settings"]
+    states: list[_DonorState] = job["donor_states"]
+    ref: np.ndarray = job["reference"]
+    if len(states) == 1:
+        return explore(
+            job["graph"],
+            job["spec"],
+            ref,
+            job["shape"],
+            settings,
+            calc,
+            pmap,
+            should_cancel=_STOP.is_set,
+            checkpoint=publish,
+        )
+    count = len(states)
+    started = time.monotonic()
+    runs: list[tuple[str, ExploreSettings, search.SearchRun]] = []
+    for index, (label, spec) in enumerate(states):
+        limit = settings.time_limit_seconds
+        left = (
+            None
+            if limit is None
+            else max(1e-3, (limit - (time.monotonic() - started)) / (count - index))
+        )
+        sub = replace(
+            settings,
+            budget=max(1, settings.budget // count),
+            min_budget=max(1, settings.min_budget // count),
+            starts=None if settings.starts is None else max(1, settings.starts // count),
+            seed=settings.seed + index,
+            time_limit_seconds=left,
+        )
+        run = explore(
+            job["graph"],
+            spec,
+            ref,
+            job["shape"],
+            sub,
+            calc,
+            pmap,
+            should_cancel=_STOP.is_set,
+            checkpoint=publish,
+        )
+        runs.append((label, sub, run))
+    return _merge_donor_runs(job, runs)
+
+
+def _donor_measure(job: dict[str, Any]) -> Any:
+    """Return a function that stamps a structure's measured optional-donor state.
+
+    Every merged structure is measured the same way (bound iff its donor is within the slack
+    of the input's metal-donor distance), whichever donor state's search produced it.
+    """
+    spec: CoordinationSpec = job["spec"]
+    ref: np.ndarray = job["reference"]
+    metal = int(spec.metal_center)
+    refs = {atom: float(np.linalg.norm(ref[atom] - ref[metal])) for _, atom in job["donor_sites"]}
+
+    def measure(rec: search.SearchRecord) -> search.SearchRecord:
+        if rec.coords is None or not refs:
+            return rec
+        bound = search.optional_bound_state(rec.coords, metal, refs)
+        return replace(rec, optional_bound=bound)
+
+    return measure
+
+
+def _measured_state(rec: search.SearchRecord) -> tuple[tuple[int, bool], ...]:
+    """Donor state a structure actually has (measured distances, not its sub-search)."""
+    return tuple(sorted((int(k), bool(v)) for k, v in (rec.optional_bound or {}).items()))
+
+
+def _measured_label(sites: Sequence[tuple[str, int]], rec: search.SearchRecord) -> str:
+    return donor_state_label(sites, rec.optional_bound or {})
+
+
+def _measured_rows(
+    declared: Sequence[str], published: Sequence[tuple[str, float]], lowest: float | None
+) -> list[dict[str, Any]]:
+    """Count published structures per measured donor state; declared states come first."""
+    labels = list(dict.fromkeys([*declared, *(lab for lab, _ in published)]))
+    rows: list[dict[str, Any]] = []
+    for label in labels:
+        energies = [e for lab, e in published if lab == label]
+        rows.append(
+            {
+                "label": label,
+                "published": len(energies),
+                "lowest_rel_kcal": (
+                    (min(energies) - lowest) * HARTREE_TO_KCAL
+                    if energies and lowest is not None
+                    else None
+                ),
+            }
+        )
+    return rows
+
+
+def _merge_donor_runs(
+    job: dict[str, Any], runs: list[tuple[str, ExploreSettings, search.SearchRun]]
+) -> search.SearchRun:
+    """Merge per-state runs: dedupe across states, one energy window, each measured state's lowest."""
+    settings: ExploreSettings = job["settings"]
+    states: list[_DonorState] = job["donor_states"]
+    sites = job["donor_sites"]
+    measure = _donor_measure(job)
+    deduped = search.dedupe_records(
+        job["graph"],
+        [(index, measure(rec)) for index, (_, _, run) in enumerate(runs) for rec in run.passing],
+        freeze_core=settings.freeze_core,
+    )
+    pool, owner, kept = deduped.pool, deduped.owner, deduped.kept
+    lowest = pool.lowest() if len(pool) else None
+    window = settings.window_kcal
+    chosen: list[int] = []
+    seen: set[tuple[tuple[int, bool], ...]] = set()
+    for minimum in pool.ordered():
+        state = _measured_state(kept[minimum.id])
+        in_window = (
+            (minimum.energy - lowest) * HARTREE_TO_KCAL <= window if lowest is not None else False
+        )
+        if in_window or state not in seen:
+            chosen.append(minimum.id)
+        seen.add(state)
+    final = tuple(replace(kept[mid], start=mid) for mid in chosen)
+    chosen_set = set(chosen)
+
+    stats: dict[str, Any] = {}
+    rows: list[dict[str, Any]] = []
+    sites = job["donor_sites"]
+    for index, (label, sub, run) in enumerate(runs):
+        # the sub-search declares its donors bound or detached; a passing structure may end in
+        # another measured state (a detached donor re-bound the metal, or the reverse). Counted
+        # over every passing structure of the sub-search, before the merge and the window.
+        spec = states[index][1]
+        declared_off = set(spec.detached_donors if spec is not None else ())
+        rebound: Counter[str] = Counter()
+        detached: Counter[str] = Counter()
+        for rec in run.passing:
+            bound = measure(rec).optional_bound or {}
+            for sid, atom in sites:
+                if atom not in bound or (atom in declared_off) != bound[atom]:
+                    continue  # matches the declared state (declared off <=> measured off)
+                (rebound if bound[atom] else detached)[sid] += 1
+        for key, value in (run.stats or {}).items():
+            if key not in stats:
+                stats[key] = value
+            elif all(
+                isinstance(v, (int, float)) and not isinstance(v, bool) for v in (stats[key], value)
+            ):
+                stats[key] = stats[key] + value
+        lows = [float(rec.energy_eh or 0.0) for rec in run.passing]
+        rows.append(
+            {
+                "label": label,
+                "budget": sub.budget,
+                "published": sum(1 for mid in chosen if owner[mid] == index),
+                "passed": len(run.passing),
+                "lowest_rel_kcal": (
+                    (min(lows) - lowest) * HARTREE_TO_KCAL if lows and lowest is not None else None
+                ),
+                "stop": (run.stats or {}).get("stop"),
+                "release": (run.stats or {}).get("release"),
+                "rebound": dict(sorted(rebound.items())),
+                "detached": dict(sorted(detached.items())),
+            }
+        )
+    stats["donor_states"] = rows
+    measured_published = [
+        (_measured_label(sites, kept[minimum.id]), minimum.energy)
+        for minimum in pool.ordered()
+        if minimum.id in chosen_set
+    ]
+    stats["donor_measured"] = _measured_rows(
+        [label for label, _, _ in runs], measured_published, lowest
+    )
+
+    targets: dict[str, search.SearchTarget] = {}
+    generated: Counter[str] = Counter()
+    relaxed: Counter[str] = Counter()
+    for _, _, run in runs:
+        for target in run.targets:
+            targets.setdefault(target.id, target)
+            generated[target.id] += target.generated
+            relaxed[target.id] += target.relaxed
+    per_target = Counter(rec.target for rec in final)
+    merged_targets = tuple(
+        replace(
+            t,
+            generated=0,
+            relaxed=0,
+            passed=per_target.get(tid, 0),
+            realized=per_target.get(tid, 0),
+        )
+        for tid, t in targets.items()
+    )
+    totals = {
+        "targets": len(merged_targets),
+        "generated": sum((run.totals or {}).get("generated", 0) for _, _, run in runs),
+        "relaxed": sum((run.totals or {}).get("relaxed", 0) for _, _, run in runs),
+        "passed": len(final),
+    }
+
+    # the input's own donor state (all bound) carries the independent input baseline
+    base_index = next((i for i, (label, _, _) in enumerate(runs) if "-" not in label), 0)
+    baseline = runs[base_index][2].input_baseline
+    record = None if baseline is None else baseline.final_record
+    if (
+        baseline is not None
+        and record is not None
+        and record.coords is not None
+        and record.energy_eh is not None
+    ):
+        pid = pool.match(float(record.energy_eh), record.coords)
+        published = pid in chosen_set
+        baseline = replace(
+            baseline,
+            final_pool_id=pid,
+            published=published,
+            disposition="published" if published else "outside_energy_window",
+            lowest_final_delta_kcal=(
+                (lowest - float(record.energy_eh)) * HARTREE_TO_KCAL
+                if final and baseline.comparable_to_final and lowest is not None
+                else None
+            ),
+        )
+    return search.SearchRun(
+        merged_targets, final, final, runs[0][2].fragment_charges, totals, stats, baseline
+    )
+
+
 def _run(job_path: str) -> int:
     """Run one job file; return the worker exit code."""
     job = _load_job(job_path)
     els: list[str] = job["atoms"]
-    ref: np.ndarray = job["reference"]
     work = Path(job["workdir"])
     work.mkdir(parents=True, exist_ok=True)
     baseline_path = Path(job.get("input_baseline_file", work / "input_baseline.json"))
@@ -339,7 +635,6 @@ def _run(job_path: str) -> int:
         raise _JobError(f"xTB executable not found: {job['xtb']!r}")
     version = xtb_version(exe)
     _write_input_baseline(baseline_path, job, version)
-    settings: ExploreSettings = job["settings"]
     calc = XtbCalculator(
         exe,
         work,
@@ -381,17 +676,7 @@ def _run(job_path: str) -> int:
                     Path(job.get("checkpoint_file", work / "checkpoint.json")), snapshot, els
                 )
 
-            run = explore(
-                job["graph"],
-                job["spec"],
-                ref,
-                job["shape"],
-                settings,
-                calc,
-                pmap,
-                should_cancel=_STOP.is_set,
-                checkpoint=publish,
-            )
+            run = _explore_states(job, calc, pmap, publish)
     except Cancelled as exc:
         _write_input_baseline(baseline_path, job, version, last_snapshot, "cancelled")
         raise search.SearchCancelled(str(exc)) from exc
@@ -419,7 +704,7 @@ def _run(job_path: str) -> int:
         sys.stderr.write("error: no structure passed all audit checks\n")
         return 2
     low = float(run.passing[0].energy_eh or 0.0)
-    frames = [(r.coords, _comment(r, low)) for r in run.passing]
+    frames = [(r.coords, _comment(r, low, job["donor_sites"])) for r in run.passing]
     write_xyz_frames(Path(job["structures_file"]), els, frames)
     return 0
 

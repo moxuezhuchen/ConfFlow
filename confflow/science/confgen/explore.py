@@ -342,6 +342,28 @@ class _Explorer:
         self.donors = (
             list(spec.donor_indices) if spec is not None and self.metal is not None else []
         )
+        # optional donors: bound-optional sites of this sub-search plus detached ones (the
+        # latter are not in ``donors``). Their reference distances are the input's.
+        optional_bound = (
+            [int(s.donor) for s in spec.binding_sites if s.optional]
+            if spec is not None and self.metal is not None else []
+        )  # fmt: skip
+        self.optional_donors: tuple[int, ...] = tuple(optional_bound) + (
+            tuple(int(d) for d in spec.detached_donors)
+            if spec is not None and self.metal is not None else ()
+        )  # fmt: skip
+        if self.optional_donors and self.metal is not None:
+            self.optional_refs: dict[int, float] = {
+                d: float(np.linalg.norm(ref[d] - ref[self.metal])) for d in self.optional_donors
+            }
+        else:
+            self.optional_refs = {}
+        #: donors that define the arrangement, the donor stretch and the detachment test
+        self.required_donors = [d for d in self.donors if d not in self.optional_donors]
+        if self.optional_donors and not self.required_donors:
+            raise search.SearchError("optional donors need at least one required donor")
+        #: the arrangement is over required donors only when any donor is optional
+        self.arr_donors = self.required_donors if self.optional_donors else self.donors
         self.targets = search.plan_targets(graph, spec, shape)
         self.allowed = {t.command for t in self.targets}
         self.tid = {t.command: t.id for t in self.targets}
@@ -431,11 +453,14 @@ class _Explorer:
         }
 
     # -- setup -----------------------------------------------------------------------------
-    def _donor_perms(self) -> list[tuple[int, ...]]:
-        """Permutations of the binding sites induced by automorphisms of the typed graph."""
+    def _donor_perms(self, over: list[int] | None = None) -> list[tuple[int, ...]]:
+        """Permutations of the donors ``over`` (default: all binding sites).
+
+        Induced by automorphisms of the typed graph.
+        """
         assert self.spec is not None
         pos = {int(atom): k for k, atom in enumerate(self.id.kept)}
-        sites = [s.atoms[0] for s in self.spec.binding_sites]
+        sites = [s.atoms[0] for s in self.spec.binding_sites] if over is None else list(over)
         if any(a not in pos for a in sites):
             return [tuple(range(len(sites)))]
         where = {a: k for k, a in enumerate(sites)}
@@ -501,13 +526,13 @@ class _Explorer:
 
     def _angles(self, xyz: np.ndarray) -> np.ndarray:
         assert self.metal is not None
-        v = np.array([xyz[d] - xyz[self.metal] for d in self.donors])
+        v = np.array([xyz[d] - xyz[self.metal] for d in self.arr_donors])
         v /= np.linalg.norm(v, axis=1)[:, None]
         return np.degrees(np.arccos(np.clip(v @ v.T, -1.0, 1.0)))
 
     def _donor_vectors(self, xyz: np.ndarray) -> np.ndarray:
         assert self.metal is not None
-        v = np.array([xyz[d] - xyz[self.metal] for d in self.donors])
+        v = np.array([xyz[d] - xyz[self.metal] for d in self.arr_donors])
         return v / np.linalg.norm(v, axis=1)[:, None]
 
     def _keep_arrangement(self) -> None:
@@ -517,9 +542,9 @@ class _Explorer:
         shape; a strongly distorted input (no class) keeps every class in scope.
         """
         try:
-            self.arr_perms = [list(pm) for pm in self._donor_perms()]
+            self.arr_perms = [list(pm) for pm in self._donor_perms(self.arr_donors)]
         except Exception:
-            self.arr_perms = [list(range(len(self.donors)))]
+            self.arr_perms = [list(range(len(self.arr_donors)))]
         if self.shape == INPUT_SHAPE:  # the input is the arrangement: no class to classify
             self._set_arrangement()
             return
@@ -572,9 +597,9 @@ class _Explorer:
         perms = self.arr_perms
         if not perms:
             try:
-                perms = [list(pm) for pm in self._donor_perms()]
+                perms = [list(pm) for pm in self._donor_perms(self.arr_donors)]
             except Exception:  # automorphism search is an optimisation only
-                perms = [list(range(len(self.donors)))]
+                perms = [list(range(len(self.arr_donors)))]
         self.arr_group_perms = [list(pm) for pm in perms]
         self.arr_perm_index = np.asarray(self.arr_group_perms, dtype=int)
         self.arr_leaders = [self._arrangement_leader(self.ref)]
@@ -681,16 +706,25 @@ class _Explorer:
         return rows
 
     def _donor_stretch(self, xyz: np.ndarray) -> tuple[float, int | None]:
-        """Return the largest metal-donor distance over its input distance, and that donor."""
-        if self.metal is None or not self.donors:
+        """Return the largest metal-donor distance over its input distance, and that donor.
+
+        Optional donors (bound or detached) are measured states, not restraints: excluded.
+        """
+        if self.metal is None or not self.required_donors:
             return 0.0, None
         m = self.metal
         ratios = [
             float(np.linalg.norm(xyz[d] - xyz[m]) / np.linalg.norm(self.ref[d] - self.ref[m]))
-            for d in self.donors
+            for d in self.required_donors
         ]
         k = int(np.argmax(ratios))
-        return ratios[k], int(self.donors[k])
+        return ratios[k], int(self.required_donors[k])
+
+    def _optional_bound(self, xyz: np.ndarray) -> dict[int, bool] | None:
+        """Measured bound/off state of each optional donor, ``None`` without optional donors."""
+        if not self.optional_donors or self.metal is None:
+            return None
+        return search.optional_bound_state(xyz, self.metal, self.optional_refs)
 
     def _labels(self, m: Minimum) -> dict[str, Any]:
         """Per-structure report fields: reaction distances, donor stretch, state flips."""
@@ -707,7 +741,10 @@ class _Explorer:
         }
 
     def _restraints(self) -> tuple[DistanceRestraint, ...]:
-        """Return the reference restraints averaged over graph-equivalent atom pairs."""
+        """Return the reference restraints averaged over graph-equivalent atom pairs.
+
+        Detached optional donors are appended unaveraged (restrained stage; see search).
+        """
         raw = search.distance_restraints(self.graph, self.spec, self.ref)
         cls = self.id.classes
         groups: dict[tuple[int, int], list[float]] = {}
@@ -718,7 +755,8 @@ class _Explorer:
         for r in raw:
             a, b = sorted((cls[r.i], cls[r.j]))
             out.append(DistanceRestraint(r.i, r.j, float(np.mean(groups[(a, b)]))))
-        return tuple(out)
+        # detached donors are not symmetry-averaged with bound ones: their target differs
+        return tuple(out) + search.detached_restraints(self.graph, self.spec, self.ref)
 
     def _seed_input(self) -> None:
         """Audit and optimize the actual reference before any generated search starts.
@@ -792,6 +830,10 @@ class _Explorer:
             self.fail.update("input_" + check for check in bad)
             return
         self.input_seed["status"] = "optimizing"
+        # In a sub-search with a detached optional donor the input's bound donor is held at its
+        # detached distance here too (restrained stage): the baseline is then that state's own
+        # minimum, which is what the sub-search should report. Only the all-bound state carries
+        # the independent baseline in the merged run.
         self._relax([("input/reference", self.ref.copy(), "input")], self.pool, self.restraints)
         if self.input_seed["status"] == "optimizing":
             self.input_seed["status"] = "not_started_time_limit"
@@ -891,7 +933,7 @@ class _Explorer:
             )
         bad = [c for c in rec.failed_checks if c != "metal_donor_distance"]
         limit = self.st.max_donor_stretch
-        if limit is not None and self.donors and self._donor_stretch(xyz)[0] > limit:
+        if limit is not None and self.required_donors and self._donor_stretch(xyz)[0] > limit:
             bad.append("donor_stretch")
         if not free:
             for r in self.restraints:
@@ -913,7 +955,7 @@ class _Explorer:
             ok = all(
                 np.linalg.norm(xyz[d] - xyz[self.metal])
                 <= _DONOR_SLACK * np.linalg.norm(self.ref[d] - self.ref[self.metal])
-                for d in self.donors
+                for d in self.required_donors
             )
             if not ok:
                 return None, ("donor_detached",)
@@ -1062,6 +1104,7 @@ class _Explorer:
                         actual_target=label,
                         wall_s=elapsed,
                         coordination_contacts=evidence.coordination_contacts,
+                        optional_bound=self._optional_bound(coords),
                     )
                     if origin == "input":
                         self.baseline = replace(
@@ -1860,6 +1903,7 @@ class _Explorer:
                 m.coords,
                 m.label,
                 arrangement=self._arrangement(final, m),
+                optional_bound=self._optional_bound(m.coords),
                 **self._labels(m),
                 coordination_contacts=search.audit_structure(
                     m.coords,

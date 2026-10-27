@@ -19,9 +19,11 @@ coordination realization keys) fail closed as unknown keys.
 
 from __future__ import annotations
 
+import copy
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from itertools import product
 from typing import Any
 
 from confflow.science.confgen import graph as _graph
@@ -35,8 +37,11 @@ __all__ = [
     "DEFAULT_SEARCH_BUDGET_CAP",
     "DEFAULT_SEARCH_WINDOW_KCAL",
     "REMOVED_ENGINES_MESSAGE",
+    "DonorState",
+    "MAX_OPTIONAL_DONORS",
     "SearchContext",
     "build_search_context",
+    "donor_states",
     "normalize_search_spec",
     "resolve_search_coordination",
     "resolve_search_starts",
@@ -88,6 +93,31 @@ _TOP_LEVEL_KEYS = frozenset(
 _TOPO_KEYS = frozenset({"bonds", "add_bond", "del_bond", "atoms", "reaction_pairs"})
 
 _COORD_KEYS = frozenset({"metal_center", "binding_sites", "shapes", "constraints"})
+
+#: Internal (non-workflow) key: atoms of optional binding sites declared detached in one search
+#: state. Written only by :func:`donor_states`; the workflow schema rejects it.
+_DETACHED_KEY = "detached_sites"
+_INTERNAL_COORD_KEYS = _COORD_KEYS | {_DETACHED_KEY}
+
+_SITE_KEYS = frozenset({"id", "kind", "atoms", "hapticity", "optional"})
+
+#: Most optional binding sites one declaration may carry (2**k search states).
+MAX_OPTIONAL_DONORS: int = 2
+
+
+@dataclass(frozen=True, slots=True)
+class DonorState:
+    """One donor-bound state of a declaration with optional binding sites.
+
+    ``label`` joins one ``"<site id>+"`` (bound) or ``"<site id>-"`` (detached) per optional
+    site in binding-site order (``""`` without optional sites). ``bound`` maps each optional
+    site's atom number, as declared in ``binding_sites`` (the native's own ``index_base``),
+    to whether it is bound in this state. ``native`` is the sub-search declaration.
+    """
+
+    label: str
+    bound: dict[int, bool] = field(default_factory=dict)
+    native: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,7 +273,7 @@ def normalize_search_spec(raw: Mapping[str, Any]) -> dict[str, Any]:
     if coordination is None:
         spec["coordination"] = None
     else:
-        unknown_coord = sorted(set(coordination) - _COORD_KEYS)
+        unknown_coord = sorted(set(coordination) - _INTERNAL_COORD_KEYS)
         if unknown_coord:
             raise ValueError(
                 f"spec coordination holds unknown keys {unknown_coord}; "
@@ -271,6 +301,12 @@ def normalize_search_spec(raw: Mapping[str, Any]) -> dict[str, Any]:
                     )
                 converted_sites.append(entry)
             converted["binding_sites"] = converted_sites
+        if coordination.get(_DETACHED_KEY) is not None:
+            converted[_DETACHED_KEY] = convert_index_list(
+                coordination[_DETACHED_KEY],
+                base=base,
+                path=f"$.coordination.{_DETACHED_KEY}",
+            )
         spec["coordination"] = converted
 
     seed = raw.get("seed")
@@ -292,7 +328,7 @@ def resolve_search_coordination(section: Mapping[str, Any]) -> CoordinationSpec:
     """
     if not isinstance(section, Mapping):
         raise ValueError("coordination section must be a mapping")
-    unknown = sorted(set(section) - _COORD_KEYS)
+    unknown = sorted(set(section) - _INTERNAL_COORD_KEYS)
     if unknown:
         raise ValueError(
             f"coordination section holds unknown keys {unknown}; allowed {sorted(_COORD_KEYS)}"
@@ -321,9 +357,16 @@ def resolve_search_coordination(section: Mapping[str, Any]) -> CoordinationSpec:
         path = f"$.coordination.binding_sites[{position}]"
         if not isinstance(entry, Mapping):
             raise ValueError(f"{path} must be a mapping")
-        unknown_site = sorted(set(entry) - {"id", "kind", "atoms", "hapticity"})
+        unknown_site = sorted(set(entry) - _SITE_KEYS)
         if unknown_site:
             raise ValueError(f"{path} holds unknown keys {unknown_site}")
+        optional = entry.get("optional", False)
+        if not isinstance(optional, bool):
+            raise ValueError(f"{path}.optional must be a boolean, got {optional!r}")
+        if optional and shape != _graph.INPUT_SHAPE:
+            raise ValueError(
+                f"{path}.optional requires shapes [{_graph.INPUT_SHAPE!r}], got {shape!r}"
+            )
         site_id = entry.get("id")
         if not isinstance(site_id, str) or not site_id:
             raise ValueError(f"{path}.id must be a non-empty string")
@@ -340,7 +383,11 @@ def resolve_search_coordination(section: Mapping[str, Any]) -> CoordinationSpec:
             raise ValueError(f"{path}.atoms must hold a non-negative int, got {atom!r}")
         if entry.get("hapticity", 1) != 1:
             raise ValueError(f"{path}.hapticity must be 1")
-        sites.append(_graph.BindingSite(id=site_id, kind="atom", atoms=(int(atom),), hapticity=1))
+        sites.append(
+            _graph.BindingSite(
+                id=site_id, kind="atom", atoms=(int(atom),), hapticity=1, optional=optional
+            )
+        )
     constraints: list[_graph.ForbiddenTrans] = []
     for position, entry in enumerate(section.get("constraints", []) or []):
         path = f"$.coordination.constraints[{position}]"
@@ -373,15 +420,93 @@ def resolve_search_coordination(section: Mapping[str, Any]) -> CoordinationSpec:
                 provenance=provenance,
             )
         )
+    detached = _resolve_detached(section.get(_DETACHED_KEY))
     try:
         return CoordinationSpec(
             metal_center=int(metal),
             binding_sites=tuple(sites),
             shapes=(shape,),
             constraints=tuple(constraints),
+            detached_donors=detached,
         )
     except _graph.UnsupportedTopologyError as exc:
         raise ValueError(str(exc)) from exc
+
+
+def _resolve_detached(raw: Any) -> tuple[int, ...]:
+    """Validate the internal ``detached_sites`` list (0-based atoms), absent -> ()."""
+    if raw is None:
+        return ()
+    path = f"$.coordination.{_DETACHED_KEY}"
+    if isinstance(raw, (str, bytes)) or not isinstance(raw, (list, tuple)):
+        raise ValueError(f"{path} must be a list of atom indices")
+    atoms: list[int] = []
+    for position, atom in enumerate(raw):
+        if isinstance(atom, bool) or not isinstance(atom, int) or atom < 0:
+            raise ValueError(f"{path}[{position}] must be a non-negative int, got {atom!r}")
+        atoms.append(int(atom))
+    return tuple(atoms)
+
+
+def donor_states(native: Mapping[str, Any]) -> list[DonorState]:
+    """Enumerate the donor-bound states of a declaration's optional binding sites.
+
+    Without optional sites returns exactly one state (label ``""``, empty ``bound``) whose
+    ``native`` equals the input. With ``k`` optional sites returns ``2**k`` states: all bound
+    first, then the rest by binary counting over the optional sites in binding-site order
+    (later site = lower bit). Atom numbers keep the native's own ``index_base``; each state's
+    ``native`` lists its bound optional sites (``optional`` key removed) in ``binding_sites``
+    and its detached optional atoms under the internal ``coordination.detached_sites`` key.
+    """
+    if not isinstance(native, Mapping):
+        raise ValueError("spec must be a mapping")
+    coordination = native.get("coordination")
+    raw_sites = coordination.get("binding_sites") if isinstance(coordination, Mapping) else None
+    sites = list(raw_sites) if isinstance(raw_sites, (list, tuple)) else []
+    optional_sites: list[tuple[str, int]] = []
+    for position, site in enumerate(sites):
+        if not isinstance(site, Mapping):
+            raise ValueError(f"$.coordination.binding_sites[{position}] must be a mapping")
+        if site.get("optional", False) is True:
+            atoms = site.get("atoms")
+            if not isinstance(atoms, (list, tuple)) or len(atoms) != 1:
+                raise ValueError(
+                    f"$.coordination.binding_sites[{position}].atoms must hold one atom"
+                )
+            optional_sites.append((str(site.get("id")), atoms[0]))
+    if not optional_sites:
+        return [DonorState(label="", bound={}, native=copy.deepcopy(dict(native)))]
+    if len(optional_sites) > MAX_OPTIONAL_DONORS:
+        raise ValueError(
+            f"at most {MAX_OPTIONAL_DONORS} optional binding sites are supported, "
+            f"got {len(optional_sites)}"
+        )
+    count = len(optional_sites)
+    states: list[DonorState] = []
+    # itertools.product over (True, False) starts with all-bound and counts like binary.
+    for flags in product((True, False), repeat=count):
+        bound = {atom: flag for (_, atom), flag in zip(optional_sites, flags)}
+        label = ",".join(
+            f"{site_id}{'+' if flag else '-'}" for (site_id, _), flag in zip(optional_sites, flags)
+        )
+        state = copy.deepcopy(dict(native))
+        kept: list[dict[str, Any]] = []
+        for site in sites:
+            if site.get("optional", False) is True and not bound[site["atoms"][0]]:
+                continue
+            # Bound optional sites keep ``optional: True``: the explorer derives required vs
+            # optional donors from it, so a bound optional donor is not treated as required.
+            kept.append(dict(site))
+        state_coord = dict(state["coordination"])
+        state_coord["binding_sites"] = kept
+        detached = [atom for (_, atom), flag in zip(optional_sites, flags) if not flag]
+        if detached:
+            state_coord[_DETACHED_KEY] = detached
+        else:
+            state_coord.pop(_DETACHED_KEY, None)
+        state["coordination"] = state_coord
+        states.append(DonorState(label=label, bound=bound, native=state))
+    return states
 
 
 def resolve_search_starts(
