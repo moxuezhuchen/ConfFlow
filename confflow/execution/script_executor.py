@@ -59,6 +59,9 @@ SUMMARY_MAX_BYTES = 1 << 20
 
 #: stderr lines attached to failure diagnostics.
 _STDERR_TAIL_LINES = 20
+# Slack below the launch time for artifact mtimes: filesystem timestamps can be
+# coarser than the clock, so a file written just after launch may read older.
+_ARTIFACT_MTIME_SLACK_SECONDS = 1.0
 _STDERR_TAIL_CHARS = 4000
 
 _LOG = logging.getLogger(__name__)
@@ -225,6 +228,10 @@ class ScriptExecutor:
         )
         os.makedirs(item_dir, exist_ok=True)
         input_path = os.path.join(item_dir, "input.xyz")
+        # The item dir is keyed by inputs, so a retry reuses it. Declared
+        # structures/summary files of a failed attempt are removed here;
+        # checkpoints and other script files stay in place for resume.
+        self._clear_declared_outputs(item_dir, outputs, protected=input_path)
         with open(input_path, "w", encoding="utf-8") as handle:
             handle.write(serialize_script_input(driving))
         full_args = expand_script_args(
@@ -251,6 +258,9 @@ class ScriptExecutor:
             stderr_file="stderr.log",
             metadata=FrozenDict({"script_id": script_id, "item_key": item_key}),
         )
+        # Artifacts are matched by glob, so files left by an earlier attempt are
+        # filtered by mtime: only files written at or after this start are kept.
+        attempt_started = time.time() - _ARTIFACT_MTIME_SLACK_SECONDS
         launched = self._launcher.launch_and_wait(
             context.supervisor,
             request,
@@ -341,7 +351,9 @@ class ScriptExecutor:
         try:
             structures = self._collect_structures(outputs, item_dir, work_item, context, item_key)
             results = self._collect_summary(outputs, item_dir, work_item, driving)
-            artifacts = self._collect_artifacts(outputs, item_dir, work_item, context, item_key)
+            artifacts = self._collect_artifacts(
+                outputs, item_dir, work_item, context, item_key, since=attempt_started
+            )
         except DomainError as exc:
             return self._fail(
                 work_item,
@@ -486,8 +498,10 @@ class ScriptExecutor:
         work_item: WorkItem,
         context: ItemExecutionContext,
         item_key: str,
+        *,
+        since: float = 0.0,
     ) -> ArtifactSet:
-        """Save files matching the declared artifact patterns."""
+        """Save files matching the declared artifact patterns written since *since*."""
         patterns = outputs.get("artifacts")
         if not patterns:
             return ArtifactSet()
@@ -501,7 +515,9 @@ class ScriptExecutor:
         matched: list[Path] = []
         for pattern in patterns:
             for candidate in sorted(base.glob(pattern)):
-                if candidate.is_file() and candidate not in matched:
+                if not candidate.is_file() or candidate in matched:
+                    continue
+                if candidate.stat().st_mtime >= since:
                     matched.append(candidate)
         refs: list[ArtifactRef] = []
         for index, candidate in enumerate(matched):
@@ -525,6 +541,29 @@ class ScriptExecutor:
                 )
             )
         return ArtifactSet.of(*refs)
+
+    def _clear_declared_outputs(
+        self, item_dir: str, outputs: dict[str, Any], *, protected: str
+    ) -> None:
+        """Delete declared structures/summary files left by an earlier attempt.
+
+        Only the declared channel files are removed; artifact globs are not
+        (they may match inputs or checkpoints). *protected* is never removed.
+        Invalid declarations are skipped here and reported after the run.
+        """
+        protected_real = os.path.realpath(protected)
+        for channel in ("structures", "summary"):
+            declared = outputs.get(channel)
+            if declared is None:
+                continue
+            try:
+                path = self._channel_path(item_dir, declared, channel)
+            except DomainError:
+                continue
+            if os.path.realpath(path) == protected_real:
+                continue
+            if path.is_file() or path.is_symlink():
+                path.unlink()
 
     @staticmethod
     def _channel_path(item_dir: str, declared: Any, channel: str) -> Path:
