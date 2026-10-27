@@ -622,16 +622,20 @@ def test_race_y_three_writers_200_arbitration_iterations(tmp_path: Path) -> None
         assert ledger is not None
         generation = load_run_generation(str(root))
         assert generation is not None
-        # The current owner is the LAST generation to begin (the lock
-        # serializes begin_generation), and it must have published.
-        assert ledger.current_generation_id == begin_order[-1], (index, ledger, begin_order)
-        assert generation.generation_id == begin_order[-1]
+        # begin_order is appended after begin_generation returns, outside the
+        # arbitration lock, so it can disagree with the real order. The ledger
+        # records the order under the lock: superseded ids, then the owner.
+        lock_order = [*ledger.superseded_generation_ids, ledger.current_generation_id]
+        assert sorted(lock_order) == sorted(begin_order), (index, ledger, begin_order)
+        winner = lock_order[-1]
+        # The current owner is the LAST generation to begin, and it must have published.
+        assert generation.generation_id == winner
         assert generation.status == "completed"
         assert ledger.terminal_status == "completed"
         assert ledger.terminal_confirmed is True
         assert set(ledger.superseded_generation_ids) <= set(generation_ids)
         assert completed, index
-        assert begin_order[-1] in completed
+        assert winner in completed
         # No stale writer may have published after the winner.
         assert set(stale).isdisjoint(completed)
         totals["completed"] += len(completed)

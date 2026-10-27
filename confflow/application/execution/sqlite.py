@@ -169,9 +169,11 @@ class SQLiteExecutionRepository:
                     "INSERT INTO events(run_id,revision,cursor,type) VALUES(?,?,?,?)",
                     (run_id, revision, f"r{revision:020d}", kind),
                 )
-                self._commit(con)
+                # Load inside the write transaction: after commit each SELECT
+                # runs on its own snapshot and a concurrent CAS can tear it.
                 record = self._load(con, run_id)
                 assert record is not None
+                self._commit(con)
                 return record
         except (ExecutionServiceError, RepositoryConflict):
             raise

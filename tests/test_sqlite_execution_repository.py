@@ -480,6 +480,40 @@ def test_commit_failure_rolls_back_record_event_and_launch_intent(tmp_path: Path
     repository.close()
 
 
+def test_mutation_result_is_loaded_before_commit(tmp_path: Path, monkeypatch):
+    """The returned aggregate is read inside the write transaction.
+
+    Reading after commit runs each SELECT on its own snapshot, so a concurrent
+    CAS between them tore the result ("event stream does not match aggregate
+    revision") in the concurrent-execute test.
+    """
+    root_dir = tmp_path / "state"
+    root_dir.mkdir(mode=0o700)
+    repository = SQLiteExecutionRepository(StateRoot.resolve(root_dir))
+    original = repository.create_or_get(_request())
+    calls: list[str] = []
+    load, commit = repository._load, repository._commit
+
+    def spy_load(*args, **kwargs):
+        calls.append("load")
+        return load(*args, **kwargs)
+
+    def spy_commit(con) -> None:
+        calls.append("commit")
+        commit(con)
+
+    monkeypatch.setattr(repository, "_load", spy_load)
+    monkeypatch.setattr(repository, "_commit", spy_commit)
+    record = repository.compare_and_mutate(
+        original.run_id,
+        original.revision,
+        lambda current: (replace(current, state=RunState.QUEUED), "queued"),
+    )
+    assert calls[-1] == "commit" and calls.count("commit") == 1
+    assert record.revision == 2 and [e.revision for e in record.events] == [1, 2]
+    repository.close()
+
+
 def test_two_connections_and_two_processes_share_one_cas_launch_attempt(tmp_path: Path):
     """Workers converge on one queued attempt across connections and processes."""
     root_dir = tmp_path / "state"
