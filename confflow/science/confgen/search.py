@@ -29,6 +29,7 @@ from confflow.science.confgen.dg_seed import (
     generate_dg_seeds,
 )
 from confflow.science.confgen.graph import INPUT_SHAPE, CoordinationSpec, EdgeType, TypedGraph
+from confflow.science.confgen.identity import Identity, MinimaPool
 from confflow.science.confgen.stereo import (
     DoubleBondState,
     TetrahedralState,
@@ -49,7 +50,7 @@ __all__ = (
     "CHECKS AuditRecord CoordinationContact InputBaseline RelaxOutcome SearchCancelled SearchError SearchRecord "
     "SearchRun SearchSettings SearchStart SearchStarts SearchTarget audit_structure "
     "DETACHED_DISTANCE_FACTOR detached_restraints distance_restraints generate_starts "
-    "optional_bound_state plan_targets"
+    "optional_bound_state plan_targets DedupedRecords dedupe_records"
 ).split()
 
 CHECKS = tuple(
@@ -463,6 +464,40 @@ def optional_bound_state(
         int(atom): bool(_dist(xyz, metal, int(atom)) <= slack * float(ref))
         for atom, ref in sorted(optional_refs.items())
     }
+
+
+@dataclass(frozen=True, slots=True)
+class DedupedRecords:
+    """Cross-state dedupe result: the minima pool, each kept minimum's state index and record."""
+
+    pool: MinimaPool
+    owner: dict[int, int]
+    kept: dict[int, SearchRecord]
+
+
+def dedupe_records(
+    graph: TypedGraph,
+    records: Sequence[tuple[int, SearchRecord]],
+    *,
+    freeze_core: Sequence[int] = (),
+) -> DedupedRecords:
+    """Dedupe ``(state index, record)`` pairs of several states into one minima pool.
+
+    Records are added lowest energy first (ties by state index), so a rediscovery keeps the
+    lowest copy together with its state index and record.
+    """
+    pool = MinimaPool(Identity(graph, fixed_atoms=freeze_core))
+    owner: dict[int, int] = {}
+    kept: dict[int, SearchRecord] = {}
+    ordered = sorted(
+        ((float(rec.energy_eh or 0.0), index, rec) for index, rec in records),
+        key=lambda item: (item[0], item[1]),
+    )
+    for energy, index, rec in ordered:
+        mid = pool.add(energy, rec.coords, rec.target, f"donor_state{index}")
+        if mid is not None:
+            owner[mid], kept[mid] = index, rec
+    return DedupedRecords(pool, owner, kept)
 
 
 def _radius(symbol: str) -> float:

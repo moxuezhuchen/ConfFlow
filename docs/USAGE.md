@@ -104,6 +104,8 @@ steps:
 ConfGen 只有一个生成引擎（迭代 DG 搜索：全局 DG 出发、势阱探测、反馈轮次、去约束收尾），文档必须写 `schema_version: 4`，`seed` 必填。
 完整字段、默认值、审计项与输出见 [`CONFGEN_CAPABILITIES.md`](CONFGEN_CAPABILITIES.md)。
 
+半不稳定给体用 `binding_sites` 位点上的 `optional: true` 声明（仅 `shapes: [input]`，最多 2 个，且须在输入中已配位）：每个配位状态分别搜索，合并后发布，结构带 ` donors=` 标记。规则、诊断与限制见 [`CONFGEN_CAPABILITIES.md`](CONFGEN_CAPABILITIES.md) 的「可选配位位点」一节。
+
 - `index_base`（0 或 1）、`seed`（整数）、`topology`（`bonds`/`add_bond`/`del_bond`/`atoms`）、
   `tolerances.bond_scale`、`coordination`（可选）、`search`（可选，整节缺席即全部默认）。
 - `schema_version: 3` 文档被拒绝，并提示环、扭转、路径与配位实现引擎已删除，应改用 `schema_version: 4`。

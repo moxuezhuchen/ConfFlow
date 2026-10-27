@@ -34,10 +34,8 @@ from confflow.execution.confgen_xtb import (
     write_xyz_frames,
     xtb_version,
 )
-from confflow.science.confgen.dg_seed import detached_donors_of
 from confflow.science.confgen.explore import ExploreSettings, ParallelMap, explore
 from confflow.science.confgen.graph import TypedGraph
-from confflow.science.confgen.identity import Identity, MinimaPool
 from confflow.science.confgen.search_spec import CoordinationSpec, resolve_search_coordination
 
 HARTREE_TO_KCAL = 627.5094740631
@@ -498,22 +496,13 @@ def _merge_donor_runs(
     settings: ExploreSettings = job["settings"]
     states: list[_DonorState] = job["donor_states"]
     sites = job["donor_sites"]
-    pool = MinimaPool(Identity(job["graph"], fixed_atoms=settings.freeze_core))
-    owner: dict[int, int] = {}
-    kept: dict[int, search.SearchRecord] = {}
     measure = _donor_measure(job)
-    ordered = sorted(
-        (
-            (float(rec.energy_eh or 0.0), index, measure(rec))
-            for index, (_, _, run) in enumerate(runs)
-            for rec in run.passing
-        ),
-        key=lambda item: (item[0], item[1]),
+    deduped = search.dedupe_records(
+        job["graph"],
+        [(index, measure(rec)) for index, (_, _, run) in enumerate(runs) for rec in run.passing],
+        freeze_core=settings.freeze_core,
     )
-    for energy, index, rec in ordered:
-        mid = pool.add(energy, rec.coords, rec.target, f"donor_state{index}")
-        if mid is not None:
-            owner[mid], kept[mid] = index, rec
+    pool, owner, kept = deduped.pool, deduped.owner, deduped.kept
     lowest = pool.lowest() if len(pool) else None
     window = settings.window_kcal
     chosen: list[int] = []
@@ -536,7 +525,8 @@ def _merge_donor_runs(
         # the sub-search declares its donors bound or detached; a passing structure may end in
         # another measured state (a detached donor re-bound the metal, or the reverse). Counted
         # over every passing structure of the sub-search, before the merge and the window.
-        declared_off = set(detached_donors_of(states[index][1]))
+        spec = states[index][1]
+        declared_off = set(spec.detached_donors if spec is not None else ())
         rebound: Counter[str] = Counter()
         detached: Counter[str] = Counter()
         for rec in run.passing:

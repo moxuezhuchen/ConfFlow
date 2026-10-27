@@ -118,8 +118,7 @@ ConfFlow 不给出 DFT 能量。
 
 `arrangement` 的含义：`search`（默认）搜索全部给体排布，每个极小按排布分组并标为 `aN`（`a0` 为输入排布，id 按最低极小排序，
 `a1`、`a2`…）；同一排布指按图等价的给体置换后，所有给体–金属–给体夹角偏差 ≤45° 且（手性排布）手性相同。
-`keep` 只保留输入排布（只有 `a0`）；`enumerate` 枚举全部配位类。`search` 与 `keep` 的给体集合与共价拓扑相同，不改变给体集合
-（解离、半柔性配体、配位数变化不在范围内）；声明的立体状态（四面体手性、双键、`fixed_states`）在三种模式下都保持。
+`keep` 只保留输入排布（只有 `a0`）；`enumerate` 枚举全部配位类。`search` 与 `keep` 的给体集合与共价拓扑相同，不改变给体集合（`optional` 位点的解离与再配位除外，见下节）；其他给体的自由解离、添加输入中未配位的给体、配位数变化不在范围内；声明的立体状态（四面体手性、双键、`fixed_states`）在三种模式下都保持。
 `release: true` 时，最终极小在去掉金属–给体约束后重新弛豫（第 5 节），保留的是排布与手性，而不是搜索阶段的坐标。
 
 `search`（可选）与默认值：
@@ -158,6 +157,55 @@ ConfFlow 不给出 DFT 能量。
 
 无金属时省略 `coordination` 整节即可；`coordination_class`、`metal_donor_distance`、`donor_orientation`
 三项审计记为 `skipped`，不判失败。
+
+### 可选配位位点（半不稳定给体，v1）
+
+`binding_sites` 的位点可写 `optional: true`（默认 `false`，严格布尔），表示半不稳定给体：它在输入结构里已配位，
+搜索时同时考虑配位与解离两种状态。
+
+```yaml
+coordination:
+  metal_center: 1
+  binding_sites:
+    - {id: O39, kind: atom, atoms: [39]}
+    - {id: O82, kind: atom, atoms: [82], optional: true}
+    - {id: O74, kind: atom, atoms: [74]}
+  shapes: [input]
+```
+
+规则（v1）：
+
+- 仅 `shapes: [input]`；可选位点不能用于理想多面体形状。
+- 最多 2 个可选位点（`MAX_OPTIONAL_DONORS`），必选位点至少 2 个，违反即 schema 拒绝。
+- 可选位点必须在输入结构里已配位（输入的金属–给体距离作为"配位"参考距离）。输入里没有配位的原子不能声明为可选，
+  应改用已配位的输入结构（给定目标距离的"补位"留作 v2）。
+
+每个配位状态是一次子搜索（状态 = 可选位点配位/解离的全部组合；k 个可选位点共 2^k 个，最多 4 个）：
+
+- 配位原子 = 必选位点 ∪ 该状态中配位的可选位点；DG、约束、审计照旧。
+- 解离的可选位点：搜索阶段以等式约束保持在输入金属–给体距离的 1.5 倍（DG 下界同值、上界放开），不进核心模板，
+  不加 M–D 约束，不计入 `metal_donor_distance`、`donor_orientation`、`donor_stretch` 与排布角度；在新接触规则中仍算"已声明"，
+  靠近金属不会判 `coordination_class` 失败。收尾（release）去掉约束后，它可以重新配位。
+- 预算与起点按状态数均分（`budget // 状态数`、`starts` 同理，至少 1），种子为 `seed + 状态序号`；总成本与同预算的单次搜索相当。
+
+合并与发布：
+
+- 各状态的通过结构合并后统一去重（同一 `Identity` 规则），统一一个能量窗口（`window_kcal`）；
+  每个实测状态的最低结构总是保留，即使在窗口外，避免整个状态被窗口丢掉。
+- 每个结构按**实测距离**定状态：可选位点距离 ≤ 1.3 × 参考距离为配位（`+`），否则为解离（`-`）。
+  实测状态可能与所在子搜索不同（例如解离位点在搜索或收尾中再配位），以实测为准。
+- 发布元数据：成员键 `search_optional_bound`（`{"82": true}`，1 基原子号 → 是否配位）与 `search_donor_state`
+  （如 `O82+`，多个位点用逗号连接）；`structures.xyz` 注释行追加 ` donors=O82+`。
+- 有可选位点时，`summary.json` 的 `search.donor_states` 按子搜索列出标签、预算、通过数、重新配位（`rebound`）与解离（`detached`）计数，
+  `search.donor_measured` 按实测状态列出发布数。
+
+诊断：
+
+- INFO `confgen_donor_states`：每个实测状态的发布数与最低能量（相对全局最低，kcal/mol），以及各子搜索的通过数、
+  重新配位数和解离数。重新配位数按子搜索的全部通过结构计数（合并与窗口之前），不是发布结构。
+- WARNING `confgen_donor_state_missing`：某个声明的状态没有发布结构；说明该子搜索是改变了状态，还是没有产出。
+
+不在 v1 范围内：其他给体的自由解离、添加输入中未配位的给体、配位数变化、超过 2 个可选位点。
 
 ### 运行时限（`execution.walltime_seconds`）
 
@@ -228,7 +276,7 @@ worker 记录 xTB 的 `xtb version … (commit)` 行到 `summary.json`。已完�
   为 `target=<来源> start=<n> energy_eh=<e> rel_kcal=<r>`，之后按需依次追加：实际类可判定时（有金属的搜索）
   ` actual=<实际目标>`；有排布时 ` arrangement=<aN>`；有反应对时 ` rxn=<d1>,<d2>`（Å，按反应对顺序）；
   有金属时 ` donor_stretch=<比值>`（最大金属–给体距离/输入距离）；状态扫描运行时 ` flips=<编号>`（该结构相对输入翻转的
-  `state_changes` 单元，1 起编号，与 `summary.json` 中 `state_changes.units` 的顺序一致；无翻转为 ` flips=-`）。
+  `state_changes` 单元，1 起编号，与 `summary.json` 中 `state_changes.units` 的顺序一致；无翻转为 ` flips=-`）；有可选位点时另有 ` donors=<位点><+|->`（见下节）。
 - `summary.json`：
   - `settings`：设置（含解析后的 `starts`、`arrangement`、xTB 身份）；
   - `structures`：只列发布的极小，每个唯一极小一条。`target` 为实际类 id（无金属为 `t00`，
