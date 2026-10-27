@@ -24,6 +24,7 @@ __all__ = [
     "parse_cartesian_blocks",
     "parse_energies",
     "parse_frequencies",
+    "parse_imaginary_mode",
     "parse_xyz_companion",
     "read_log_text",
     "termination_reached",
@@ -359,3 +360,84 @@ def parse_cartesian_blocks(
     if current_atoms and current_coords:
         last = (tuple(current_atoms), tuple(current_coords))
     return last
+
+
+_ORCA_MODE_LINE_PATTERN = re.compile(r"^\s*(\d+):\s+(-?\d+\.\d+)\s+cm\*\*-1")
+_ORCA_MODE_HEADER_PATTERN = re.compile(r"^\s*\d+(?:\s+\d+)*\s*$")
+_ORCA_MODE_ROW_PATTERN = re.compile(r"^\s*\d+((?:\s+-?\d+\.\d+(?:[Ee][-+]?\d+)?)+)\s*$")
+_ORCA_MATRIX_END_MARKERS: tuple[str, ...] = ("IR SPECTRUM", "RAMAN SPECTRUM", "THERMOCHEMISTRY")
+
+
+def parse_imaginary_mode(text: str) -> dict[str, object] | None:
+    """Return the most negative imaginary mode of the last frequency section.
+
+    Parameters
+    ----------
+    text : str
+        Full log file content.
+
+    Returns
+    -------
+    dict | None
+        ``{"frequency_cm": float, "displacements": [[dx, dy, dz], ...]}``
+        from the ``NORMAL MODES`` matrix column of the most negative
+        ``VIBRATIONAL FREQUENCIES`` entry below the noise floor, or ``None``.
+        A matrix section is committed only when a trailer closes it, matching
+        :func:`parse_frequencies`; zero modes are excluded by the noise floor.
+    """
+    freq_cand: dict[int, float] = {}
+    matrix_cand: dict[int, list[float]] = {}
+    pending_freqs: dict[int, float] = {}
+    committed: tuple[dict[int, float], dict[int, list[float]]] | None = None
+    in_freq = False
+    in_matrix = False
+    group: list[int] = []
+    for line in text.splitlines():
+        if "VIBRATIONAL FREQUENCIES" in line:
+            freq_cand, matrix_cand = {}, {}
+            in_freq, in_matrix = True, False
+            continue
+        if in_freq:
+            if "NORMAL MODES" in line:
+                in_freq, in_matrix = False, True
+                pending_freqs, matrix_cand, group = freq_cand, {}, []
+                continue
+            found = _ORCA_MODE_LINE_PATTERN.match(line)
+            if found is not None:
+                freq_cand[int(found.group(1))] = float(found.group(2))
+            continue
+        if not in_matrix:
+            continue
+        if any(marker in line for marker in _ORCA_MATRIX_END_MARKERS):
+            committed = (pending_freqs, matrix_cand)
+            in_matrix = False
+            continue
+        if _ORCA_MODE_HEADER_PATTERN.match(line):
+            group = [int(token) for token in line.split()]
+            for column in group:
+                matrix_cand.setdefault(column, [])
+            continue
+        row = _ORCA_MODE_ROW_PATTERN.match(line)
+        if row is None or not group:
+            continue
+        values = [float(token) for token in row.group(1).split()]
+        if len(values) == len(group):
+            for column, value in zip(group, values):
+                matrix_cand[column].append(value)
+    if committed is None:
+        return None
+    frequencies, columns = committed
+    imaginary = {
+        index: value for index, value in frequencies.items() if value < -FREQUENCY_NOISE_FLOOR_CM
+    }
+    if not imaginary:
+        return None
+    index = min(imaginary, key=lambda position: imaginary[position])
+    component = columns.get(index, [])
+    if not component or len(component) % 3 != 0:
+        return None
+    displacements: list[object] = [
+        [component[3 * atom], component[3 * atom + 1], component[3 * atom + 2]]
+        for atom in range(len(component) // 3)
+    ]
+    return {"frequency_cm": imaginary[index], "displacements": displacements}

@@ -95,6 +95,7 @@ class _Plan:
     fmax: float
     max_steps: int
     fix_pairs: tuple[tuple[int, int], ...]
+    fix_targets: tuple[float | None, ...]  # per pair: target distance in Angstrom, None = input
     pick: dict[str, Any] | None
     reject_stretch: float | None
 
@@ -124,7 +125,7 @@ def _parse_native(native: Mapping[str, Any], records: Sequence[StructureRecord])
     max_steps = relax.get("max_steps", 600)
     if not _is_int(max_steps) or max_steps < 1:
         raise DomainError(f"mlip max_steps must be an integer >= 1, got {max_steps!r}")
-    fix_pairs = _fix_pairs(relax.get("fix_distances") or (), index_base, records)
+    fixed = _fix_pairs(relax.get("fix_distances") or (), index_base, records)
     pick = _parse_pick(native.get("pick"), mode)
     reject = native.get("reject_bond_stretch")
     if reject is not None:
@@ -139,7 +140,8 @@ def _parse_native(native: Mapping[str, Any], records: Sequence[StructureRecord])
         optimizer=str(optimizer),
         fmax=fmax,
         max_steps=int(max_steps),
-        fix_pairs=fix_pairs,
+        fix_pairs=tuple(pair for pair, _ in fixed),
+        fix_targets=tuple(target for _, target in fixed),
         pick=pick,
         reject_stretch=reject,
     )
@@ -162,14 +164,32 @@ def _parse_pick(raw: Any, mode: str) -> dict[str, Any] | None:
 
 def _fix_pairs(
     raw: Any, index_base: int, records: Sequence[StructureRecord]
-) -> tuple[tuple[int, int], ...]:
-    """Convert fix_distances to 0-based pairs, checking every record's atom range."""
-    pairs: list[tuple[int, int]] = []
+) -> tuple[tuple[tuple[int, int], float | None], ...]:
+    """Convert fix_distances to 0-based ``((i, j), target)``, checking every record's atom range.
+
+    Entries are ``[i, j]`` (target None: hold the input distance) or ``[i, j, target]``.
+    """
+    pairs: list[tuple[tuple[int, int], float | None]] = []
     for item in raw:
         if not (
-            isinstance(item, (list, tuple)) and len(item) == 2 and all(_is_int(v) for v in item)
+            isinstance(item, (list, tuple))
+            and len(item) in (2, 3)
+            and all(_is_int(v) for v in item[:2])
         ):
-            raise DomainError(f"mlip fix_distances entries must be [i, j] integer pairs: {item!r}")
+            raise DomainError(
+                f"mlip fix_distances entries must be [i, j] or [i, j, target] "
+                f"with integer indices: {item!r}"
+            )
+        target: float | None = None
+        if len(item) == 3:
+            value = item[2]
+            if not (isinstance(value, (int, float)) and not isinstance(value, bool)):
+                raise DomainError(f"mlip fix_distances target must be a number: {list(item)}")
+            target = float(value)
+            if not math.isfinite(target) or target <= 0:
+                raise DomainError(
+                    f"mlip fix_distances target must be a finite distance > 0: {list(item)}"
+                )
         first, second = int(item[0]) - index_base, int(item[1]) - index_base
         if first == second:
             raise DomainError(f"mlip fix_distances pair {list(item)} repeats one atom")
@@ -180,7 +200,7 @@ def _fix_pairs(
                     f"mlip fix_distances pair {list(item)} is out of range for {record.id} "
                     f"({count} atoms, index_base {index_base})"
                 )
-        pairs.append((first, second))
+        pairs.append(((first, second), target))
     return tuple(pairs)
 
 
@@ -425,7 +445,10 @@ class MlipExecutor:
             "optimizer": plan.optimizer,
             "fmax": plan.fmax,
             "max_steps": plan.max_steps,
-            "fix_pairs": [list(pair) for pair in plan.fix_pairs],
+            "fix_pairs": [
+                [i, j] if target is None else [i, j, target]
+                for (i, j), target in zip(plan.fix_pairs, plan.fix_targets, strict=True)
+            ],
             "pick": plan.pick,
             "workers": workers,
             "threads": threads,
@@ -594,7 +617,7 @@ class MlipExecutor:
         else:
             coords = _coords_of(row, len(record.atoms))
             max_ratio, pair, changed = stretch_check(record, coords, plan.fix_pairs)
-            fix_dev = fix_deviation(plan.fix_pairs, record.coordinates, coords)
+            fix_dev = fix_deviation(plan.fix_pairs, record.coordinates, coords, plan.fix_targets)
             if (
                 plan.reject_stretch is not None
                 and max_ratio is not None

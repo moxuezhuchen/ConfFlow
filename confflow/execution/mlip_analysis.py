@@ -73,12 +73,22 @@ def fix_deviation(
     fix_pairs: Sequence[tuple[int, int]],
     before: Sequence[Sequence[float]],
     after: Sequence[Sequence[float]],
+    targets: Sequence[float | None] | None = None,
 ) -> float:
-    """Largest absolute change of a fixed pair distance (0.0 when nothing is fixed)."""
-    return max(
-        (abs(distance(after[i], after[j]) - distance(before[i], before[j])) for i, j in fix_pairs),
-        default=0.0,
-    )
+    """Largest absolute deviation of a fixed pair distance from its reference.
+
+    The reference of pair ``k`` is ``targets[k]`` when given and not ``None``,
+    otherwise the pair distance in ``before``. ``targets`` must align with
+    ``fix_pairs``. Returns 0.0 when nothing is fixed.
+    """
+    if targets is not None and len(targets) != len(fix_pairs):
+        raise ValueError("targets must align one-to-one with fix_pairs")
+    refs = targets if targets is not None else (None,) * len(fix_pairs)
+    devs = []
+    for (i, j), target in zip(fix_pairs, refs, strict=True):
+        ref = distance(before[i], before[j]) if target is None else target
+        devs.append(abs(distance(after[i], after[j]) - ref))
+    return max(devs, default=0.0)
 
 
 def stretch_check(

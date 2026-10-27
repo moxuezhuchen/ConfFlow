@@ -529,6 +529,21 @@ def _default_checks() -> tuple[CheckSpec, ...]:
             "confflow.contract.check.bond_drift.v1",
             "Check drift of declared bond lengths against a threshold.",
         ),
+        CheckSpec(
+            "distance_window",
+            "confflow.contract.check.distance_window.v1",
+            "Check that declared interatomic distances lie inside closed windows.",
+        ),
+        CheckSpec(
+            "ts_mode",
+            "confflow.contract.check.ts_mode.v1",
+            "Check that the lowest imaginary mode is dominated by the declared reaction-pair stretches.",
+        ),
+        CheckSpec(
+            "graph_unchanged",
+            "confflow.contract.check.graph_unchanged.v1",
+            "Check that the covalent graph is unchanged apart from declared ignored pairs.",
+        ),
     )
 
 

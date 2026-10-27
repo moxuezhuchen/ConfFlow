@@ -61,6 +61,20 @@ def test_fix_deviation_is_zero_without_pairs_and_measures_the_change() -> None:
     assert analysis.fix_deviation(((0, 1),), WATER, moved) == pytest.approx(0.06)
 
 
+def test_fix_deviation_measures_against_per_pair_targets() -> None:
+    moved = ((0.0, 0.0, 0.0), (0.90, 0.0, 0.0), (-0.24, 0.93, 0.0))
+    # None keeps the input distance as the reference (0.96 -> 0.90, deviation 0.06).
+    assert analysis.fix_deviation(((0, 1),), WATER, moved, (None,)) == pytest.approx(0.06)
+    # An explicit target is the reference: |0.90 - 0.95| = 0.05.
+    assert analysis.fix_deviation(((0, 1),), WATER, moved, (0.95,)) == pytest.approx(0.05)
+    # Mixed targets: pair (0,1) has target 0.95 (dev 0.05); pair (0,2) uses its
+    # input distance (unchanged, dev 0.0), so the largest deviation is 0.05.
+    pairs = ((0, 1), (0, 2))
+    assert analysis.fix_deviation(pairs, WATER, moved, (0.95, None)) == pytest.approx(0.05)
+    with pytest.raises(ValueError):
+        analysis.fix_deviation(pairs, WATER, moved, (0.95,))
+
+
 def test_stretch_check_reports_ratio_pair_and_graph_change() -> None:
     stretched = ((0.0, 0.0, 0.0), (1.6, 0.0, 0.0), (-0.24, 0.93, 0.0))
     ratio, pair, changed = analysis.stretch_check(_water_record(), stretched, ())

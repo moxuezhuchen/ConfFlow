@@ -37,6 +37,7 @@ from .parsing import (
     parse_cartesian_blocks,
     parse_energies,
     parse_frequencies,
+    parse_imaginary_mode,
     parse_xyz_companion,
     read_log_text,
     termination_reached,
@@ -174,7 +175,7 @@ class OrcaProgramAdapter(ProgramAdapter):
     @property
     def parser_version(self) -> str:
         """Return the parser contract version (folded into digests)."""
-        return "confflow.program.orca.parser.v2"
+        return "confflow.program.orca.parser.v3"
 
     @property
     def input_extension(self) -> str:
@@ -477,6 +478,9 @@ class OrcaProgramAdapter(ProgramAdapter):
         if committed:
             metadata["num_imaginary_frequencies"] = int(num_imag)
             metadata["lowest_frequency_cm_1"] = lowest
+        imaginary_mode = parse_imaginary_mode(text)
+        if imaginary_mode is not None:
+            metadata["imaginary_mode"] = imaginary_mode
         error_details = orca_error_details(text)
         if error_details:
             metadata["error_details"] = error_details

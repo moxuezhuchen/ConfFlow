@@ -347,9 +347,9 @@ def _provenance(adapter_version, parser_version):
 def test_orca_parser_version_is_part_of_producer_provenance():
     adapter = OrcaProgramAdapter()
     assert adapter.adapter_version == "confflow.program.orca.v2"
-    assert adapter.parser_version == "confflow.program.orca.parser.v2"
+    assert adapter.parser_version == "confflow.program.orca.parser.v3"
     provenance = _provenance(adapter.adapter_version, adapter.parser_version)
-    assert provenance["parser_version"] == "confflow.program.orca.parser.v2"
+    assert provenance["parser_version"] == "confflow.program.orca.parser.v3"
     # Pure executors (no native parser) keep the previous shape.
     from confflow.persistence.reuse import build_producer_provenance
 

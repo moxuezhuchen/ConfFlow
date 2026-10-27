@@ -199,7 +199,7 @@ UMA 是机器学习势能，ConfFlow 不附带也不安装 UMA 或它的 Gaussia
       optimizer: precon_lbfgs     # lbfgs | precon_lbfgs | fire，默认 lbfgs
       fmax: 0.02                  # eV/Å，默认 0.02，必须 > 0
       max_steps: 600              # 默认 600，≥ 1
-      fix_distances: [[39, 95]]   # 默认 []；按 index_base 的原子对
+      fix_distances: [[39, 95], [12, 40, 2.10]]  # 默认 []；[a, b] 保持输入距离，[a, b, target] 先设为 target(Å) 再固定
     pick:                         # sp_then_relax 必填；其它模式不能写
       lowest: 8                   # 默认 0
       per_label: 2                # 默认 0；lowest 与 per_label 至少一个 > 0
@@ -228,7 +228,8 @@ UMA 是机器学习势能，ConfFlow 不附带也不安装 UMA 或它的 Gaussia
 **约束与优化器**
 
 - `fix_distances` 的原子序号按 `index_base` 解释。执行器检查序号范围、同一原子对自身，以及重复的原子对（与顺序无关），不合法则整步失败。
-  弛豫用 ASE 的 FixBondLengths（tolerance 1e-8），因此被固定的距离与输入精确一致；每个输出的偏差记在 `mlip_fix_max_dev`。
+  `[a, b, target]` 先把两原子距离设为 target（Å，> 0，两原子各移一半）再固定；偏差按 target 计（无 target 时按输入距离）。同一对不论 target 都不能重复。
+  弛豫用 ASE 的 FixBondLengths（tolerance 1e-8），因此被固定的距离与目标（或输入）精确一致；每个输出的偏差记在 `mlip_fix_max_dev`。
 - `optimizer` 可选 `lbfgs`、`precon_lbfgs`、`fire`。优化器会改变 UMA 的重排结果：在一个 144 原子的算例中，换优化器使 UMA 排序最多改变 6.6 kcal/mol。
   因此每个结构都记录所用优化器（`mlip_optimizer`），比较不同运行的能量时要先核对它。
 
@@ -257,6 +258,64 @@ UMA 是机器学习势能，ConfFlow 不附带也不安装 UMA 或它的 Gaussia
 
 - 笔记本：`workers × threads` 用 3×4 或 2×6，总线程不超过 12。笔记本上用满 16 线程实测约慢 6 倍。
 
+
+### 过渡态（TS）优化与检查
+
+推荐流程（完整可校验的例子见 `docs/examples/uma_ts_funnel.yaml`）：
+
+1. **ConfGen**：用 `confgen.topology.reaction_pairs` 声明反应对（1 基），例如 `[[39, 95]]`，使其成键并保留在构象图中。
+2. **mlip `sp_then_relax`**：对全部构象做 UMA 单点，挑出的少数构象在 `relax.fix_distances: [[39, 95, 1.73]]` 下弛豫，
+   把反应对先设到 UMA 鞍点距离（1.73 Å）再固定，使 TS 优化从鞍点附近开始。
+3. **calculation（Gaussian External UMA）**：关键字
+   `opt=(calcfc,ts,noeigentest) freq external="uma_s"`，`checks` 列出下面五项，`scheduler` 与 `completion` 见后文。
+   ts_mode 需要同一作业内的频率计算：Gaussian 关键字里要有 `freq`，ORCA 用 `OptTS Freq`。
+4. **refine**：绑定 TS 步骤的 `results` 去重（见精修一节）。
+5. **DFT**：对精修后的 TS 结构做 DFT 优化（如 ORCA r2SCAN-3c）。
+
+**五项检查**（都是 `calculation` 步骤的 `checks` 与 `check_params`）
+
+| 检查 | 参数（默认值） | 通过条件 |
+|---|---|---|
+| `normal_termination` | 无 | 计算正常结束 |
+| `imaginary_frequency_count` | `expected`（默认 0，TS 应写 1） | 虚频个数等于 `expected` |
+| `distance_window` | `distances`：`[a, b, lo, hi]` 列表（必填，1 基，Å，闭区间） | 输出几何中每个距离都在 `[lo, hi]` 内；失败时列出每个距离的实测值 |
+| `ts_mode` | `pairs`：反应对列表（必填）；`min_overlap`（默认 0.2，取值 [0, 1]） | 最低虚频的位移向量在声明反应对键伸缩向量张成的子空间上的投影，占其长度的比例不低于 `min_overlap` |
+| `graph_unchanged` | `bond_scale`（默认 1.15）；`ignore_pairs`（默认空，填反应对） | 输入与输出的共价图（按 `bond_scale` 感知）除 `ignore_pairs` 外相同；失败时列出新增与断开的键 |
+
+各检查说明：
+
+- `distance_window` 用于拦住滑向错误鞍点的优化。例：`[[39, 95, 1.6, 2.1], [95, 96, 1.24, 1.30], [95, 97, 1.33, 1.40]]`。
+- `ts_mode` 读取最低（最负）虚频的位移向量。转子（甲基、叔丁基氢的旋转）模式与反应对几乎无关，重叠接近 0；
+  反应键伸缩模式重叠接近 1。`pairs` 对应的重叠由声明的成键伸缩向量给出；没有虚频或没有位移数据时失败，原因分开报告。
+- `graph_unchanged` 检查反应对以外的键没有变化，`ignore_pairs` 中的反应对不计入比较。
+
+**标定数据**（2026-10-26，现有 UMA Hessian 计算）：
+
+- 真实 UMA 过渡态的成键对重叠约 0.47–0.48：TS1（poolHm0358，O39–C95，−175 cm⁻¹）为 0.472，TS2（c7，C95–O97，−185 cm⁻¹）为 0.479。
+  模式里还有配体的协同运动，所以重叠不接近 1。
+- HCN→HNC 的 N–H 重叠 0.56，C–H 重叠 0.18（两对合用 0.66），说明它能区分反应键与旁边的键。
+- 转子模式的重叠接近 0。
+- stage 4 的 37 个失败的 TS 优化里，15 个停在 1.47–1.55 Å，16 个停在 2.44–2.70 Å，这 31 个都能被 `distance_window`（1.6–2.1 Å）拦下；其余 6 个键长在范围内，是成键图/给体/进攻面检查不过。
+  `ts_mode` 是第二道保险。
+
+**失败项与部分成功**
+
+默认一个工作项失败会让步骤失败。要让失败的 TS 优化不影响其余构象，在计算步骤上设置：
+
+```yaml
+scheduler: {on_failure: continue}       # 失败后继续运行剩余项（默认即为 continue，写出来便于阅读）
+completion: {mode: allow_partial, partial_output: allow}
+```
+
+- `completion.mode: allow_partial` 允许步骤部分成功；`partial_output: allow` 允许下游使用其中已完成的子集。
+- 下游绑定要同时声明 `partial_consumption: accept_subset`（默认 `require_complete` 会拒绝消费部分成功的上游，校验时会报错）。
+- 用于下游的 `structure` 与 `results` 两个绑定都需要写上。
+
+失败项不会自动重试，也不会换起点重算。请按报告（每个检查的失败原因）重新提交失败的构象或改输入。
+
+**优化收敛设置**
+
+使用 Gaussian 默认的收敛标准，不要用 `tight`。`tight` 在软模（转子、弱键）上常常不收敛，会把本来可用的 TS 判为失败。
 
 ## 3. 校验与运行
 
