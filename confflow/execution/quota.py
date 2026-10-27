@@ -82,12 +82,42 @@ def _pid_alive(pid: int | None) -> bool:
     return True
 
 
+def _group_has_live_member(pgid: int) -> bool:
+    """Check any non-zombie process still belongs to process group *pgid*."""
+    try:
+        pids = _psutil.pids()
+    except Exception:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return False
+        except OSError:
+            return True
+        return True
+    for pid in pids:
+        try:
+            if os.getpgid(pid) != pgid:
+                continue
+            if _psutil.Process(pid).status() == getattr(_psutil, "STATUS_ZOMBIE", "zombie"):
+                continue
+        except Exception:
+            continue
+        return True
+    return False
+
+
 def _group_alive(record: dict) -> bool:
-    """Check the recorded process group still runs its leader."""
-    if _same_start(record.get("leader_pid"), record.get("leader_start_time")) is False:
-        return False
+    """Check the recorded process group still runs; the leader alone is not enough.
+
+    A lease is dead only when its whole process group is gone: once the leader
+    has exited or been replaced, any live member keeps the lease held.
+    """
     pgid = record.get("pgid")
-    if pgid is not None and os.name == "posix" and pgid > 1:
+    if _same_start(record.get("leader_pid"), record.get("leader_start_time")) is False:
+        if isinstance(pgid, int) and os.name == "posix" and pgid > 1:
+            return _group_has_live_member(pgid)
+        return False
+    if isinstance(pgid, int) and os.name == "posix" and pgid > 1:
         try:
             os.killpg(pgid, 0)
         except ProcessLookupError:

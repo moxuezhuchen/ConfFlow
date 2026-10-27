@@ -506,6 +506,19 @@ def _measured_rows(
     return rows
 
 
+def _merged_release(releases: list[Any]) -> Any:
+    """Release status of a merged run: the sub-runs' common status, else the most incomplete one."""
+    if len(set(releases)) == 1:
+        return releases[0]
+    if "deferred" in releases:
+        return "deferred"
+    if {"partial", "failed"} & set(releases):
+        return "partial"
+    if "done" in releases:
+        return "done"
+    return "not_needed" if "not_needed" in releases else "off"
+
+
 def _merge_donor_runs(
     job: dict[str, Any], runs: list[tuple[str, ExploreSettings, search.SearchRun]]
 ) -> search.SearchRun:
@@ -576,6 +589,10 @@ def _merge_donor_runs(
             }
         )
     stats["donor_states"] = rows
+    run_releases = [(run.stats or {}).get("release") for _, _, run in runs]
+    stats["release"] = _merged_release(run_releases)
+    # per published structure, the release of the sub-run that owns it (aligned with records)
+    stats["record_release"] = [run_releases[owner[mid]] for mid in chosen]
     measured_published = [
         (_measured_label(sites, kept[minimum.id]), minimum.energy)
         for minimum in pool.ordered()
@@ -707,15 +724,29 @@ def _run(job_path: str) -> int:
     _write_input_baseline(baseline_path, job, version, run, "completed")
     summary = {"settings": settings_doc, **run.summary()}
     summary["xtb"] = {"executable": exe, "version": version}
+    # a merged donor run carries each structure's own release; the summary rows hold it per record
+    search_summary = summary.get("search")
+    record_release = (
+        search_summary.pop("record_release", None) if isinstance(search_summary, dict) else None
+    )
+    if record_release is not None:
+        for row, status in zip(summary["structures"], record_release, strict=True):
+            row["release"] = status
+    release = (run.stats or {}).get("release")
+    statuses = {release, *(row.get("release", release) for row in summary["structures"])}
     Path(job["summary_file"]).write_text(json.dumps(summary, sort_keys=True, indent=2) + "\n")
-    if (run.stats or {}).get("release") == "failed":
+    if release == "failed":
         sys.stderr.write(
             "warning: every release relaxation failed; the published structures keep all search restraints\n"
         )
-    elif (run.stats or {}).get("release") in {"deferred", "partial"}:
+    elif statuses & {"deferred", "partial"}:
         sys.stderr.write(
             "warning: time budget limited release; inspect search.release and checkpoint_stage "
             "before using the published structures\n"
+        )
+    elif "failed" in statuses:
+        sys.stderr.write(
+            "warning: some release relaxations failed; the affected structures keep all search restraints\n"
         )
     if not run.passing:
         sys.stderr.write("error: no structure passed all audit checks\n")

@@ -50,6 +50,7 @@ __all__ = [
     "TerminalClaim",
     "TerminalOwnershipLostError",
     "begin_generation",
+    "DefinitionMismatchError",
     "compare_and_set_generation",
     "current_terminal_status",
     "finalize_current_generation",
@@ -102,6 +103,22 @@ class StaleGenerationError(CorruptStateError):
 
 class TerminalOwnershipLostError(CorruptStateError):
     """A writer tried to overwrite the terminal winner of its generation."""
+
+
+class DefinitionMismatchError(CorruptStateError):
+    """A generation tried to take a run root recorded for a different definition.
+
+    Raised under the generation lock before anything is written, so the
+    recorded ledger and its generation remain unchanged.
+    """
+
+    def __init__(self, recorded_digest: str, requested_digest: str) -> None:
+        self.recorded_digest = recorded_digest
+        self.requested_digest = requested_digest
+        super().__init__(
+            "run root already holds a different workflow definition "
+            f"(was {recorded_digest!r}, now {requested_digest!r})"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -506,6 +523,9 @@ def begin_generation(
     root = validate_run_root(run_root)
     with _generation_lock(root):
         ledger = _load_or_init_locked(root)
+        recorded = ledger.definition_digest
+        if recorded is not None and recorded != definition_digest:
+            raise DefinitionMismatchError(recorded, definition_digest)
         ledger = _repair_locked(root, ledger)
         previous = ledger.current_generation_id
         superseded = ledger.superseded_generation_ids

@@ -971,7 +971,7 @@ def _run(
                             "search_reaction_distances": rec.get("reaction_distances") or [],
                             "search_donor_stretch": rec.get("donor_stretch"),
                             "search_state_flips": rec.get("state_flips"),
-                            "search_release": release,
+                            "search_release": rec.get("release", release),
                             **(
                                 {"search_kept_by": "state"} if rec.get("kept_by") == "state" else {}
                             ),
@@ -1014,7 +1014,13 @@ def _run(
             ),
         )
         diagnostics = [diagnostic]
-        if release in {"deferred", "partial"}:
+        # a merged donor run can publish structures from several states with different releases
+        member_releases = sorted({str(rec.get("release", release)) for rec in ordered})
+        if {release, *member_releases} & {"deferred", "partial"}:
+            by_state: dict[str, Any] = {}
+            for row in search_stats.get("donor_states") or []:
+                if isinstance(row, dict):
+                    by_state[str(row.get("label"))] = row.get("release")
             diagnostics.append(
                 Diagnostic(
                     "confgen_release_incomplete",
@@ -1025,7 +1031,13 @@ def _run(
                     work_item.id,
                     work_item.logical_key,
                     None,
-                    FrozenDict({"release": release}),
+                    FrozenDict(
+                        {
+                            "release": release,
+                            "member_release": member_releases,
+                            "release_by_state": by_state,
+                        }
+                    ),
                 )
             )
         if release == "failed":
