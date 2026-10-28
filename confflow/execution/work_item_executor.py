@@ -280,6 +280,8 @@ class ItemExecutionContext:
     poll_interval_seconds: float = _POLL_INTERVAL_SECONDS
     attempt: int = 0
     executor_capability: str | None = None
+    #: Compile-time script identity the launch must still match (script steps).
+    expected_script_identity: FrozenDict | None = None
 
     def item_directory(self, logical_key: str) -> str:
         """Return the deterministic work directory for a logical key."""

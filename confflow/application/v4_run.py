@@ -32,7 +32,9 @@ from ..execution.binding_resolution import (
     resolve_execution_binding,
 )
 from ..execution.contracts import ExecutorCapability
+from ..execution.quota import QuotaError
 from ..execution.registry import default_registry
+from ..execution.script_registry import load_script_registry
 from ..execution.xyz_import import import_xyz
 from ..persistence import arbitration
 from ..persistence.contracts import (
@@ -203,6 +205,28 @@ def _pure_executable_identity(planned: Any, binding: Any) -> Any:
         return None
 
 
+def _mlip_runtime_digest(binding: Any, native_env: Mapping[str, str] | None) -> str:
+    """Return the pre-run identity of an MLIP launch from its exact launch environment.
+
+    Interpreter, runner source, model file, refs file and MLIP package versions
+    are measured before any reuse decision.  An unmeasurable launch receives a
+    fresh nonce, so it never equals a stored identity and the executor fails it
+    as it does today.
+    """
+    from ..execution import mlip_executor
+    from ..execution.environment import mlip_runtime_identity, unresolved_runtime_identity
+
+    interpreter = binding.executable if binding is not None and binding.executable else "python3"
+    digest = mlip_runtime_identity(
+        interpreter=interpreter,
+        runner_path=str(mlip_executor.RUNNER_PATH),
+        env=native_env or {},
+        model_env=mlip_executor.MODEL_ENV,
+        refs_env=mlip_executor.REFS_ENV,
+    )
+    return digest if digest is not None else unresolved_runtime_identity()
+
+
 def _declared_input_grouping(document: Any) -> dict[str, str]:
     """Return ``{input_name: grouping}`` for declared typed groupings."""
     from collections.abc import Mapping
@@ -325,6 +349,23 @@ def _stamp_each_entity_grouping(name: str, structures: Any) -> StructureSet:
     return StructureSet.of(*stamped)
 
 
+def _script_registry_snapshot(parsed_doc: Any) -> Any:
+    """Load the server script registry once when the workflow has a script step.
+
+    A registry that cannot be loaded yields ``None``: the compiler then reports the
+    quota error itself, exactly as it does for an uncompilable document.
+    """
+    definition = getattr(parsed_doc, "definition", None)
+    if definition is None:
+        return None
+    if not any(step.executor == ExecutorCapability.SCRIPT.value for step in definition.steps):
+        return None
+    try:
+        return load_script_registry()
+    except QuotaError:
+        return None
+
+
 def _definition_mismatch_error(recorded: str, requested: str) -> DomainError:
     """Return the refusal for reusing a run root under a different definition."""
     return DomainError(
@@ -386,7 +427,14 @@ class V4RunApplication:
         run_root = context.run_root
         generation_id = context.generation_id
         parsed_doc = parse_workflow_document(request.workflow_document)
-        compiled = compile_workflow(parsed_doc)
+        # One registry authority for the whole generation: the descriptors that compile
+        # and digest the workflow are the implementations that execute it.  Script
+        # registration is snapshotted here, so compilation never reads server config.
+        compiled = compile_workflow(
+            parsed_doc,
+            registry=self._active_registry,
+            script_registry=_script_registry_snapshot(parsed_doc),
+        )
         if not compiled.ok:
             raise DomainError(
                 "V4 workflow does not compile: "
@@ -816,26 +864,40 @@ class V4RunApplication:
 
             implementation = f"confflow.{contract.capability.value}"
             binding = _search_xtb_binding(planned, request)
-            if planned.executor in _EXECUTION_BINDING_CAPABILITIES:
+            launches_process = planned.executor in _EXECUTION_BINDING_CAPABILITIES
+            if launches_process:
                 # scripts and MLIP honour the declared env, walltime and policy of their binding
                 binding = planned.execution
             identity = _pure_executable_identity(planned, binding)
             metadata: dict[str, object] = {"step_id": planned.step_id}
             if identity is not None:
                 metadata["executable_resolved_path"] = identity.resolved_path
-            # A pure step that launches a process (ConfGen xTB, scripts) follows the
-            # native rule: the environment it launches with is the one digested.
+            # A pure step that launches a process (ConfGen xTB, scripts, MLIP) follows the
+            # native rule: the environment it launches with is the one digested.  Script and
+            # MLIP steps always build the snapshot, even without an ``execution`` block, so
+            # ambient variables can never reach the process unhashed.  Session-only variables
+            # are dropped from the inherited part, which is both digested and launched.
             native_env = None
-            if binding is not None:
+            if launches_process:
+                from ..execution.binding_resolution import effective_native_env
+                from ..execution.environment import strip_session_env
+
+                native_env = FrozenDict(
+                    effective_native_env(binding, inherit=strip_session_env(os.environ))
+                )
+            elif binding is not None:
                 from ..execution.binding_resolution import effective_native_env
 
                 native_env = FrozenDict(effective_native_env(binding, inherit=os.environ))
+            executable_digest = identity.digest if identity is not None else None
+            if planned.executor is ExecutorCapability.MLIP:
+                executable_digest = _mlip_runtime_digest(binding, native_env)
             environment = build_pure_environment(
                 implementation=implementation,
                 implementation_version=contract.contract_version,
                 relevant_env=native_env,
                 metadata=metadata,
-                executable_digest=identity.digest if identity is not None else None,
+                executable_digest=executable_digest,
             )
             provenance = build_producer_provenance(
                 adapter_version=implementation,

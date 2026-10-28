@@ -18,7 +18,7 @@ import os
 import shutil
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -237,6 +237,68 @@ def _stable_keys(records: Sequence[StructureRecord]) -> dict[str, str]:
     return {record_id: f"s{index + 1:05d}" for index, record_id in enumerate(ordered)}
 
 
+@dataclass(frozen=True)
+class _Science:
+    """Effective charge/multiplicity of the whole batch plus the resolver's warnings."""
+
+    charge: int
+    multiplicity: int
+    diagnostics: tuple[Diagnostic, ...]
+
+
+def _batch_scientific(
+    records: Sequence[StructureRecord],
+    context: ItemExecutionContext,
+    work_item: WorkItem,
+) -> _Science:
+    """Resolve every structure with the step-wide scientific rules; the runner takes one pair.
+
+    Mirrors the calculation executor: ERROR diagnostics and missing values fail, and a batch whose
+    effective (charge, multiplicity) differ is rejected because one job carries one pair.
+    """
+    from ..workflow.v4.scientific import resolve_scientific_parameters
+
+    pairs: set[tuple[int, int]] = set()
+    missing: list[str] = []
+    diagnostics: list[Diagnostic] = []
+    for record in records:
+        effective, found = resolve_scientific_parameters(
+            structure=record,
+            overrides=context.scientific.overrides,
+            defaults=context.scientific_defaults,
+        )
+        errors = [item.message for item in found if item.severity is DiagnosticSeverity.ERROR]
+        if errors:
+            raise DomainError(
+                f"mlip scientific parameters are inconsistent for {record.id}: " + "; ".join(errors)
+            )
+        diagnostics.extend(
+            replace(
+                item,
+                step_id=context.step_id,
+                work_item_id=work_item.id,
+                logical_key=work_item.logical_key,
+            )
+            for item in found
+        )
+        if effective.charge is None or effective.multiplicity is None:
+            missing.append(record.id)
+        else:
+            pairs.add((effective.charge, effective.multiplicity))
+    if missing:
+        raise DomainError(
+            "mlip needs charge and multiplicity on every structure or in scientific_defaults; "
+            f"missing for {_short(missing)}"
+        )
+    if len(pairs) != 1:
+        raise DomainError(
+            "mlip batch mixes (charge, multiplicity) pairs "
+            f"{sorted(pairs)}; the runner takes one pair per job, split the batch by charge/spin"
+        )
+    charge, multiplicity = pairs.pop()
+    return _Science(charge, multiplicity, tuple(diagnostics))
+
+
 def _input_energy(record: StructureRecord) -> float | None:
     """Input electronic energy (Eh) carried by the record, when numeric."""
     value = record.metadata.get("energy_eh")
@@ -414,9 +476,7 @@ class MlipExecutor:
         env = _launch_env(context)
         cores = work_item.resources.cores_per_item
         model_path, refs_path, device, threads, workers = _runner_settings(env, cores)
-        defaults = context.scientific_defaults
-        charge = getattr(defaults, "charge", None)
-        multiplicity = getattr(defaults, "multiplicity", None)
+        science = _batch_scientific(records, context, work_item)
         keys = _stable_keys(records)
         ordered = sorted(records, key=lambda record: record.id)
         binding = context.execution_binding
@@ -439,8 +499,8 @@ class MlipExecutor:
             "refs_path": refs_path,
             "task": plan.task,
             "device": device,
-            "charge": 0 if charge is None else int(charge),
-            "multiplicity": 1 if multiplicity is None else int(multiplicity),
+            "charge": science.charge,
+            "multiplicity": science.multiplicity,
             "mode": plan.mode,
             "optimizer": plan.optimizer,
             "fmax": plan.fmax,
@@ -520,7 +580,7 @@ class MlipExecutor:
                 + (f":\n{tail}" if tail else ""),
             )
         return self._assemble(
-            work_item, context, wall_start, monotonic_start, plan, records, keys, work_dir
+            work_item, context, wall_start, monotonic_start, plan, records, keys, work_dir, science
         )
 
     @staticmethod
@@ -544,6 +604,7 @@ class MlipExecutor:
         records: Sequence[StructureRecord],
         keys: Mapping[str, str],
         work_dir: str,
+        science: _Science,
     ) -> WorkItemResult:
         rows = _read_rows(Path(work_dir) / _RESULTS_NAME)
         done = _read_done(Path(work_dir) / _DONE_NAME)
@@ -599,6 +660,7 @@ class MlipExecutor:
             dropped_stretch,
             done,
             calibration(pairs, basis),
+            science,
         )
 
     def _output(
@@ -661,6 +723,7 @@ class MlipExecutor:
         dropped_stretch: list[str],
         done: Mapping[str, Any],
         calibration_info: dict[str, Any] | None,
+        science: _Science,
     ) -> WorkItemResult:
         """Build structures, energies, artifacts and diagnostics for the kept outputs."""
         ordered = sorted(outputs, key=lambda out: out.record.id)
@@ -676,8 +739,8 @@ class MlipExecutor:
                     id=out_id,
                     atoms=tuple(record.atoms),
                     coordinates=coords,
-                    charge=record.charge,
-                    multiplicity=record.multiplicity,
+                    charge=science.charge,
+                    multiplicity=science.multiplicity,
                     parent_ids=parents,
                     lineage_root_id=root,
                     source_step_id=work_item.step_id,
@@ -812,6 +875,7 @@ class MlipExecutor:
                     calibration_info,
                 )
             )
+        diagnostics.extend(science.diagnostics)
         return WorkItemResult(
             work_item_id=work_item.id,
             status=WorkItemStatus.COMPLETED,

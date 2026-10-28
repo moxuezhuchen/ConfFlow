@@ -152,7 +152,7 @@ def _ctx(
     )
     return ItemExecutionContext(
         step_id="uma",
-        scientific=SimpleNamespace(native=native),
+        scientific=SimpleNamespace(native=native, overrides={}),
         scientific_defaults=SimpleNamespace(charge=0, multiplicity=1),
         adapter=None,
         profile=None,

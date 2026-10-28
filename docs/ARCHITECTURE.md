@@ -67,7 +67,7 @@ confflow/
                       run_result.json（producer.run_result 投影，客户端只读）
 ```
 
-- **执行只在本地**：同一个 `WorkItem` 由本地 `BatchStepExecutor` 执行（typed 远程传输已于 R1.2/R2.3f 退役，详见 `docs/architecture/WORKFLOW_V4.md` V4-4 章首）。跨进程执行只走控制协议 v1：`confflow.control.worker-handoff.v1`（`input_xyz` envelope）边界交给 control worker。
+- **执行只在本地**：同一个 `WorkItem` 由本地 `BatchStepExecutor` 执行（typed 远程传输已于 R1.2/R2.3f 退役，详见 `docs/architecture/WORKFLOW_V4.md` V4-4 章首）。跨进程执行只走控制协议 v1：`confflow.control.worker-handoff.v1` envelope（顶层 `content_schema`/`run_id`/`workflow_config` 定位器 + `tasks` 数组，schema 限定 `maxItems: 1`；每个 task 携带 `task_id`/`input_xyz`（须为 `.xyz`）/`work_dir`/`sha256`）边界交给 control worker。
 - **resume 靠持久化而不是重跑**：已发布的 step 从磁盘加载；未完成的 step 按 work item 续跑，已完成的 work item 复用。
 - **没有隐式收尾**：清理、去重、精修都是显式的 `structure_transform` 步骤，外部脚本是显式的 `script` 步骤；不存在 calculation 的隐藏尾巴。
 
@@ -105,7 +105,7 @@ confflow/
 - **工作拓扑权威**（`science/topology.py`）：结构记录自带 `working_topology` / `topology_patch`；
   ConfGen、refine、计算输出 profile 都经 `resolve_working_adjacency` 取同一份"预期共价图"，
   不再各自做感知加修正。spec 级拓扑声明与记录级权威同时出现会失败关闭。
-- **精修去重**（`execution/transform_executor.py` + `science/frame_compare.py`、`topology_mapping.py`）：
+- **精修去重**（`execution/transform_executor.py` 调用 `science/topology_mapping.py::find_isomorphism` 与 `science/confgen/identity.py`（`Identity`/`MinimaPool`））：
   只在合法的元素/边保持映射下比较 Kabsch RMSD，所以仅标号对称置换的构象会被合并；搜索有节点预算
   （默认 1000/每对），预算耗尽的一对保留两个并在 notes 中说明。可选的 `topology_bonds` 声明带类型的边
   （COVALENT / COORDINATION / FORMING / BREAKING），映射必须保持这些类型。

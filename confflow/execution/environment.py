@@ -19,9 +19,12 @@ native binary; unknown measurements never equal verified ones (fail-closed nonce
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
+import subprocess
 import threading
+import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
@@ -33,11 +36,15 @@ from .native import ProgramAdapter
 
 __all__ = [
     "EXECUTION_ENVIRONMENT_METADATA_KEY",
+    "MLIP_PACKAGE_NAMES",
     "ExecutableIdentity",
     "EnvironmentMeasurer",
     "build_pure_environment",
     "measure_executable",
+    "mlip_runtime_identity",
     "select_relevant_env",
+    "strip_session_env",
+    "unresolved_runtime_identity",
 ]
 
 #: Metadata key carrying the verified worker-measured execution environment
@@ -45,6 +52,53 @@ __all__ = [
 EXECUTION_ENVIRONMENT_METADATA_KEY: Final[str] = "remote_execution_environment"
 
 _HASH_CHUNK_BYTES = 1024 * 1024
+
+#: Ambient session variables that describe the terminal/desktop a user happens
+#: to run from, not the computation. They are removed from the inherited
+#: environment before it is digested AND launched, so the same workflow reuses
+#: across terminals while the process still sees the same mapping it hashed.
+SESSION_ENV_NAMES: Final[frozenset[str]] = frozenset(
+    {
+        "COLORTERM",
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "PWD",
+        "OLDPWD",
+        "SHLVL",
+        "_",
+        "STY",
+        "WINDOWID",
+        "COLUMNS",
+        "LINES",
+        "PS1",
+        "PROMPT_COMMAND",
+        "LS_COLORS",
+        "WSL_INTEROP",
+    }
+)
+SESSION_ENV_PREFIXES: Final[tuple[str, ...]] = ("TERM", "SSH_", "XDG_SESSION_", "TMUX")
+
+#: Distributions whose installed versions are part of an MLIP runtime identity.
+MLIP_PACKAGE_NAMES: Final[tuple[str, ...]] = ("fairchem-core", "torch", "ase", "numpy")
+
+_MLIP_IDENTITY_KIND: Final[str] = "confflow.mlip.runtime.v1"
+_VERSION_PROBE_TIMEOUT_SECONDS: Final[int] = 120
+_VERSION_PROBE_CODE: Final[str] = (
+    "import importlib.metadata as m, json, sys\n"
+    "names = json.loads(sys.argv[1])\n"
+    "out = {}\n"
+    "for name in names:\n"
+    "    try:\n"
+    "        out[name] = m.version(name)\n"
+    "    except m.PackageNotFoundError:\n"
+    "        out[name] = None\n"
+    "print(json.dumps(out, sort_keys=True))\n"
+)
+# Content hashes keyed by (realpath, size, mtime_ns, inode); re-validated on every read.
+_CONTENT_CACHE: dict[tuple[str, int, int, int], str] = {}
+# Interpreter package versions keyed by the interpreter's content identity.
+_VERSION_CACHE: dict[tuple[str, str], dict[str, str | None]] = {}
+_CACHE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,6 +304,154 @@ def build_pure_environment(
         relevant_env=FrozenDict(relevant),
         metadata=FrozenDict(dict(metadata) if metadata is not None else {}),
     )
+
+
+def strip_session_env(env: Mapping[str, str]) -> dict[str, str]:
+    """Return *env* without the volatile session variables (see ``SESSION_ENV_NAMES``)."""
+    return {
+        key: value
+        for key, value in env.items()
+        if key not in SESSION_ENV_NAMES and not key.startswith(SESSION_ENV_PREFIXES)
+    }
+
+
+def _content_sha256(path: str) -> str:
+    """Return the full-content sha256 of *path*, cached per (realpath, stat) key."""
+    real = os.path.realpath(path)
+    try:
+        stat = os.stat(real)
+    except OSError as exc:
+        raise DomainError(f"cannot stat {path!r}: {exc}") from exc
+    if not os.path.isfile(real):
+        raise DomainError(f"{path!r} is not a regular file")
+    key = (real, stat.st_size, stat.st_mtime_ns, stat.st_ino)
+    with _CACHE_LOCK:
+        cached = _CONTENT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    digest = hashlib.sha256()
+    try:
+        with open(real, "rb") as handle:
+            while True:
+                chunk = handle.read(_HASH_CHUNK_BYTES)
+                if not chunk:
+                    break
+                digest.update(chunk)
+    except OSError as exc:
+        raise DomainError(f"cannot hash {path!r}: {exc}") from exc
+    value = digest.hexdigest()
+    with _CACHE_LOCK:
+        _CONTENT_CACHE[key] = value
+    return value
+
+
+def _interpreter_package_versions(
+    real_interpreter: str, interpreter_sha256: str
+) -> dict[str, str | None]:
+    """Query installed MLIP package versions through the interpreter (never import torch)."""
+    cache_key = (interpreter_sha256, real_interpreter)
+    with _CACHE_LOCK:
+        cached = _VERSION_CACHE.get(cache_key)
+    if cached is not None:
+        return dict(cached)
+    try:
+        completed = subprocess.run(
+            [
+                real_interpreter,
+                "-I",
+                "-c",
+                _VERSION_PROBE_CODE,
+                json.dumps(list(MLIP_PACKAGE_NAMES)),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=_VERSION_PROBE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise DomainError(f"cannot query MLIP package versions: {exc}") from exc
+    if completed.returncode != 0:
+        raise DomainError(f"MLIP package version probe failed (exit {completed.returncode})")
+    try:
+        payload = json.loads(completed.stdout)
+    except ValueError as exc:
+        raise DomainError(f"MLIP package version probe returned invalid JSON: {exc}") from exc
+    if not isinstance(payload, dict) or set(payload) != set(MLIP_PACKAGE_NAMES):
+        raise DomainError("MLIP package version probe returned an unexpected shape")
+    versions: dict[str, str | None] = {}
+    for name in MLIP_PACKAGE_NAMES:
+        value = payload[name]
+        if value is not None and not isinstance(value, str):
+            raise DomainError(f"MLIP package version for {name!r} must be a string or null")
+        versions[name] = value
+    with _CACHE_LOCK:
+        _VERSION_CACHE[cache_key] = dict(versions)
+    return versions
+
+
+def _resolve_interpreter(interpreter: str) -> str:
+    """Resolve an interpreter the way the MLIP executor launches it."""
+    text = _validate_executable_candidate(interpreter)
+    if os.path.isabs(text):
+        resolved: str | None = text
+    else:
+        resolved = shutil.which(text)
+    if not resolved or not os.path.isfile(resolved):
+        raise DomainError(f"mlip interpreter {interpreter!r} does not resolve to a file")
+    return resolved
+
+
+def _require_absolute_path(value: str, label: str) -> str:
+    if not os.path.isabs(value):
+        raise DomainError(f"{label} path {value!r} must be absolute")
+    return value
+
+
+def mlip_runtime_identity(
+    *,
+    interpreter: str,
+    runner_path: str,
+    env: Mapping[str, str],
+    model_env: str,
+    refs_env: str,
+) -> str | None:
+    """Return the ``sha256:`` identity of an MLIP run, or ``None`` when unresolvable.
+
+    Covers the interpreter content, the runner source, the model file content, the
+    refs file content (when declared) and the installed MLIP package versions of the
+    interpreter. Paths are locators only; content is the identity. Any unresolvable
+    part makes the whole identity ``None`` so the caller can fail closed.
+    """
+    try:
+        real_interpreter = _resolve_interpreter(interpreter)
+        interpreter_sha = _content_sha256(real_interpreter)
+        runner_sha = _content_sha256(runner_path)
+        model_text = env.get(model_env, "").strip()
+        if not model_text:
+            return None
+        model_sha = _content_sha256(_require_absolute_path(model_text, model_env))
+        refs_text = env.get(refs_env, "").strip()
+        refs_sha = (
+            _content_sha256(_require_absolute_path(refs_text, refs_env)) if refs_text else None
+        )
+        versions = _interpreter_package_versions(real_interpreter, interpreter_sha)
+    except DomainError:
+        return None
+    payload = {
+        "kind": _MLIP_IDENTITY_KIND,
+        "interpreter_sha256": interpreter_sha,
+        "runner_sha256": runner_sha,
+        "model_sha256": model_sha,
+        "refs_sha256": refs_sha,
+        "packages": versions,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def unresolved_runtime_identity() -> str:
+    """Return a fresh nonce identity: an unresolved run never equals any stored one."""
+    return f"unresolved:{uuid.uuid4().hex}"
 
 
 class EnvironmentMeasurer:

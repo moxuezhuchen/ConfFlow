@@ -17,7 +17,7 @@
 
 **CI 与覆盖**
 - 默认 CI 执行 `pytest tests`，所有核心测试应快速且确定性强。
-- 覆盖率阈值 `fail_under = 85`，已在 `pyproject.toml` 中配置。
+- 总体覆盖率阈值 `fail_under = 70`，已在 `pyproject.toml` 的 `[tool.coverage.report]` 中配置（full-coverage CI 任务仅在 main 推送时执行）。PR 门禁是新增/修改生产代码行覆盖率 ≥85%（`tools/changed_coverage.py --min 85`），与总体阈值不同。
 
 **变更流程**
 - 提交影响多个测试文件的重构前，请先在本地运行 `pytest -q tests` 并确保通过。

@@ -292,6 +292,7 @@ class BatchStepExecutor:
             supervisor=self._supervisor,
             environment=request.environment,
             native_env=request.native_env,
+            expected_script_identity=step.script_identity,
         )
         fail_fast = (
             step.scheduler.on_failure is not None and step.scheduler.on_failure.value == "fail_fast"
@@ -441,6 +442,7 @@ class BatchStepExecutor:
             environment=request.environment,
             native_env=native_env,
             executor_capability=request.executor_capability,
+            expected_script_identity=step.script_identity,
         )
         stop_event = threading.Event()
         stop_event_proxy = request.should_cancel

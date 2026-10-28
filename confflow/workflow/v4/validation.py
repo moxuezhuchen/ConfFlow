@@ -15,6 +15,7 @@ from collections.abc import Callable, Mapping, Set
 from dataclasses import dataclass
 from typing import Any
 
+from ...domain._immutable import FrozenDict, freeze_value
 from ...domain.binding import BindingSource, PortKind, SelectorKind, SourceKind
 from ...domain.canonical import typed_digest
 from ...domain.diagnostics import Diagnostic, diagnostic_sort_key
@@ -83,6 +84,10 @@ class ValidatedStep:
     step_semantic_digest: str
     check_versions: tuple[tuple[str, str], ...] = ()
     recovery_version: str | None = None
+    #: Frozen compile-time script identity (script steps only); enters the
+    #: step digest and is re-checked at launch so a later registry change
+    #: cannot be run under the compiled digest.
+    script_identity: FrozenDict | None = None
 
     @property
     def step_id(self) -> str:
@@ -1331,6 +1336,9 @@ def _validate_step(
         step_semantic_digest=base_digest,
         check_versions=check_versions,
         recovery_version=recovery_version,
+        script_identity=(
+            freeze_value(script_identity_payload) if script_identity_payload is not None else None
+        ),
     )
     return validated, diagnostics
 
