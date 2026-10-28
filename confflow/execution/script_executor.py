@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import shutil
+import stat
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -59,12 +60,24 @@ SUMMARY_MAX_BYTES = 1 << 20
 
 #: stderr lines attached to failure diagnostics.
 _STDERR_TAIL_LINES = 20
-# Slack below the launch time for artifact mtimes: filesystem timestamps can be
-# coarser than the clock, so a file written just after launch may read older.
-_ARTIFACT_MTIME_SLACK_SECONDS = 1.0
 _STDERR_TAIL_CHARS = 4000
 
 _LOG = logging.getLogger(__name__)
+
+
+def _file_state(path: Path) -> tuple[int, ...] | None:
+    """Return a regular file's identity and write state, or ``None`` for anything else.
+
+    Any write or truncation moves ``st_mtime_ns``/``st_ctime_ns``; a replaced file gets a
+    new inode, so an unchanged tuple means the file was not touched.
+    """
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    if not stat.S_ISREG(info.st_mode):
+        return None
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
 def serialize_script_input(record: StructureRecord) -> str:
@@ -232,6 +245,9 @@ class ScriptExecutor:
         # structures/summary files of a failed attempt are removed here;
         # checkpoints and other script files stay in place for resume.
         self._clear_declared_outputs(item_dir, outputs, protected=input_path)
+        # Artifacts are matched by glob, so files left by an earlier attempt would match
+        # too. Record their state now; only files this attempt creates or rewrites are kept.
+        artifact_state_before = self._artifact_file_states(outputs, item_dir)
         with open(input_path, "w", encoding="utf-8") as handle:
             handle.write(serialize_script_input(driving))
         full_args = expand_script_args(
@@ -258,9 +274,6 @@ class ScriptExecutor:
             stderr_file="stderr.log",
             metadata=FrozenDict({"script_id": script_id, "item_key": item_key}),
         )
-        # Artifacts are matched by glob, so files left by an earlier attempt are
-        # filtered by mtime: only files written at or after this start are kept.
-        attempt_started = time.time() - _ARTIFACT_MTIME_SLACK_SECONDS
         launched = self._launcher.launch_and_wait(
             context.supervisor,
             request,
@@ -352,7 +365,7 @@ class ScriptExecutor:
             structures = self._collect_structures(outputs, item_dir, work_item, context, item_key)
             results = self._collect_summary(outputs, item_dir, work_item, driving)
             artifacts = self._collect_artifacts(
-                outputs, item_dir, work_item, context, item_key, since=attempt_started
+                outputs, item_dir, work_item, context, item_key, before=artifact_state_before
             )
         except DomainError as exc:
             return self._fail(
@@ -499,9 +512,13 @@ class ScriptExecutor:
         context: ItemExecutionContext,
         item_key: str,
         *,
-        since: float = 0.0,
+        before: Mapping[str, tuple[int, ...]] | None = None,
     ) -> ArtifactSet:
-        """Save files matching the declared artifact patterns written since *since*."""
+        """Save files matching the declared artifact patterns.
+
+        With *before* (a pre-launch :meth:`_artifact_file_states` snapshot), files whose
+        state is unchanged since the snapshot are left out: they belong to an earlier attempt.
+        """
         patterns = outputs.get("artifacts")
         if not patterns:
             return ArtifactSet()
@@ -517,8 +534,9 @@ class ScriptExecutor:
             for candidate in sorted(base.glob(pattern)):
                 if not candidate.is_file() or candidate in matched:
                     continue
-                if candidate.stat().st_mtime >= since:
-                    matched.append(candidate)
+                if before is not None and before.get(str(candidate)) == _file_state(candidate):
+                    continue
+                matched.append(candidate)
         refs: list[ArtifactRef] = []
         for index, candidate in enumerate(matched):
             candidate_real = os.path.realpath(candidate)
@@ -541,6 +559,26 @@ class ScriptExecutor:
                 )
             )
         return ArtifactSet.of(*refs)
+
+    @staticmethod
+    def _artifact_file_states(outputs: dict[str, Any], item_dir: str) -> dict[str, tuple[int, ...]]:
+        """Return the state of every file the artifact patterns match right now.
+
+        Invalid pattern declarations are skipped here and reported after the run.
+        """
+        patterns = outputs.get("artifacts")
+        if not isinstance(patterns, (list, tuple)):
+            return {}
+        base = Path(item_dir)
+        states: dict[str, tuple[int, ...]] = {}
+        for pattern in patterns:
+            if not isinstance(pattern, str) or not pattern:
+                continue
+            for candidate in base.glob(pattern):
+                state = _file_state(candidate)
+                if state is not None:
+                    states[str(candidate)] = state
+        return states
 
     def _clear_declared_outputs(
         self, item_dir: str, outputs: dict[str, Any], *, protected: str

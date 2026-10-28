@@ -88,7 +88,9 @@ def _topology_fingerprint(record: StructureRecord) -> tuple[Any, ...] | None:
 
     The sorted multiset of ``(element, sorted neighbour elements)`` per atom does not depend
     on atom labels, so renumbered copies of one molecule share it.  Equal fingerprints do not
-    prove isomorphism; ``_cluster`` still runs the graph isomorphism check within the group.
+    prove isomorphism (a six-ring and two three-rings collide), so it only narrows refine's
+    candidate groups, where ``_cluster`` runs the graph isomorphism check.  Deduplicate has no
+    such check and keys on the exact topology instead.
     """
     rows = record.working_topology
     if rows is None:
@@ -99,8 +101,12 @@ def _topology_fingerprint(record: StructureRecord) -> tuple[Any, ...] | None:
     )
 
 
-def _topology_identity(record: StructureRecord) -> tuple[Any, ...]:
-    """Return the topology half of the scientific-identity grouping key."""
+def _topology_identity(record: StructureRecord, *, exact: bool) -> tuple[Any, ...]:
+    """Return the topology half of the scientific-identity grouping key.
+
+    *exact* keys on the labelled working topology; otherwise on its renumbering-invariant
+    fingerprint, which needs a later isomorphism check.
+    """
     patch = record.topology_patch
     patch_key = None
     if patch is not None and not patch.is_empty:
@@ -108,18 +114,22 @@ def _topology_identity(record: StructureRecord) -> tuple[Any, ...]:
             tuple(patch.add_edges),
             tuple(patch.delete_edges),
         )
-    return (patch_key, _topology_fingerprint(record))
+    if not exact:
+        return (patch_key, _topology_fingerprint(record))
+    rows = record.working_topology
+    graph_key = None if rows is None else tuple(tuple(row) for row in rows)
+    return (patch_key, graph_key)
 
 
-def _scientific_group(record: StructureRecord) -> tuple[Any, ...]:
-    """Return the scientific-identity grouping key for one record."""
+def _scientific_group(record: StructureRecord, *, exact: bool) -> tuple[Any, ...]:
+    """Return the scientific-identity grouping key for one record (see ``_topology_identity``)."""
     return (
         record.charge,
         record.multiplicity,
         record.group_key,
         record.role,
         tuple(record.atoms),
-        _topology_identity(record),
+        _topology_identity(record, exact=exact),
     )
 
 
@@ -284,7 +294,7 @@ class TransformExecutor:
         best: dict[tuple[Any, ...], StructureRecord] = {}
         notes: list[str] = []
         for record in sorted(members, key=lambda item: item.id):
-            key = (_scientific_group(record), record.geometry_digest)
+            key = (_scientific_group(record, exact=True), record.geometry_digest)
             if key in best:
                 notes.append(
                     f"dropped duplicate {record.id} of {best[key].id} "
@@ -351,7 +361,7 @@ class TransformExecutor:
             )
         groups: dict[tuple[Any, ...], list[StructureRecord]] = {}
         for record in members:
-            groups.setdefault(_scientific_group(record), []).append(record)
+            groups.setdefault(_scientific_group(record, exact=False), []).append(record)
         energies = self._energies(members, results)
         out: list[StructureRecord] = []
         notes: list[str] = []
