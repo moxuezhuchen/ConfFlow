@@ -59,6 +59,7 @@ from ..persistence.run_state import (
     save_run_state,
     transition_step,
 )
+from ..persistence.storage_policy import select_journal_mode
 from ..persistence.work_items import SqliteWorkItemStore
 from ..workflow.v4.assembly import (
     MaterializedOutputs,
@@ -391,6 +392,16 @@ def _script_registry_snapshot(parsed_doc: Any) -> Any:
         return None
 
 
+def _storage_preflight(run_root: str) -> None:
+    """Refuse a run root whose filesystem cannot honour the WAL policy.
+
+    Runs before any generation state is written, so a refused run leaves a
+    previously completed run's files untouched.  The store-level check still
+    runs when each work-item store opens.
+    """
+    select_journal_mode(run_root)
+
+
 def _definition_mismatch_error(recorded: str, requested: str) -> DomainError:
     """Return the refusal for reusing a run root under a different definition."""
     return DomainError(
@@ -426,6 +437,9 @@ class V4RunApplication:
         """Compile, execute, publish, and summarize one V4 workflow."""
         run_root = validate_run_root(request.run_root)
         os.makedirs(run_root, exist_ok=True)
+        # Storage is a precondition: refuse an unsupported run-root filesystem
+        # before generation ownership, run state, or publication is touched.
+        _storage_preflight(run_root)
         run_id = os.path.basename(request.run_root.rstrip(os.sep)) or "run"
         generation_id = new_generation_id()
         record = running_record(run_id=run_id, generation_id=generation_id)

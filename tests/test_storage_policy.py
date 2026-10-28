@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -272,3 +273,86 @@ def test_approval_verifier_requires_regular_file_and_nofollow(tmp_path: Path, mo
     monkeypatch.delattr(storage_policy.os, "O_NOFOLLOW", raising=False)
     with pytest.raises(StorageUnsupportedError, match="O_NOFOLLOW"):
         ApprovalVerifier().verify(approval, root=tmp_path, filesystem_type="nfs4")
+
+
+def _sqlite_file(path: Path) -> None:
+    """Create a real SQLite database file at *path* with one table."""
+    connection = sqlite3.connect(str(path))
+    connection.execute("CREATE TABLE t (x INTEGER)")
+    connection.commit()
+    connection.close()
+
+
+def test_store_refuses_symlink_to_nfs4_database(tmp_path: Path, monkeypatch):
+    """A local store link to a database on nfs4 is refused before SQLite opens the target."""
+    network = (tmp_path / "network").resolve()
+    network.mkdir()
+    target = network / "work_items.sqlite"
+    _sqlite_file(target)
+    before = target.read_bytes()
+    _local_mounts(monkeypatch, (("/", "ext4"), (str(network), "nfs4")))
+    local = tmp_path / "local"
+    local.mkdir()
+    link = local / "work_items.sqlite"
+    link.symlink_to(target)
+    with pytest.raises(StorageUnsupportedError, match="symlink"):
+        SqliteWorkItemStore.open(str(link))
+    assert target.read_bytes() == before
+    assert not (network / "work_items.sqlite-wal").exists()
+    assert not Path(f"{link}-wal").exists()
+
+
+def test_store_refuses_symlink_to_local_database(tmp_path: Path, monkeypatch):
+    """A store link is refused even when its target is on a local filesystem."""
+    _local_mounts(monkeypatch)
+    target = tmp_path / "elsewhere" / "work_items.sqlite"
+    target.parent.mkdir()
+    _sqlite_file(target)
+    before = target.read_bytes()
+    local = tmp_path / "local"
+    local.mkdir()
+    link = local / "work_items.sqlite"
+    link.symlink_to(target)
+    with pytest.raises(StorageUnsupportedError, match="must not be symlinks"):
+        SqliteWorkItemStore.open(str(link))
+    assert target.read_bytes() == before
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_store_refuses_symlinked_side_file(tmp_path: Path, monkeypatch, suffix: str):
+    """A pre-created SQLite side file that is a symlink is refused before SQLite opens it."""
+    _local_mounts(monkeypatch)
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"")
+    local = tmp_path / "local"
+    local.mkdir()
+    store = local / "work_items.sqlite"
+    Path(f"{store}{suffix}").symlink_to(outside)
+    with pytest.raises(StorageUnsupportedError, match="symlink"):
+        SqliteWorkItemStore.open(str(store), filesystem_detector=lambda _: "ext4")
+    assert outside.read_bytes() == b""
+    assert not store.exists()
+
+
+def test_store_allows_parent_symlink_to_local_directory(tmp_path: Path, monkeypatch):
+    """A symlinked parent directory on a local filesystem keeps WAL."""
+    _local_mounts(monkeypatch)
+    real_root = (tmp_path / "real_root").resolve()
+    real_root.mkdir()
+    linked_root = tmp_path / "linked_root"
+    linked_root.symlink_to(real_root, target_is_directory=True)
+    store_path = linked_root / "run" / "steps" / "s_opt" / "work_items.sqlite"
+    with SqliteWorkItemStore.open(str(store_path)) as store:
+        assert _journal_mode(store) == "wal"
+    assert (real_root / "run" / "steps" / "s_opt" / "work_items.sqlite").exists()
+
+
+def test_store_refuses_parent_symlink_into_nfs4_directory(tmp_path: Path, monkeypatch):
+    """A symlinked parent directory that resolves onto nfs4 is refused by the mount check."""
+    network = (tmp_path / "network").resolve()
+    network.mkdir()
+    linked_root = tmp_path / "linked_root"
+    linked_root.symlink_to(network, target_is_directory=True)
+    _local_mounts(monkeypatch, (("/", "ext4"), (str(network), "nfs4")))
+    with pytest.raises(StorageUnsupportedError, match="'nfs4'"):
+        SqliteWorkItemStore.open(str(linked_root / "run" / "steps" / "s_opt" / "work_items.sqlite"))

@@ -28,6 +28,7 @@ __all__ = [
     "assert_local_wal_filesystem",
     "detect_filesystem_type",
     "mount_table",
+    "reject_database_symlinks",
     "select_journal_mode",
 ]
 
@@ -183,6 +184,24 @@ class ApprovalVerifier:
         finally:
             if descriptor is not None:
                 os.close(descriptor)
+
+
+def reject_database_symlinks(path: str | os.PathLike[str]) -> None:
+    """Refuse a store whose database file or existing SQLite side file is a symlink.
+
+    A link can point at a file on another filesystem, so checking only the parent
+    directory would not bind the database SQLite actually opens. Dangling links count.
+    """
+    name = os.fspath(path)
+    for candidate in (name, f"{name}-wal", f"{name}-shm", f"{name}-journal"):
+        try:
+            metadata = os.lstat(candidate)
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(metadata.st_mode):
+            raise StorageUnsupportedError(
+                f"durable store files must not be symlinks; {candidate} is a symlink"
+            )
 
 
 def select_journal_mode(

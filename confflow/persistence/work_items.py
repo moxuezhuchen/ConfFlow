@@ -60,6 +60,7 @@ from .contracts import (
 from .storage_policy import (
     FilesystemDetector,
     StorageUnsupportedError,
+    reject_database_symlinks,
     select_journal_mode,
 )
 
@@ -619,8 +620,9 @@ class SqliteWorkItemStore:
             ``create=False``.
         StorageUnsupportedError
             Raised when the store directory is not a local filesystem and no
-            verified approval is given, or when SQLite does not report the
-            requested journal mode.
+            verified approval is given, when the store file or a SQLite side
+            file is a symlink, or when SQLite does not report the requested
+            journal mode.
         SchemaVersionError
             Raised when the file carries another schema version.
         CorruptStateError
@@ -628,6 +630,7 @@ class SqliteWorkItemStore:
             or corrupt meta).  Never drops, rebuilds, or migrates data.
         """
         resolved = _validate_store_path(path)
+        reject_database_symlinks(resolved)
         existed = os.path.exists(resolved)
         if not existed and not create:
             raise PersistenceError(f"work-item store does not exist: {resolved}")
