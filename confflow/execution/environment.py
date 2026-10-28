@@ -23,6 +23,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import threading
 import uuid
 from collections.abc import Iterable, Mapping
@@ -96,8 +97,6 @@ _VERSION_PROBE_CODE: Final[str] = (
 )
 # Content hashes keyed by (realpath, size, mtime_ns, inode); re-validated on every read.
 _CONTENT_CACHE: dict[tuple[str, int, int, int], str] = {}
-# Interpreter package versions keyed by the interpreter's content identity.
-_VERSION_CACHE: dict[tuple[str, str], dict[str, str | None]] = {}
 _CACHE_LOCK = threading.Lock()
 
 
@@ -346,28 +345,32 @@ def _content_sha256(path: str) -> str:
 
 
 def _interpreter_package_versions(
-    real_interpreter: str, interpreter_sha256: str
+    real_interpreter: str, launch_env: Mapping[str, str]
 ) -> dict[str, str | None]:
-    """Query installed MLIP package versions through the interpreter (never import torch)."""
-    cache_key = (interpreter_sha256, real_interpreter)
-    with _CACHE_LOCK:
-        cached = _VERSION_CACHE.get(cache_key)
-    if cached is not None:
-        return dict(cached)
+    """Query installed MLIP package versions as the runner would see them.
+
+    The probe starts the interpreter the way the runner is started: no ``-I``, the
+    frozen native environment (``PYTHONPATH`` and friends included), and an empty
+    temporary working directory so no planted module in the caller's cwd is imported.
+    It is never cached: package metadata can change in place under the same interpreter
+    binary, and each measurement must observe the environment it will launch with.
+    """
     try:
-        completed = subprocess.run(
-            [
-                real_interpreter,
-                "-I",
-                "-c",
-                _VERSION_PROBE_CODE,
-                json.dumps(list(MLIP_PACKAGE_NAMES)),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=_VERSION_PROBE_TIMEOUT_SECONDS,
-            check=False,
-        )
+        with tempfile.TemporaryDirectory(prefix="confflow-mlip-probe-") as probe_dir:
+            completed = subprocess.run(
+                [
+                    real_interpreter,
+                    "-c",
+                    _VERSION_PROBE_CODE,
+                    json.dumps(list(MLIP_PACKAGE_NAMES)),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=_VERSION_PROBE_TIMEOUT_SECONDS,
+                check=False,
+                env=dict(launch_env),
+                cwd=probe_dir,
+            )
     except (OSError, subprocess.SubprocessError) as exc:
         raise DomainError(f"cannot query MLIP package versions: {exc}") from exc
     if completed.returncode != 0:
@@ -384,8 +387,6 @@ def _interpreter_package_versions(
         if value is not None and not isinstance(value, str):
             raise DomainError(f"MLIP package version for {name!r} must be a string or null")
         versions[name] = value
-    with _CACHE_LOCK:
-        _VERSION_CACHE[cache_key] = dict(versions)
     return versions
 
 
@@ -434,7 +435,7 @@ def mlip_runtime_identity(
         refs_sha = (
             _content_sha256(_require_absolute_path(refs_text, refs_env)) if refs_text else None
         )
-        versions = _interpreter_package_versions(real_interpreter, interpreter_sha)
+        versions = _interpreter_package_versions(real_interpreter, env)
     except DomainError:
         return None
     payload = {

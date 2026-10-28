@@ -1250,14 +1250,21 @@ class WorkItemExecutor:
         *,
         should_cancel: Callable[[], bool] | None,
         quota: tuple[Any, str, str] | None = None,
+        before_submit: Callable[[], None] | None = None,
     ) -> tuple[NativeExecutionResult, CancelOutcome | None] | None:
-        """Submit *request* and wait for a terminal outcome (public entry)."""
+        """Submit *request* and wait for a terminal outcome (public entry).
+
+        *before_submit* runs once the quota lease is held, right before
+        ``supervisor.submit``. If it raises, the lease is released and the
+        exception propagates unchanged.
+        """
         return self._launch_and_wait(
             supervisor,
             request,
             poll_interval,
             should_cancel=should_cancel,
             quota=quota,
+            before_submit=before_submit,
         )
 
     def _launch_and_wait(
@@ -1268,6 +1275,7 @@ class WorkItemExecutor:
         *,
         should_cancel: Callable[[], bool] | None,
         quota: tuple[Any, str, str] | None = None,
+        before_submit: Callable[[], None] | None = None,
     ) -> tuple[NativeExecutionResult, CancelOutcome | None] | None:
         """Submit *request* and wait for a terminal outcome."""
         resources, run_id, work_item_id = quota if quota is not None else (None, "", "")
@@ -1285,6 +1293,12 @@ class WorkItemExecutor:
                 except Exception:
                     logging.debug("server quota release failed", exc_info=True)
 
+        if before_submit is not None:
+            try:
+                before_submit()
+            except BaseException:
+                _release_quota()
+                raise
         try:
             handle = supervisor.submit(request)
         except Exception:

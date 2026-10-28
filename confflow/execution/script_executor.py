@@ -135,6 +135,27 @@ def _sha256_of_file(path: str) -> str:
         raise DomainError(f"registered script {path!r} is unreadable before launch: {exc}") from exc
 
 
+def _verify_at_launch(script_id: str, entry: ScriptEntry, expected: FrozenDict | None) -> None:
+    """Run the final identity check after the quota lease is held and before submit.
+
+    The live registration must still match the identity the workflow was compiled
+    against, and the script file must still hash to the digest of the loaded entry.
+    Raises :class:`DomainError` on any mismatch.
+    """
+    if expected is not None:
+        try:
+            live = load_script_registry().get(script_id)
+        except QuotaError as exc:
+            raise DomainError(str(exc)) from exc
+        if live is None or freeze_value(script_identity(live)) != expected:
+            raise DomainError(
+                f"script {script_id!r} changed after the workflow was compiled; "
+                "resubmit the workflow"
+            )
+    if _sha256_of_file(entry.script_path) != entry.sha256:
+        raise DomainError(f"script {script_id!r} file changed between registry load and launch")
+
+
 def _resolved_script_command(entry: ScriptEntry) -> tuple[str, ...]:
     """Return *entry.command* with the script element as an absolute path."""
     parts = list(entry.command)
@@ -292,16 +313,17 @@ class ScriptExecutor:
             stderr_file="stderr.log",
             metadata=FrozenDict({"script_id": script_id, "item_key": item_key}),
         )
-        # Narrow the window between registry load and launch: the file must still hash
-        # to the digest the registry recorded when it was loaded.
-        if _sha256_of_file(entry.script_path) != entry.sha256:
-            raise DomainError(f"script {script_id!r} file changed between registry load and launch")
+        # Queued items may wait for server quota for a long time, so the identity and
+        # file digest are checked again only once the lease is held, right before submit.
         launched = self._launcher.launch_and_wait(
             context.supervisor,
             request,
             context.poll_interval_seconds,
             should_cancel=should_cancel,
             quota=(work_item.resources, str(context.run_root), work_item.id),
+            before_submit=lambda: _verify_at_launch(
+                script_id, entry, context.expected_script_identity
+            ),
         )
         provenance = {
             "script_id": script_id,

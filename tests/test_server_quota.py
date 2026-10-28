@@ -824,9 +824,16 @@ class TestLayeringRegression:
         executor = WorkItemExecutor()
         real = executor._launch_and_wait
 
-        def _spy(supervisor, request, poll, *, should_cancel, quota=None):  # type: ignore[no-untyped-def]
+        def _spy(supervisor, request, poll, *, should_cancel, quota=None, before_submit=None):  # type: ignore[no-untyped-def]
             seen["quota"] = quota
-            return real(supervisor, request, poll, should_cancel=should_cancel, quota=quota)
+            return real(
+                supervisor,
+                request,
+                poll,
+                should_cancel=should_cancel,
+                quota=quota,
+                before_submit=before_submit,
+            )
 
         executor._launch_and_wait = _spy  # type: ignore[method-assign]
         supervisor = _SubmitFailingSupervisor()
