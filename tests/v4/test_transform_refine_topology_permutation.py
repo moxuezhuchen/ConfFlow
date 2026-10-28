@@ -103,3 +103,38 @@ def test_equal_fingerprint_non_isomorphic_graphs_are_not_merged() -> None:
     kept, notes = TransformExecutor()._refine([a, b], {})
 
     assert sorted(record.id for record in kept) == ["a", "b"], notes
+
+
+def test_deduplicate_keeps_colliding_fingerprints_with_different_graphs() -> None:
+    """A six-ring and two three-rings share the fingerprint but are different molecules.
+
+    Deduplicate has no isomorphism check after grouping, so it must key on the exact
+    topology; identical atoms and coordinates must not merge the two records.
+    """
+    atoms = ("C",) * 6
+    angles = np.linspace(0.0, 2.0 * np.pi, 6, endpoint=False)
+    coords = np.stack([1.5 * np.cos(angles), 1.5 * np.sin(angles), np.zeros(6)], axis=1)
+    ring6 = ((1, 5), (0, 2), (1, 3), (2, 4), (3, 5), (0, 4))
+    two_rings3 = ((1, 2), (0, 2), (0, 1), (4, 5), (3, 5), (3, 4))
+    records = [
+        _record("ring6", atoms, coords, ring6),
+        _record("two_rings3", atoms, coords, two_rings3),
+    ]
+    from confflow.execution.transform_executor import _topology_fingerprint
+
+    assert _topology_fingerprint(records[0]) == _topology_fingerprint(records[1])
+
+    kept, notes = TransformExecutor()._deduplicate(records)
+
+    assert [record.id for record in kept] == ["ring6", "two_rings3"]
+    assert notes == []
+
+
+def test_deduplicate_still_merges_identical_records() -> None:
+    atoms, coords, graph = _ethanol_with_hydrogens()
+    records = [_record("a", atoms, coords, graph), _record("b", atoms, coords, graph)]
+
+    kept, notes = TransformExecutor()._deduplicate(records)
+
+    assert [record.id for record in kept] == ["a"]
+    assert len(notes) == 1

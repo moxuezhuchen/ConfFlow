@@ -129,6 +129,54 @@ def test_retry_publishes_only_fresh_artifacts_and_keeps_checkpoints(tmp_path: Pa
     assert "sha256:" + hashlib.sha256(b"stale log").hexdigest() not in published
 
 
+def test_immediate_retry_does_not_publish_untouched_artifact(tmp_path: Path) -> None:
+    """A retry right after a failure must not publish the failed attempt's log.
+
+    The stale file is seconds old at most, so a time window cannot tell it apart; the
+    pre-launch file snapshot does.
+    """
+    run_root, context = _setup(tmp_path, "fresh")
+    item = _script_item(key="fast-retry")
+    first = ScriptExecutor().execute(item, context)
+    assert first.status.value == "failed"
+    item_dir = run_root / "script" / "s1" / dict(first.diagnostics[0].details)["item_key"]
+    stale = item_dir / "extra.log"
+    stale_mtime = stale.stat().st_mtime_ns
+
+    second = ScriptExecutor().execute(item, context)
+
+    assert second.status.value == "completed", [(d.code, d.message) for d in second.diagnostics]
+    assert stale.stat().st_mtime_ns == stale_mtime
+    published = {ref.locator.path.rsplit("/", 1)[-1] for ref in second.artifacts}
+    assert "extra.log" not in published
+    assert "run.log" in published
+
+
+def test_rewritten_artifact_from_earlier_attempt_is_published(tmp_path: Path) -> None:
+    item_dir = tmp_path / "item"
+    item_dir.mkdir()
+    log = item_dir / "run.log"
+    log.write_text("old")
+    untouched = item_dir / "keep.log"
+    untouched.write_text("old")
+    before = ScriptExecutor._artifact_file_states({"artifacts": ["*.log", ""]}, str(item_dir))
+    log.write_text("new content")
+
+    run_root = tmp_path
+    context = _script_context(NativeProcessSupervisor(), run_root)
+    artifacts = ScriptExecutor()._collect_artifacts(
+        {"artifacts": ["*.log"]},
+        str(item_dir),
+        _script_item(key="rw"),
+        context,
+        "rw",
+        before=before,
+    )
+
+    assert [ref.locator.path for ref in artifacts] == ["item/run.log"]
+    assert ScriptExecutor._artifact_file_states({"artifacts": "*.log"}, str(item_dir)) == {}
+
+
 def test_artifact_glob_star_does_not_delete_input_or_checkpoint(tmp_path: Path) -> None:
     outputs = {"structures": "final.xyz", "summary": "summary.json", "artifacts": ["*"]}
     run_root, context = _setup(tmp_path, "fresh", outputs=outputs)
