@@ -1,97 +1,30 @@
-"""Root-owned approval evidence required before a shared filesystem is trusted."""
+"""Application-facing shared-filesystem approval verification.
+
+The verification rules live in ``confflow.persistence.storage_policy``; this
+module keeps the execution-layer names and reports failures as repository
+errors with the stable ``REPOSITORY_UNAVAILABLE`` code.
+"""
 
 from __future__ import annotations
 
-import json
-import os
-import stat
-from dataclasses import dataclass
+import os  # noqa: F401  # module attribute kept: tests patch shared_fs_approval.os.fstat
 from pathlib import Path
 
+from ...persistence.storage_policy import ApprovalVerifier as _PersistenceApprovalVerifier
+from ...persistence.storage_policy import SharedFilesystemApproval, StorageUnsupportedError
 from .errors import ErrorCode, ExecutionServiceError
 
-
-@dataclass(frozen=True)
-class SharedFilesystemApproval:
-    """Verified administrator declaration bound to exactly one state-root identity."""
-
-    approval_id: str
-    root_realpath: str
-    device: int
-    inode: int
-    filesystem_type: str
+__all__ = ["ApprovalVerifier", "SharedFilesystemApproval"]
 
 
-class ApprovalVerifier:
-    """Verify external root-owned approval JSON without trusting caller-supplied objects."""
+class ApprovalVerifier(_PersistenceApprovalVerifier):
+    """Verify root-owned approval evidence and raise execution-layer errors."""
 
     def verify(
-        self, path: str | Path, *, root: Path, filesystem_type: str
+        self, path: str | os.PathLike[str], *, root: Path, filesystem_type: str
     ) -> SharedFilesystemApproval:
-        """Read a regular root-owned immutable-to-user approval and bind every identity field."""
-        candidate = Path(path)
-        descriptor: int | None = None
+        """Return the verified approval or raise ``ExecutionServiceError``."""
         try:
-            nofollow = getattr(os, "O_NOFOLLOW", 0)
-            if not nofollow:
-                raise _deny("Shared-FS approval verification requires O_NOFOLLOW")
-            descriptor = os.open(candidate, os.O_RDONLY | nofollow)
-            metadata = os.fstat(descriptor)
-            if not stat.S_ISREG(metadata.st_mode):
-                raise _deny("Shared-FS approval must be a regular non-symlink file")
-            if metadata.st_uid != 0 or stat.S_IMODE(metadata.st_mode) & (
-                stat.S_IWGRP | stat.S_IWOTH
-            ):
-                raise _deny("Shared-FS approval must be root-owned and non-writable by group/other")
-            with os.fdopen(descriptor, encoding="utf-8", closefd=False) as stream:
-                payload = json.load(stream)
-            guarantees = payload["guarantees"]
-            root_stat = root.stat()
-            if (
-                not isinstance(payload, dict)
-                or set(payload)
-                != {
-                    "approval_id",
-                    "root_realpath",
-                    "device",
-                    "inode",
-                    "filesystem_type",
-                    "guarantees",
-                }
-                or not isinstance(guarantees, dict)
-                or set(guarantees) != {"locking", "atomic_rename", "fsync"}
-                or any(type(guarantees[key]) is not bool for key in guarantees)
-                or not all(guarantees.values())
-                or not isinstance(payload["approval_id"], str)
-                or not payload["approval_id"]
-                or not isinstance(payload["root_realpath"], str)
-                or payload["root_realpath"] != str(root.resolve())
-                or type(payload["device"]) is not int
-                or payload["device"] < 0
-                or payload["device"] != root_stat.st_dev
-                or type(payload["inode"]) is not int
-                or payload["inode"] < 0
-                or payload["inode"] != root_stat.st_ino
-                or not isinstance(payload["filesystem_type"], str)
-                or not payload["filesystem_type"]
-                or payload["filesystem_type"] != filesystem_type
-            ):
-                raise ValueError("approval does not bind current root/filesystem guarantees")
-            return SharedFilesystemApproval(
-                payload["approval_id"],
-                payload["root_realpath"],
-                payload["device"],
-                payload["inode"],
-                payload["filesystem_type"],
-            )
-        except ExecutionServiceError:
-            raise
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError, OSError) as error:
-            raise _deny(f"Invalid shared-FS approval: {error}") from error
-        finally:
-            if descriptor is not None:
-                os.close(descriptor)
-
-
-def _deny(message: str) -> ExecutionServiceError:
-    return ExecutionServiceError(ErrorCode.REPOSITORY_UNAVAILABLE, message)
+            return super().verify(path, root=root, filesystem_type=filesystem_type)
+        except StorageUnsupportedError as error:
+            raise ExecutionServiceError(ErrorCode.REPOSITORY_UNAVAILABLE, str(error)) from error

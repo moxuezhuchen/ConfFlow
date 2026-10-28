@@ -1,31 +1,18 @@
 #!/usr/bin/env python3
 
-"""ConfFlow - Automated computational chemistry conformer search workflow engine."""
+"""ConfFlow - Automated computational chemistry conformer search workflow engine.
+
+Importing the package loads no optional scientific dependency and changes no
+global logging state. RDKit, psutil and numba are detected on first access to
+their availability flags or handles (PEP 562), by really attempting the import.
+"""
 
 from __future__ import annotations
 
 import importlib
-import logging
-import sys
+from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, version
-
-# Keep machine-readable CLI probes free of import-time warning noise while
-# preserving the normal console logging behavior for workflow execution.
-_CLI_ARGS = sys.argv[1:]
-_CONTROL_WORKER_JSON = (
-    "--json" in _CLI_ARGS
-    and "--state-root" in _CLI_ARGS
-    and "--run-id" in _CLI_ARGS
-    and "--handoff" in _CLI_ARGS
-)
-_HANDSHAKE_PROBE = (
-    any(flag in _CLI_ARGS for flag in ("--version", "--capabilities"))
-    or (_CLI_ARGS[:1] == ["control"] and "--json" in _CLI_ARGS)
-    or (_CLI_ARGS[:1] == ["config"] and "--json" in _CLI_ARGS)
-    or _CONTROL_WORKER_JSON
-)
-if _HANDSHAKE_PROBE:
-    logging.disable(logging.WARNING)
+from typing import TYPE_CHECKING, Any
 
 try:
     __version__ = version("confflow")
@@ -33,45 +20,63 @@ except PackageNotFoundError:
     __version__ = "2.1.6"
 __author__ = "ConfFlow Team"
 
-# ============================================================================
-# Centralized optional dependency management
-# ============================================================================
+if TYPE_CHECKING:
+    RDKIT_AVAILABLE: bool
+    PSUTIL_AVAILABLE: bool
+    NUMBA_AVAILABLE: bool
+    Chem: Any
+    AllChem: Any
+    psutil: Any
+    njit: Callable[..., Any]
 
-# RDKit - required for conformer generation
-try:
-    from rdkit import Chem
-    from rdkit.Chem import AllChem
 
-    RDKIT_AVAILABLE = True
-except ImportError:
-    RDKIT_AVAILABLE = False
-    Chem = None  # type: ignore[assignment]
-    AllChem = None  # type: ignore[assignment]
+def _njit_fallback(*args, **kwargs):
+    """Return the original function when Numba is unavailable."""
 
-# psutil - resource monitoring (optional)
-try:
-    import psutil
+    def decorator(func):
+        return func
 
-    PSUTIL_AVAILABLE = True
-except ImportError:
-    PSUTIL_AVAILABLE = False
-    psutil = None  # type: ignore[assignment]
+    return decorator if not args else args[0]
 
-# numba - JIT acceleration (optional)
-try:
-    from numba import njit
 
-    NUMBA_AVAILABLE = True
-except ImportError:
-    NUMBA_AVAILABLE = False
+def _detect_rdkit() -> tuple[bool, Any, Any]:
+    """Attempt the RDKit import; any failure means unavailable."""
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import AllChem
+    except Exception:  # noqa: BLE001 - a broken install must degrade, not crash
+        return False, None, None
+    return True, Chem, AllChem
 
-    # Return the original function when Numba is unavailable.
-    def njit(*args, **kwargs):
-        def decorator(func):
-            return func
 
-        return decorator if not args else args[0]
+def _detect_psutil() -> tuple[bool, Any]:
+    """Attempt the psutil import; any failure means unavailable."""
+    try:
+        import psutil
+    except Exception:  # noqa: BLE001 - a broken install must degrade, not crash
+        return False, None
+    return True, psutil
 
+
+def _detect_numba() -> tuple[bool, Callable[..., Any]]:
+    """Attempt the numba import; fall back to the no-op decorator on failure."""
+    try:
+        from numba import njit
+    except Exception:  # noqa: BLE001 - a broken install must degrade, not crash
+        return False, _njit_fallback
+    return True, njit
+
+
+# Each optional group is detected once; the results are bound into the module
+# globals, so later accesses never reach ``__getattr__`` again (the cache).
+_OPTIONAL_GROUPS: dict[str, tuple[Callable[[], tuple[Any, ...]], tuple[str, ...]]] = {
+    "rdkit": (_detect_rdkit, ("RDKIT_AVAILABLE", "Chem", "AllChem")),
+    "psutil": (_detect_psutil, ("PSUTIL_AVAILABLE", "psutil")),
+    "numba": (_detect_numba, ("NUMBA_AVAILABLE", "njit")),
+}
+_OPTIONAL_NAMES: dict[str, str] = {
+    name: group for group, (_, names) in _OPTIONAL_GROUPS.items() for name in names
+}
 
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "main": (".main", "main"),
@@ -92,6 +97,11 @@ __all__ = [
 
 
 def __getattr__(name: str):
+    group = _OPTIONAL_NAMES.get(name)
+    if group is not None:
+        detect, names = _OPTIONAL_GROUPS[group]
+        globals().update(zip(names, detect()))
+        return globals()[name]
     export = _LAZY_EXPORTS.get(name)
     if export is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

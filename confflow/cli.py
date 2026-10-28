@@ -15,11 +15,12 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
+from . import entry_probe  # silences probe logging before the heavy imports below
+
 try:
     import psutil
 except ImportError:
     psutil = None
-
 
 from .__build__ import COMMIT, DIRTY
 from .application.execution.errors import ExecutionServiceError
@@ -46,8 +47,7 @@ from .core.utils import get_logger
 from .domain.errors import DomainError
 from .install_provenance import read_install_provenance
 
-# Package initialization suppresses import-time warnings for the real probes.
-_HANDSHAKE_PROBE = any(flag in sys.argv[1:] for flag in ("--version", "--capabilities"))
+_HANDSHAKE_PROBE = entry_probe.VERSION_OR_CAPABILITIES_PROBE
 
 # Capability-contract constants (JobDesk <-> ConfFlow handshake).
 # The producer-side single source of truth lives in ``confflow.contract``;
