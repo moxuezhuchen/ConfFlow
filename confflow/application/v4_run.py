@@ -205,20 +205,45 @@ def _pure_executable_identity(planned: Any, binding: Any) -> Any:
         return None
 
 
+def _mlip_interpreter(binding: Any) -> str:
+    """Return the interpreter an MLIP launch names: the binding's, else ``python3``."""
+    return binding.executable if binding is not None and binding.executable else "python3"
+
+
+def _enforce_mlip_interpreter_policy(binding: Any, *, step_id: str, run_root: str) -> None:
+    """Apply the full execution policy to the MLIP interpreter before any probe runs.
+
+    The allow list and sandbox are checked against the interpreter's resolved real path.
+    A violation raises ``DomainError``, so no version probe or computation is started.
+    """
+    from ..execution.execution_policy import enforce_execution_policy
+
+    interpreter = _mlip_interpreter(binding)
+    resolved = shutil.which(interpreter)
+    enforce_execution_policy(
+        binding,
+        executable=interpreter,
+        resolved_executable=os.path.realpath(resolved) if resolved else None,
+        write_paths=(run_root,),
+        label=f"step {step_id!r} executable",
+        check_program=True,
+    )
+
+
 def _mlip_runtime_digest(binding: Any, native_env: Mapping[str, str] | None) -> str:
     """Return the pre-run identity of an MLIP launch from its exact launch environment.
 
     Interpreter, runner source, model file, refs file and MLIP package versions
     are measured before any reuse decision.  An unmeasurable launch receives a
     fresh nonce, so it never equals a stored identity and the executor fails it
-    as it does today.
+    as it does today.  Callers enforce the execution policy first: this function
+    starts the interpreter's version probe.
     """
     from ..execution import mlip_executor
     from ..execution.environment import mlip_runtime_identity, unresolved_runtime_identity
 
-    interpreter = binding.executable if binding is not None and binding.executable else "python3"
     digest = mlip_runtime_identity(
-        interpreter=interpreter,
+        interpreter=_mlip_interpreter(binding),
         runner_path=str(mlip_executor.RUNNER_PATH),
         env=native_env or {},
         model_env=mlip_executor.MODEL_ENV,
@@ -890,7 +915,12 @@ class V4RunApplication:
 
                 native_env = FrozenDict(effective_native_env(binding, inherit=os.environ))
             executable_digest = identity.digest if identity is not None else None
-            if planned.executor is ExecutorCapability.MLIP:
+            is_mlip = planned.executor is ExecutorCapability.MLIP
+            if is_mlip:
+                # F1: the interpreter must pass the full policy before any version probe
+                _enforce_mlip_interpreter_policy(
+                    binding, step_id=planned.step_id, run_root=run_root
+                )
                 executable_digest = _mlip_runtime_digest(binding, native_env)
             environment = build_pure_environment(
                 implementation=implementation,
@@ -909,10 +939,10 @@ class V4RunApplication:
             profile = None
             checks = ()
             recovery = None
-            if binding is not None:
+            if binding is not None and not is_mlip:
                 from ..execution.execution_policy import enforce_execution_policy
 
-                # the script/MLIP executors check their interpreter once it is resolved
+                # scripts check their interpreter in the executor; MLIP was checked above
                 is_script = planned.executor in _EXECUTION_BINDING_CAPABILITIES
                 enforce_execution_policy(
                     binding,
