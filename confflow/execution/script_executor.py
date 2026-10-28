@@ -136,7 +136,7 @@ def _sha256_of_file(path: str) -> str:
 
 
 def _verify_at_launch(script_id: str, entry: ScriptEntry, expected: FrozenDict | None) -> None:
-    """Final identity check, run after the quota lease is held and before submit.
+    """Run the final identity check after the quota lease is held and before submit.
 
     The live registration must still match the identity the workflow was compiled
     against, and the script file must still hash to the digest of the loaded entry.
