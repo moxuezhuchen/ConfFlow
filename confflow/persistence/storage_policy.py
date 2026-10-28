@@ -28,6 +28,7 @@ __all__ = [
     "assert_local_wal_filesystem",
     "detect_filesystem_type",
     "mount_table",
+    "preflight_store",
     "reject_database_symlinks",
     "select_journal_mode",
 ]
@@ -202,6 +203,27 @@ def reject_database_symlinks(path: str | os.PathLike[str]) -> None:
             raise StorageUnsupportedError(
                 f"durable store files must not be symlinks; {candidate} is a symlink"
             )
+
+
+def preflight_store(
+    path: str | os.PathLike[str],
+    *,
+    shared_fs_approval_path: str | os.PathLike[str] | None = None,
+    filesystem_detector: FilesystemDetector | None = None,
+) -> None:
+    """Refuse a store path that opening it would refuse, without creating anything.
+
+    Runs the same symlink and filesystem checks as ``SqliteWorkItemStore.open``
+    on the absolute store path.  A missing path is checked as-is: its existing
+    prefix decides the filesystem, and nothing is created or opened.
+    """
+    absolute = os.path.abspath(os.fspath(path))
+    reject_database_symlinks(absolute)
+    select_journal_mode(
+        os.path.dirname(absolute),
+        shared_fs_approval_path=shared_fs_approval_path,
+        filesystem_detector=filesystem_detector,
+    )
 
 
 def select_journal_mode(
