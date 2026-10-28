@@ -15,6 +15,7 @@ artifact match (mismatch fails closed); completed items never re-executed.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import shutil
 from collections.abc import Mapping
@@ -186,6 +187,34 @@ def _search_xtb_binding(planned: Any, request: V4RunRequest) -> Any:
         )
     except DomainError:
         return None
+
+
+def resolve_confgen_xtb_binding(
+    binding: Any, native_env: Mapping[str, str], *, step_id: str
+) -> Any:
+    """Pin a ConfGen xTB binding to the one absolute file it will launch.
+
+    The bare name (or a relative path) is resolved on the PATH of the single effective
+    native environment, the binding env over the producer snapshot, never the control
+    process' ambient PATH.  The returned binding carries that absolute path, so the policy
+    check, the content measurement and the worker job all name the same file.  A binding
+    without an executable is returned unchanged for the executor's own missing-executable
+    error.  A name that does not resolve to an executable regular file fails the step.
+    """
+    name = binding.executable if binding is not None else None
+    if not name:
+        return binding
+    if os.path.dirname(name):
+        found = os.path.abspath(name)
+    else:
+        located = shutil.which(name, path=native_env.get("PATH", os.defpath))
+        found = os.path.abspath(located) if located else None
+    if found is None or not os.path.isfile(found) or not os.access(found, os.X_OK):
+        raise DomainError(
+            f"step {step_id!r} xTB executable {name!r} did not resolve to an executable "
+            "file on the binding environment PATH"
+        )
+    return dataclasses.replace(binding, executable=found)
 
 
 def _pure_executable_identity(planned: Any, binding: Any) -> Any:
@@ -924,10 +953,6 @@ class V4RunApplication:
             if launches_process:
                 # scripts and MLIP honour the declared env, walltime and policy of their binding
                 binding = planned.execution
-            identity = _pure_executable_identity(planned, binding)
-            metadata: dict[str, object] = {"step_id": planned.step_id}
-            if identity is not None:
-                metadata["executable_resolved_path"] = identity.resolved_path
             # A pure step that launches a process (ConfGen xTB, scripts, MLIP) follows the
             # native rule: the environment it launches with is the one digested.  Script and
             # MLIP steps always build the snapshot, even without an ``execution`` block, so
@@ -945,6 +970,16 @@ class V4RunApplication:
                 from ..execution.binding_resolution import effective_native_env
 
                 native_env = FrozenDict(effective_native_env(binding, inherit=os.environ))
+            if binding is not None and planned.executor is ExecutorCapability.CONFGEN:
+                # N2: the single effective environment resolves xTB once; the policy check,
+                # the content measurement and the job all use that absolute file
+                binding = resolve_confgen_xtb_binding(
+                    binding, native_env or FrozenDict(), step_id=planned.step_id
+                )
+            identity = _pure_executable_identity(planned, binding)
+            metadata: dict[str, object] = {"step_id": planned.step_id}
+            if identity is not None:
+                metadata["executable_resolved_path"] = identity.resolved_path
             executable_digest = identity.digest if identity is not None else None
             is_mlip = planned.executor is ExecutorCapability.MLIP
             if is_mlip:
@@ -981,7 +1016,7 @@ class V4RunApplication:
                     resolved_executable=(
                         None
                         if is_script or not binding.executable
-                        else shutil.which(binding.executable)
+                        else os.path.realpath(binding.executable)
                     ),
                     write_paths=(run_root,),
                     label=f"step {planned.step_id!r} executable",

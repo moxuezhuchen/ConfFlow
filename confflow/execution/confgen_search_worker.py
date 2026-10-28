@@ -664,6 +664,11 @@ def _run(job_path: str) -> int:
     work.mkdir(parents=True, exist_ok=True)
     baseline_path = Path(job.get("input_baseline_file", work / "input_baseline.json"))
     _write_input_baseline(baseline_path, job, None)
+    if not os.path.isabs(job["xtb"]):
+        # fail closed: the controller pins the measured absolute file; a bare name would be
+        # looked up on this process' PATH and could launch a different binary
+        _write_input_baseline(baseline_path, job, None, execution_status="failed")
+        raise _JobError(f"xTB executable must be an absolute path: {job['xtb']!r}")
     if (exe := resolve_xtb(job["xtb"])) is None:
         _write_input_baseline(baseline_path, job, None, execution_status="failed")
         raise _JobError(f"xTB executable not found: {job['xtb']!r}")

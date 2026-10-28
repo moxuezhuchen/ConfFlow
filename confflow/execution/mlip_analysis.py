@@ -17,12 +17,13 @@ from ..domain.elements import atomic_number
 from ..domain.errors import DomainError
 from ..domain.structure import StructureRecord
 from ..science.bonds import perceive_adjacency
-from ..science.topology import DEFAULT_PERCEPTION_BOND_SCALE
+from ..science.topology import DEFAULT_PERCEPTION_BOND_SCALE, resolve_working_adjacency
 from .energy_filter import HARTREE_TO_KCAL_MOL
 
 __all__ = [
     "BOND_SCALE",
     "MlipOutput",
+    "authoritative_bonds",
     "calibration",
     "fix_deviation",
     "mean",
@@ -91,18 +92,36 @@ def fix_deviation(
     return max(devs, default=0.0)
 
 
+def authoritative_bonds(record: StructureRecord) -> frozenset[tuple[int, int]]:
+    """Covalent bonds (sorted 0-based pairs) of the record's intended working graph.
+
+    Resolved through the one topology authority, so a declared patch or persisted graph
+    decides which bonds exist; distance perception only fills in what it does not declare.
+    """
+    numbers = [atomic_number(symbol) for symbol in record.atoms]
+    adjacency = resolve_working_adjacency(record, numbers, record.coordinates)
+    return frozenset(
+        (min(i, j), max(i, j)) for i, row in enumerate(adjacency) for j in row if i != j
+    )
+
+
 def stretch_check(
     record: StructureRecord,
     after: Sequence[Sequence[float]],
     fix_pairs: Sequence[tuple[int, int]],
 ) -> tuple[float | None, tuple[int, int] | None, bool]:
-    """Return (max bond ratio, its pair, graph changed) for the relaxed geometry."""
+    """Return (max bond ratio, its pair, graph changed) for the relaxed geometry.
+
+    The ratio is measured over the authoritative input graph.  ``graph changed`` is a
+    diagnostic: whether the bonds perceived on the geometry differ before and after.
+    """
     fixed = {(min(i, j), max(i, j)) for i, j in fix_pairs}
     before = record.coordinates
-    bonds_in = perceive_bonds(record.atoms, before) - fixed
-    bonds_out = perceive_bonds(record.atoms, after) - fixed
+    declared = authoritative_bonds(record) - fixed
+    observed_in = perceive_bonds(record.atoms, before) - fixed
+    observed_out = perceive_bonds(record.atoms, after) - fixed
     best: tuple[float, tuple[int, int]] | None = None
-    for i, j in sorted(bonds_in):
+    for i, j in sorted(declared):
         d_in = distance(before[i], before[j])
         if d_in <= 0:
             continue
@@ -110,7 +129,7 @@ def stretch_check(
         if best is None or ratio > best[0]:
             best = (ratio, (i, j))
     ratio_pair = best or (None, None)
-    return ratio_pair[0], ratio_pair[1], bonds_in != bonds_out
+    return ratio_pair[0], ratio_pair[1], observed_in != observed_out
 
 
 def mean(values: Sequence[float]) -> float | None:

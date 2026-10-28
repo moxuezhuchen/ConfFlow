@@ -1085,7 +1085,12 @@ class SqliteWorkItemStore:
         producer_provenance: dict | None,
         reason: str = "",
     ) -> None:
-        """Advance one terminal item to a new environment generation."""
+        """Advance one unclaimed item to a new environment generation.
+
+        ``PENDING`` rows keep their status (no attempt has started).  Terminal
+        ``COMPLETED``/``FAILED``/``INTERRUPTED`` rows move to ``INTERRUPTED`` so
+        the next claim opens a new attempt.  Attempt history is never rewritten.
+        """
         import sqlite3 as _sqlite3
 
         item_id = _require_text(work_item_id, "work_item_id")
@@ -1111,15 +1116,21 @@ class SqliteWorkItemStore:
                 except ValueError as exc:
                     raise CorruptStateError(f"stored status is invalid: {row[0]!r}") from exc
                 if status not in (
+                    StoredWorkItemStatus.PENDING,
                     StoredWorkItemStatus.COMPLETED,
                     StoredWorkItemStatus.FAILED,
                     StoredWorkItemStatus.INTERRUPTED,
                 ):
                     raise PersistenceError(
                         f"work item {item_id!r} status {status.value!r} cannot advance "
-                        "environment generation; only terminal "
+                        "environment generation; only PENDING or terminal "
                         "COMPLETED/FAILED/INTERRUPTED rows may refresh"
                     )
+                next_status = (
+                    StoredWorkItemStatus.PENDING
+                    if status is StoredWorkItemStatus.PENDING
+                    else StoredWorkItemStatus.INTERRUPTED
+                )
                 now = wall_now()
                 connection.execute(
                     "UPDATE items SET work_item_digest = ?, step_semantic_digest = ?,"
@@ -1130,7 +1141,7 @@ class SqliteWorkItemStore:
                         step_digest,
                         environment,
                         provenance_text,
-                        StoredWorkItemStatus.INTERRUPTED.value,
+                        next_status.value,
                         now,
                         item_id,
                     ),

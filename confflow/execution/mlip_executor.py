@@ -27,10 +27,11 @@ from ..domain.artifact import ArtifactLocator, ArtifactRef, ArtifactSet
 from ..domain.completion import WorkItemStatus
 from ..domain.diagnostics import Diagnostic, DiagnosticSeverity
 from ..domain.errors import DomainError
-from ..domain.result import ResultSet, ScientificResult, make_result_id
+from ..domain.result import Provenance, ResultSet, ScientificResult, make_result_id
 from ..domain.structure import StructureRecord, StructureSet
 from ..domain.units import Unit
 from ..domain.work_item import RecoveryInfo, Timing, WorkItem, WorkItemResult
+from ..science.topology import resolve_and_persist_kwargs
 from .binding_resolution import effective_native_env
 from .execution_policy import enforce_execution_policy
 from .mlip_analysis import (
@@ -55,6 +56,11 @@ __all__ = ["MlipExecutor", "RUNNER_PATH"]
 
 #: Runner source copied into each attempt directory (tests point this elsewhere).
 RUNNER_PATH = Path(__file__).with_name("mlip_runner.py")
+
+#: Program name recorded in every MLIP energy result's provenance (UMA runs through fairchem).
+PROGRAM_NAME = "fairchem"
+#: Adapter contract recorded in MLIP result provenance.
+ADAPTER_CONTRACT = "confflow.mlip.executor.v1"
 
 MODEL_ENV = "CONFFLOW_MLIP_MODEL_PATH"
 REFS_ENV = "CONFFLOW_MLIP_REFS_PATH"
@@ -337,6 +343,25 @@ def _calibration_pairs(
         if gfn2 is not None:
             pairs.append((out.record.id, gfn2, out.energy))
     return pairs, "relaxed_outputs"
+
+
+def _provenance(plan: _Plan, work_item: WorkItem, done: Mapping[str, Any]) -> Provenance:
+    """Return the producer provenance of the MLIP energies: program, model and measured version.
+
+    The fairchem version is the one the runner measured in its own interpreter; it stays
+    None when the runner did not report it, rather than inventing a version.
+    """
+    raw = done.get("fairchem_version")
+    version = raw.strip() if isinstance(raw, str) else ""
+    return Provenance(
+        program=PROGRAM_NAME,
+        program_version=version or None,
+        method=plan.model,
+        adapter=ADAPTER_CONTRACT,
+        step_id=work_item.step_id,
+        work_item_id=work_item.id,
+        metadata=FrozenDict({"task": plan.task}),
+    )
 
 
 def _label(record: StructureRecord) -> str | None:
@@ -727,6 +752,7 @@ class MlipExecutor:
     ) -> WorkItemResult:
         """Build structures, energies, artifacts and diagnostics for the kept outputs."""
         ordered = sorted(outputs, key=lambda out: out.record.id)
+        provenance = _provenance(plan, work_item, done)
         structures: list[StructureRecord] = []
         energies: list[ScientificResult] = []
         for out in ordered:
@@ -734,6 +760,9 @@ class MlipExecutor:
             parents, root, group = endpoint_lineage(record)
             out_id = f"{record.id}:mlip-{out.stage}"
             coords = tuple((float(x), float(y), float(z)) for x, y, z in out.coords)
+            # The intended graph is resolved once on the input geometry, as the standard
+            # profile does; post-relax bond changes stay in the mlip_graph_changed diagnostic.
+            topology = resolve_and_persist_kwargs(record, record.coordinates)
             structures.append(
                 StructureRecord(
                     id=out_id,
@@ -749,6 +778,7 @@ class MlipExecutor:
                     ordinal=None,
                     group_key=group,
                     metadata=FrozenDict({**_inherited_metadata(record), **out.meta}),
+                    **topology,
                 )
             )
             energies.append(
@@ -759,6 +789,7 @@ class MlipExecutor:
                     subject_structure_id=out_id,
                     source_step_id=work_item.step_id,
                     source_work_item_id=work_item.id,
+                    provenance=provenance,
                     result_id=make_result_id(
                         step_id=work_item.step_id,
                         work_item_id=None,

@@ -4,12 +4,16 @@
 
 Pure: no SQLite, filesystem, or process access; compares fresh vs stored digest axes
 into ``ReuseDecision``. Frozen rule order in ``evaluate_reuse``:
-1. No durable record never reuses. 2. ``PENDING`` never reuses.
-3. ``RUNNING`` never duplicates: definitely-dead recovers, otherwise blocks on owner.
+1. No durable record never reuses.
+2. ``PENDING`` never reuses; before it executes, the compatibility chain runs.
+3. ``RUNNING`` never duplicates: a live or uncertain owner blocks; a definitely-dead
+owner runs the compatibility chain first, then recovers.
 4. ``CANCELLED`` never auto-relaunches; explicit retry only.
-5. Terminal ``COMPLETED``/``FAILED``/``INTERRUPTED`` run compatibility chain, first
-mismatch wins: provenance, environment digest, step semantic digest, bound-input
-artifact checksums, work-item digest, then artifact verification.
+5. ``COMPLETED``/``FAILED``/``INTERRUPTED``, and the PENDING/dead-RUNNING rows of
+rules 2-3, run the compatibility chain, first mismatch wins: provenance, environment
+digest, step semantic digest, bound-input artifact checksums, work-item digest, then
+artifact verification.  The same chain serves every status, so an identity change is
+reported by the same axis rule whatever the stored status.
 Labels, GUI annotations, scheduler width, absolute binary paths are not
 ``ReuseInputs`` fields, so never invalidate reuse by construction.
 """
@@ -231,110 +235,21 @@ def _verdict_label(value: OwnerVerdict | str | None) -> str | None:
     return None
 
 
-def evaluate_reuse(
-    *,
+def _first_mismatch(
     current: ReuseInputs,
-    stored: ReuseInputs | None,
-    stored_status: StoredWorkItemStatus | str | None,
-    owner_verdict: OwnerVerdict | str | None = None,
-    artifacts_verified: bool = True,
-    work_item_id: str = "",
-) -> ReuseDecision:
-    """Evaluate whether a stored work-item result may be reused.
+    stored: ReuseInputs,
+    stored_name: str,
+    *,
+    item_id: str,
+    artifacts_verified: bool,
+) -> ReuseDecision | None:
+    """Return the decision for the first mismatching axis, or ``None`` when all match.
 
-    Parameters
-    ----------
-    current : ReuseInputs
-        Freshly computed digest axes.
-    stored : ReuseInputs | None
-        Durably recorded digest axes, or ``None`` when no record exists.
-    stored_status : StoredWorkItemStatus | str | None
-        Durable status of the stored item.  Unknown raw strings collapse to
-        "no durable record" and execute new.
-    owner_verdict : OwnerVerdict | str | None
-        Liveness verdict for an abandoned ``RUNNING`` claim.
-    artifacts_verified : bool
-        Whether the stored artifacts passed verification.
-    work_item_id : str
-        Item this decision applies to; passed through into the decision.  A
-        blank value falls back to ``"unknown"`` so every path still returns
-        a valid decision.
-
-    Returns
-    -------
-    ReuseDecision
-        Explicit verdict with a non-empty reason and the compared axis
-        values in details for every compatibility failure.
-
-    Raises
-    ------
-    PersistenceError
-        Raised when *current* or *stored* has the wrong type.
+    The order is the frozen compatibility chain: provenance, environment digest,
+    step semantic digest, bound-input artifact checksums, work-item digest, then
+    artifact verification.  Every returned decision carries *item_id* and the
+    stored status name.
     """
-    if not isinstance(current, ReuseInputs):
-        raise PersistenceError("current must be ReuseInputs")
-    if stored is not None and not isinstance(stored, ReuseInputs):
-        raise PersistenceError("stored must be ReuseInputs or None")
-    item_id = (
-        work_item_id
-        if isinstance(work_item_id, str) and work_item_id.strip()
-        else (_UNKNOWN_WORK_ITEM_ID)
-    )
-
-    status = _normalize_status(stored_status)
-    if stored is None or status is None:
-        return ReuseDecision(
-            decision=ReuseCode.EXECUTE_NEW,
-            reason="no durable record for work item; executing new",
-            work_item_id=item_id,
-            details=FrozenDict(
-                {
-                    "stored_present": stored is not None,
-                    "stored_status": _status_label(stored_status),
-                }
-            ),
-        )
-    if status is StoredWorkItemStatus.PENDING:
-        return ReuseDecision(
-            decision=ReuseCode.EXECUTE_NEW,
-            reason="pending never reuses; executing new",
-            work_item_id=item_id,
-            details=FrozenDict({"stored_status": status.value}),
-        )
-    if status is StoredWorkItemStatus.RUNNING:
-        verdict = _normalize_verdict(owner_verdict)
-        details = FrozenDict(
-            {"stored_status": status.value, "owner_verdict": _verdict_label(owner_verdict)}
-        )
-        if verdict is OwnerVerdict.DEFINITELY_DEAD:
-            return ReuseDecision(
-                decision=ReuseCode.RECOVER_ABANDONED,
-                reason="owner_dead: prior owner is definitely dead; recovering abandoned claim",
-                work_item_id=item_id,
-                details=details,
-            )
-        if verdict is OwnerVerdict.DEFINITELY_ALIVE:
-            return ReuseDecision(
-                decision=ReuseCode.BLOCKED_UNCERTAIN_OWNER,
-                reason="owner_alive: prior owner is definitely alive; never launch a duplicate",
-                work_item_id=item_id,
-                details=details,
-            )
-        return ReuseDecision(
-            decision=ReuseCode.BLOCKED_UNCERTAIN_OWNER,
-            reason="owner_uncertain: owner liveness is unproven; never launch a duplicate",
-            work_item_id=item_id,
-            details=details,
-        )
-    if status is StoredWorkItemStatus.CANCELLED:
-        return ReuseDecision(
-            decision=ReuseCode.EXECUTE_NEW,
-            reason="cancelled work items never auto-relaunch; requires explicit retry",
-            work_item_id=item_id,
-            details=FrozenDict({"stored_status": status.value, "requires_explicit_retry": True}),
-        )
-
-    stored_name = status.value
     if current.producer_provenance != stored.producer_provenance:
         differing = _provenance_diff(current.producer_provenance, stored.producer_provenance)
         reported = differing[:MAX_PROVENANCE_DIFF_KEYS_REPORTED]
@@ -418,16 +333,141 @@ def evaluate_reuse(
                 }
             ),
         )
+    return None
+
+
+def evaluate_reuse(
+    *,
+    current: ReuseInputs,
+    stored: ReuseInputs | None,
+    stored_status: StoredWorkItemStatus | str | None,
+    owner_verdict: OwnerVerdict | str | None = None,
+    artifacts_verified: bool = True,
+    work_item_id: str = "",
+) -> ReuseDecision:
+    """Evaluate whether a stored work-item result may be reused.
+
+    Parameters
+    ----------
+    current : ReuseInputs
+        Freshly computed digest axes.
+    stored : ReuseInputs | None
+        Durably recorded digest axes, or ``None`` when no record exists.
+    stored_status : StoredWorkItemStatus | str | None
+        Durable status of the stored item.  Unknown raw strings collapse to
+        "no durable record" and execute new.
+    owner_verdict : OwnerVerdict | str | None
+        Liveness verdict for an abandoned ``RUNNING`` claim.
+    artifacts_verified : bool
+        Whether the stored artifacts passed verification.
+    work_item_id : str
+        Item this decision applies to; passed through into the decision.  A
+        blank value falls back to ``"unknown"`` so every path still returns
+        a valid decision.
+
+    Returns
+    -------
+    ReuseDecision
+        Explicit verdict with a non-empty reason and the compared axis
+        values in details for every compatibility failure.
+
+    Raises
+    ------
+    PersistenceError
+        Raised when *current* or *stored* has the wrong type.
+    """
+    if not isinstance(current, ReuseInputs):
+        raise PersistenceError("current must be ReuseInputs")
+    if stored is not None and not isinstance(stored, ReuseInputs):
+        raise PersistenceError("stored must be ReuseInputs or None")
+    item_id = (
+        work_item_id
+        if isinstance(work_item_id, str) and work_item_id.strip()
+        else (_UNKNOWN_WORK_ITEM_ID)
+    )
+
+    status = _normalize_status(stored_status)
+    if stored is None or status is None:
+        return ReuseDecision(
+            decision=ReuseCode.EXECUTE_NEW,
+            reason="no durable record for work item; executing new",
+            work_item_id=item_id,
+            details=FrozenDict(
+                {
+                    "stored_present": stored is not None,
+                    "stored_status": _status_label(stored_status),
+                }
+            ),
+        )
+    if status is StoredWorkItemStatus.PENDING:
+        mismatch = _first_mismatch(
+            current, stored, status.value, item_id=item_id, artifacts_verified=True
+        )
+        if mismatch is not None:
+            return mismatch
+        return ReuseDecision(
+            decision=ReuseCode.EXECUTE_NEW,
+            reason="pending never reuses; executing new",
+            work_item_id=item_id,
+            details=FrozenDict({"stored_status": status.value}),
+        )
+    if status is StoredWorkItemStatus.RUNNING:
+        verdict = _normalize_verdict(owner_verdict)
+        details = FrozenDict(
+            {"stored_status": status.value, "owner_verdict": _verdict_label(owner_verdict)}
+        )
+        if verdict is OwnerVerdict.DEFINITELY_DEAD:
+            mismatch = _first_mismatch(
+                current, stored, status.value, item_id=item_id, artifacts_verified=True
+            )
+            if mismatch is not None:
+                return mismatch
+            return ReuseDecision(
+                decision=ReuseCode.RECOVER_ABANDONED,
+                reason="owner_dead: prior owner is definitely dead; recovering abandoned claim",
+                work_item_id=item_id,
+                details=details,
+            )
+        if verdict is OwnerVerdict.DEFINITELY_ALIVE:
+            return ReuseDecision(
+                decision=ReuseCode.BLOCKED_UNCERTAIN_OWNER,
+                reason="owner_alive: prior owner is definitely alive; never launch a duplicate",
+                work_item_id=item_id,
+                details=details,
+            )
+        return ReuseDecision(
+            decision=ReuseCode.BLOCKED_UNCERTAIN_OWNER,
+            reason="owner_uncertain: owner liveness is unproven; never launch a duplicate",
+            work_item_id=item_id,
+            details=details,
+        )
+    if status is StoredWorkItemStatus.CANCELLED:
+        return ReuseDecision(
+            decision=ReuseCode.EXECUTE_NEW,
+            reason="cancelled work items never auto-relaunch; requires explicit retry",
+            work_item_id=item_id,
+            details=FrozenDict({"stored_status": status.value, "requires_explicit_retry": True}),
+        )
+
+    mismatch = _first_mismatch(
+        current,
+        stored,
+        status.value,
+        item_id=item_id,
+        artifacts_verified=artifacts_verified,
+    )
+    if mismatch is not None:
+        return mismatch
     if status is StoredWorkItemStatus.COMPLETED:
         return ReuseDecision(
             decision=ReuseCode.REUSE,
             reason="every compatibility axis matches; reusing stored result",
             work_item_id=item_id,
-            details=FrozenDict({"stored_status": stored_name}),
+            details=FrozenDict({"stored_status": status.value}),
         )
     return ReuseDecision(
         decision=ReuseCode.RETRY_FAILED,
         reason="every compatibility axis matches; retrying failed attempt",
         work_item_id=item_id,
-        details=FrozenDict({"stored_status": stored_name}),
+        details=FrozenDict({"stored_status": status.value}),
     )

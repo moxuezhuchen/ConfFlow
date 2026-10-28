@@ -22,7 +22,7 @@ ConfFlow 是计算化学工作流的**生产者（producer）**：给定一份 V
 confflow/
   domain/        不可变语义核心：结构、绑定、work item、step result、完成策略、digest 规范化（无仓库内依赖）
   workflow/v4/   V4 编译器：严格解析 → 语义校验 → 带类型的绑定图 → 不可变 ExecutionPlan → 合成 WorkItem
-  execution/     能力注册表与各类执行器：calculation / confgen / structure_transform / script、confgen_xtb（xTB 计算引擎）、
+  execution/     能力注册表与各类执行器：calculation / confgen / structure_transform / script / mlip（UMA 批量单点与松弛）、confgen_xtb（xTB 计算引擎）、
                  检查（checks）、恢复（recovery）、结果 profile、原生进程边界、批执行
   science/       纯科学计算：ConfGen 迭代 DG 搜索（`confgen/`：explore、calculator、identity、rotors、dg_seed、search、search_spec、topology、graph）、工作拓扑权威、图同构映射、帧比较、键感知
   programs/      量化程序适配器（Gaussian、ORCA）：输入渲染与输出解析
@@ -60,12 +60,17 @@ confflow/
                             ▼
                       assemble_work_items（run 输入 + 已发布输出 → WorkItem）
                             ▼
-   application.v4_run  ──► executors（calculation / confgen / structure_transform / script）
+   application.v4_run  ──► executors（calculation / confgen / structure_transform / script / mlip）
                             ▼  每个 work item 的结果先落盘（persistence）
                       StepResult 发布（崩溃一致性协议）
                             ▼
                       run_result.json（producer.run_result 投影，客户端只读）
 ```
+
+- **MLIP 步骤**（`executor: mlip`，`execution/mlip_executor.py`）：整批结构写成 `job.json`，由独立 runner（`mlip_runner.py`，经进程监督启动）
+  计算 `sp` / `relax` / `sp_then_relax`，结果写入 `mlip_results.jsonl`。输出结构继承输入的权威拓扑（`topology_patch` / `working_topology`，
+  与标准结果 profile 同一传播入口）；松弛后按坐标观察到的键变化只记为 `mlip_graph_changed` 诊断。能量为 `energy` 结果，
+  带 `fairchem` 程序来源，因此 run_result 内联 `energies.electronic_hartree`。
 
 - **执行只在本地**：同一个 `WorkItem` 由本地 `BatchStepExecutor` 执行（typed 远程传输已于 R1.2/R2.3f 退役，详见 `docs/architecture/WORKFLOW_V4.md` V4-4 章首）。跨进程执行只走控制协议 v1：`confflow.control.worker-handoff.v1` envelope（顶层 `content_schema`/`run_id`/`workflow_config` 定位器 + `tasks` 数组，schema 限定 `maxItems: 1`；每个 task 携带 `task_id`/`input_xyz`（须为 `.xyz`）/`work_dir`/`sha256`）边界交给 control worker。
 - **resume 靠持久化而不是重跑**：已发布的 step 从磁盘加载；未完成的 step 按 work item 续跑，已完成的 work item 复用。
@@ -105,6 +110,7 @@ confflow/
 - **工作拓扑权威**（`science/topology.py`）：结构记录自带 `working_topology` / `topology_patch`；
   ConfGen、refine、计算输出 profile 都经 `resolve_working_adjacency` 取同一份"预期共价图"，
   不再各自做感知加修正。spec 级拓扑声明与记录级权威同时出现会失败关闭。
+  MLIP 的 `stretch_check` 也按权威输入图取键（`mlip_analysis.authoritative_bonds`），而不是按坐标重新感知。
 - **精修去重**（`execution/transform_executor.py` 调用 `science/topology_mapping.py::find_isomorphism` 与 `science/confgen/identity.py`（`Identity`/`MinimaPool`））：
   只在合法的元素/边保持映射下比较 Kabsch RMSD，所以仅标号对称置换的构象会被合并；搜索有节点预算
   （默认 1000/每对），预算耗尽的一对保留两个并在 notes 中说明。可选的 `topology_bonds` 声明带类型的边
