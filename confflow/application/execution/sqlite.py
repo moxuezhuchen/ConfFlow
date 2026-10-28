@@ -10,6 +10,11 @@ from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 
+from ...persistence.storage_policy import (
+    StorageUnsupportedError,
+    assert_local_wal_filesystem,
+    detect_filesystem_type,
+)
 from .errors import ErrorCode, ExecutionServiceError, RepositoryConflict
 from .models import (
     Artifact,
@@ -503,44 +508,13 @@ def _is_token(value: str) -> bool:
 def _assert_wal_supported(path, detector) -> None:
     """Reject known or unknown shared filesystems before attempting WAL."""
     try:
-        filesystem = detector(path)
-        if filesystem not in {"ext4", "xfs", "btrfs", "tmpfs", "overlay", "apfs"}:
-            raise _unavailable("WAL requires a verified local filesystem; use shared_fs=True")
-        target = os.path.realpath(path)
-        mounts = []
-        for line in Path("/proc/mounts").read_text(encoding="utf-8").splitlines():
-            fields = line.split()
-            if len(fields) >= 3:
-                mounts.append((os.path.realpath(fields[1].replace("\\040", " ")), fields[2]))
-        match = max(
-            (
-                item
-                for item in mounts
-                if target.startswith(item[0].rstrip("/") + "/") or target == item[0]
-            ),
-            key=lambda item: len(item[0]),
-            default=None,
-        )
-        if match is None or match[1] in {"9p", "nfs", "nfs4", "cifs", "smbfs", "fuse.sshfs"}:
-            raise _unavailable("WAL requires a verified local filesystem; use shared_fs=True")
-    except FileNotFoundError as error:
-        raise _unavailable("Cannot verify filesystem type for WAL") from error
+        assert_local_wal_filesystem(path, detector)
+    except StorageUnsupportedError as error:
+        if isinstance(error.__cause__, FileNotFoundError):
+            raise _unavailable("Cannot verify filesystem type for WAL") from error
+        raise _unavailable(
+            "WAL requires a verified local filesystem; use shared_fs=True"
+        ) from error
 
 
-def _filesystem_type(path) -> str:
-    """Return the longest-mount filesystem type, or an unknown sentinel."""
-    target = os.path.realpath(path)
-    rows = [line.split() for line in Path("/proc/mounts").read_text(encoding="utf-8").splitlines()]
-    choices = [
-        (os.path.realpath(row[1].replace("\\040", " ")), row[2]) for row in rows if len(row) >= 3
-    ]
-    match = max(
-        (
-            item
-            for item in choices
-            if target.startswith(item[0].rstrip("/") + "/") or target == item[0]
-        ),
-        key=lambda item: len(item[0]),
-        default=None,
-    )
-    return "unknown" if match is None else match[1]
+_filesystem_type = detect_filesystem_type

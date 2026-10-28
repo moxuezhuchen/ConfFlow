@@ -59,6 +59,7 @@ from ..persistence.run_state import (
     save_run_state,
     transition_step,
 )
+from ..persistence.storage_policy import preflight_store, select_journal_mode
 from ..persistence.work_items import SqliteWorkItemStore
 from ..workflow.v4.assembly import (
     MaterializedOutputs,
@@ -391,6 +392,28 @@ def _script_registry_snapshot(parsed_doc: Any) -> Any:
         return None
 
 
+def _storage_preflight(run_root: str) -> None:
+    """Refuse a run root whose filesystem cannot honour the WAL policy.
+
+    Checks the run root as-is, so it must run before the root is created.
+    Runs before any generation state is written, so a refused run leaves a
+    previously completed run's files untouched.  Per-step stores are checked
+    by :func:`_step_store_preflight`; the store-level check still runs when
+    each work-item store opens.
+    """
+    select_journal_mode(run_root)
+
+
+def _step_store_preflight(run_root: str, plan: Any) -> None:
+    """Refuse any planned step store that would be refused when it opens.
+
+    Runs after compilation and before run state or generation ownership is
+    written, so a refused rerun leaves the completed manifest untouched.
+    """
+    for planned in plan.steps:
+        preflight_store(store_path(run_root, planned.step_id))
+
+
 def _definition_mismatch_error(recorded: str, requested: str) -> DomainError:
     """Return the refusal for reusing a run root under a different definition."""
     return DomainError(
@@ -425,6 +448,10 @@ class V4RunApplication:
     def run(self, request: V4RunRequest) -> V4RunReport:
         """Compile, execute, publish, and summarize one V4 workflow."""
         run_root = validate_run_root(request.run_root)
+        # Storage is a precondition: refuse an unsupported run-root filesystem
+        # before the root is created, and before generation ownership, run
+        # state, or publication is touched.
+        _storage_preflight(run_root)
         os.makedirs(run_root, exist_ok=True)
         run_id = os.path.basename(request.run_root.rstrip(os.sep)) or "run"
         generation_id = new_generation_id()
@@ -469,6 +496,10 @@ class V4RunApplication:
         plan = compiled.plan
         context.plan = plan
         context.definition_digest = plan.definition_digest
+        # Step stores may sit on another filesystem through a symlinked step
+        # directory or a linked database file.  Refuse them before any state
+        # is written: a refusal here leaves the generation unstarted.
+        _step_store_preflight(run_root, plan)
         state = self._load_or_init_run_state(
             run_root=run_root, run_id=run_id, definition_digest=plan.definition_digest
         )

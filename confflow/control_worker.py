@@ -19,6 +19,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 
+# Applies the machine-readable probe logging guard before the heavy imports below.
+from . import entry_probe  # noqa: F401
 from . import worker_attempt as _worker_attempt
 from . import worker_sidecars as _worker_sidecars
 from . import worker_staging as _worker_staging

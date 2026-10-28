@@ -57,6 +57,12 @@ from .contracts import (
     validate_run_root,
     wall_now,
 )
+from .storage_policy import (
+    FilesystemDetector,
+    StorageUnsupportedError,
+    reject_database_symlinks,
+    select_journal_mode,
+)
 
 __all__ = [
     "SqliteWorkItemStore",
@@ -575,7 +581,14 @@ class SqliteWorkItemStore:
         return self._path
 
     @classmethod
-    def open(cls, path: str | Path, *, create: bool = True) -> SqliteWorkItemStore:
+    def open(
+        cls,
+        path: str | Path,
+        *,
+        create: bool = True,
+        shared_fs_approval_path: str | Path | None = None,
+        filesystem_detector: FilesystemDetector | None = None,
+    ) -> SqliteWorkItemStore:
         """Open the durable store at *path*.
 
         Parameters
@@ -587,6 +600,13 @@ class SqliteWorkItemStore:
             When ``True`` (default), a missing file is created with the
             current schema.  When ``False``, a missing file raises
             :class:`PersistenceError`.
+        shared_fs_approval_path : str | Path | None
+            Root-owned approval file for a non-local filesystem.  When given
+            and verified, the store uses DELETE journal mode; otherwise the
+            store directory must be a local filesystem and uses WAL.
+        filesystem_detector : callable | None
+            Test seam returning the filesystem type of a path.  Defaults to
+            the mount-table detector.
 
         Returns
         -------
@@ -598,6 +618,11 @@ class SqliteWorkItemStore:
         PersistenceError
             Raised for unusable paths or a missing file with
             ``create=False``.
+        StorageUnsupportedError
+            Raised when the store directory is not a local filesystem and no
+            verified approval is given, when the store file or a SQLite side
+            file is a symlink, or when SQLite does not report the requested
+            journal mode.
         SchemaVersionError
             Raised when the file carries another schema version.
         CorruptStateError
@@ -605,6 +630,7 @@ class SqliteWorkItemStore:
             or corrupt meta).  Never drops, rebuilds, or migrates data.
         """
         resolved = _validate_store_path(path)
+        reject_database_symlinks(resolved)
         existed = os.path.exists(resolved)
         if not existed and not create:
             raise PersistenceError(f"work-item store does not exist: {resolved}")
@@ -614,6 +640,11 @@ class SqliteWorkItemStore:
             parent = os.path.dirname(resolved)
             if parent:
                 os.makedirs(parent, exist_ok=True)
+        journal_mode = select_journal_mode(
+            os.path.dirname(resolved),
+            shared_fs_approval_path=shared_fs_approval_path,
+            filesystem_detector=filesystem_detector,
+        )
         try:
             connection = sqlite3.connect(
                 resolved, timeout=5.0, isolation_level=None, check_same_thread=False
@@ -622,7 +653,7 @@ class SqliteWorkItemStore:
             raise PersistenceError(f"cannot open work-item store: {exc}") from exc
         store = cls(resolved, connection)
         try:
-            store._configure()
+            store._configure(journal_mode)
             if not existed:
                 store._init_schema()
             else:
@@ -1409,15 +1440,20 @@ class SqliteWorkItemStore:
             raise PersistenceError("work-item store is closed")
         return self._conn
 
-    def _configure(self) -> None:
-        """Enable WAL mode and a bounded busy timeout."""
+    def _configure(self, journal_mode: str = "wal") -> None:
+        """Set the approved journal mode, verify SQLite applied it, and bound busy waits."""
         try:
             self._conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
-            self._conn.execute("PRAGMA journal_mode = WAL")
+            self._conn.execute(f"PRAGMA journal_mode = {journal_mode.upper()}")
+            actual = self._conn.execute("PRAGMA journal_mode").fetchone()[0]
         except sqlite3.DatabaseError as exc:
             raise CorruptStateError(f"work-item store is not a readable database: {exc}") from exc
         except sqlite3.Error as exc:
             raise PersistenceError(f"cannot configure work-item store: {exc}") from exc
+        if str(actual).lower() != journal_mode:
+            raise StorageUnsupportedError(
+                f"work-item store journal mode is {actual!r}, requested {journal_mode!r}"
+            )
 
     def _init_schema(self) -> None:
         """Create the schema and stamp the version row in one transaction."""

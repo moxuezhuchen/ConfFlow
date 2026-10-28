@@ -1,0 +1,355 @@
+{
+  "method": {
+    "summary": "Full V4RunApplication.run through the real durable step path (WorkItemStore, reuse, publication, run state) with a fake CALCULATION executor (echoes its input structure as a completed result; no xtb/Gaussian/ORCA/MLIP). The program binding points at /bin/true. Linear chain: step k binds the structures port of step k-1; N water structures in, one work item per structure per step.",
+    "driver": "/tmp/claude-0/-opt-ConfFlow/cc80ed10-c51c-4235-b626-e658cacab6e0/scratchpad/r6/scripts/r6_driver.py",
+    "grid_runner": "/tmp/claude-0/-opt-ConfFlow/cc80ed10-c51c-4235-b626-e658cacab6e0/scratchpad/r6/scripts/r6_grid.py",
+    "instrumentation": "assemble_work_items in confflow.application.v4_run wrapped with a call/item counter and perf_counter; V4RunApplication._run_step wrapped to timestamp step return; concurrent.futures.ThreadPoolExecutor subclassed (cancel mode only) to read tracemalloc at the first and last submit.",
+    "timing": "wall = perf_counter around V4RunApplication.run (includes compile, import, durable store I/O, manifest). Each run is a fresh process; ru_maxrss is per process.",
+    "memory": "maxrss_kb from getrusage(RUSAGE_SELF).ru_maxrss. tracemalloc_peak_bytes from a separate run with tracemalloc on (overhead inflates its wall time; not used for timing).",
+    "backpressure": "one step, N=3000, scheduler max_parallel_items=4, fake item sleeps 5 ms (total pure sleep ~3.75 s). A threading.Timer starts at _run_step entry and sets the should_cancel event 0.5 s later (t_request). cancel_request_to_step_return_s = time from that event to _run_step returning. queued_future_mem_bytes = tracemalloc delta between just before the first submit and just after the last submit; it includes Future, closure and per-item overhead, not the WorkItem objects (built before submission).",
+    "reps": "3 per point unless noted; reported value is the median; raw per-run values kept.",
+    "statistics_caveat": "Medians over 3 runs only; no CI. Single-process sequential runs on an otherwise idle machine; at most one benchmark process at a time."
+  },
+  "environment": {
+    "python": "/opt/ConfFlow/.venv/bin/python (3.12.3)",
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "cpu_count_visible": 16,
+    "cores_used": 4,
+    "cores_note": "one driver process at a time; the fake step uses a width-4 thread pool",
+    "commit": "943aae29f2f8d35a831b55e5449c2c938b36b4cf (HEAD of refactor/arch-review-r7r8-20261028 at start; measured from a git archive copy of HEAD, not the live worktree)",
+    "code_copy": "/tmp/claude-0/-opt-ConfFlow/cc80ed10-c51c-4235-b626-e658cacab6e0/scratchpad/r6/head",
+    "measured_at": "2026-10-28T19:27:08+0800"
+  },
+  "points": [
+    {
+      "S": 3,
+      "N": 10,
+      "mode": "timing",
+      "reps": 3,
+      "sleep_ms": 0,
+      "cancel_after_s": null,
+      "median": {
+        "wall_s": 1.3631804019678384,
+        "assembly_calls": 3,
+        "assembly_items_built": 60,
+        "assembly_seconds": 0.008366439142264426,
+        "maxrss_kb": 104764,
+        "status": [
+          "completed"
+        ]
+      },
+      "raw_wall_s": [
+        1.5784417639952153,
+        1.3606492599938065,
+        1.3631804019678384
+      ],
+      "errors": []
+    },
+    {
+      "S": 8,
+      "N": 10,
+      "mode": "timing",
+      "reps": 3,
+      "sleep_ms": 0,
+      "cancel_after_s": null,
+      "median": {
+        "wall_s": 3.0450548919616267,
+        "assembly_calls": 8,
+        "assembly_items_built": 360,
+        "assembly_seconds": 0.05819512309972197,
+        "maxrss_kb": 104936,
+        "status": [
+          "completed"
+        ]
+      },
+      "raw_wall_s": [
+        3.3604695729445666,
+        3.0450548919616267,
+        2.9939195739571005
+      ],
+      "errors": []
+    },
+    {
+      "S": 20,
+      "N": 10,
+      "mode": "timing",
+      "reps": 3,
+      "sleep_ms": 0,
+      "cancel_after_s": null,
+      "median": {
+        "wall_s": 8.520832284004427,
+        "assembly_calls": 20,
+        "assembly_items_built": 2100,
+        "assembly_seconds": 0.321358148008585,
+        "maxrss_kb": 105244,
+        "status": [
+          "completed"
+        ]
+      },
+      "raw_wall_s": [
+        9.66498993395362,
+        8.217865174054168,
+        8.520832284004427
+      ],
+      "errors": []
+    },
+    {
+      "S": 3,
+      "N": 300,
+      "mode": "timing",
+      "reps": 3,
+      "sleep_ms": 0,
+      "cancel_after_s": null,
+      "median": {
+        "wall_s": 16.56798983493354,
+        "assembly_calls": 3,
+        "assembly_items_built": 1800,
+        "assembly_seconds": 0.25777682987973094,
+        "maxrss_kb": 113408,
+        "status": [
+          "completed"
+        ]
+      },
+      "raw_wall_s": [
+        15.871733148931526,
+        16.582799894968048,
+        16.56798983493354
+      ],
+      "errors": []
+    },
+    {
+      "S": 8,
+      "N": 300,
+      "mode": "timing",
+      "reps": 3,
+      "sleep_ms": 0,
+      "cancel_after_s": null,
+      "median": {
+        "wall_s": 43.37701666809153,
+        "assembly_calls": 8,
+        "assembly_items_built": 10800,
+        "assembly_seconds": 1.6168113941093907,
+        "maxrss_kb": 117608,
+        "status": [
+          "completed"
+        ]
+      },
+      "raw_wall_s": [
+        42.6085051150294,
+        43.37701666809153,
+        49.014013850013725
+      ],
+      "errors": []
+    },
+    {
+      "S": 20,
+      "N": 300,
+      "mode": "timing",
+      "reps": 1,
+      "sleep_ms": 0,
+      "cancel_after_s": null,
+      "median": {
+        "wall_s": 131.75962510798126,
+        "assembly_calls": 20,
+        "assembly_items_built": 63000,
+        "assembly_seconds": 9.546033030957915,
+        "maxrss_kb": 131592,
+        "status": [
+          "completed"
+        ]
+      },
+      "raw_wall_s": [
+        131.75962510798126
+      ],
+      "errors": []
+    },
+    {
+      "S": 3,
+      "N": 10,
+      "mode": "mem",
+      "reps": 1,
+      "sleep_ms": 0,
+      "cancel_after_s": null,
+      "median": {
+        "wall_s": 2.0887471130117774,
+        "assembly_calls": 3,
+        "assembly_items_built": 60,
+        "assembly_seconds": 0.062080195057205856,
+        "maxrss_kb": 108668,
+        "tracemalloc_peak_bytes": 2974786,
+        "status": [
+          "completed"
+        ]
+      },
+      "raw_wall_s": [
+        2.0887471130117774
+      ],
+      "errors": []
+    },
+    {
+      "S": 8,
+      "N": 10,
+      "mode": "mem",
+      "reps": 1,
+      "sleep_ms": 0,
+      "cancel_after_s": null,
+      "median": {
+        "wall_s": 5.44111535709817,
+        "assembly_calls": 8,
+        "assembly_items_built": 360,
+        "assembly_seconds": 0.3701534840511158,
+        "maxrss_kb": 108976,
+        "tracemalloc_peak_bytes": 3097030,
+        "status": [
+          "completed"
+        ]
+      },
+      "raw_wall_s": [
+        5.44111535709817
+      ],
+      "errors": []
+    },
+    {
+      "S": 20,
+      "N": 10,
+      "mode": "mem",
+      "reps": 1,
+      "sleep_ms": 0,
+      "cancel_after_s": null,
+      "median": {
+        "wall_s": 11.917057618964463,
+        "assembly_calls": 20,
+        "assembly_items_built": 2100,
+        "assembly_seconds": 1.9820330375805497,
+        "maxrss_kb": 110268,
+        "tracemalloc_peak_bytes": 3622857,
+        "status": [
+          "completed"
+        ]
+      },
+      "raw_wall_s": [
+        11.917057618964463
+      ],
+      "errors": []
+    },
+    {
+      "S": 3,
+      "N": 300,
+      "mode": "mem",
+      "reps": 1,
+      "sleep_ms": 0,
+      "cancel_after_s": null,
+      "median": {
+        "wall_s": 23.90097763191443,
+        "assembly_calls": 3,
+        "assembly_items_built": 1800,
+        "assembly_seconds": 1.3439970050239936,
+        "maxrss_kb": 123456,
+        "tracemalloc_peak_bytes": 9402850,
+        "status": [
+          "completed"
+        ]
+      },
+      "raw_wall_s": [
+        23.90097763191443
+      ],
+      "errors": []
+    },
+    {
+      "S": 8,
+      "N": 300,
+      "mode": "mem",
+      "reps": 1,
+      "sleep_ms": 0,
+      "cancel_after_s": null,
+      "median": {
+        "wall_s": 70.55760313302744,
+        "assembly_calls": 8,
+        "assembly_items_built": 10800,
+        "assembly_seconds": 8.532388506340794,
+        "maxrss_kb": 134900,
+        "tracemalloc_peak_bytes": 12630891,
+        "status": [
+          "completed"
+        ]
+      },
+      "raw_wall_s": [
+        70.55760313302744
+      ],
+      "errors": []
+    },
+    {
+      "S": 1,
+      "N": 3000,
+      "mode": "cancel",
+      "reps": 3,
+      "sleep_ms": 5,
+      "cancel_after_s": 0.5,
+      "median": {
+        "wall_s": 12.524776430102065,
+        "cancel_request_to_step_return_s": 3.317357077030465,
+        "cancel_request_to_run_return_s": 8.996423215023242,
+        "submitted_futures": 3000,
+        "queued_future_mem_bytes": 5369858,
+        "queued_future_mem_bytes_per_item": 1790.5495165055017,
+        "tracemalloc_peak_bytes": 37513487,
+        "maxrss_kb": 185424,
+        "assembly_seconds": 1.870518313953653,
+        "assembly_items_built": 3000,
+        "status": [
+          "cancelled"
+        ]
+      },
+      "raw_wall_s": [
+        12.524776430102065,
+        11.406696398044005,
+        12.977150682010688
+      ],
+      "errors": [],
+      "note": "cancel clock starts at _run_step entry; the first attempt started it at process start and was cancelled before any submit (invalid, see notes)"
+    }
+  ],
+  "skipped": [
+    {
+      "S": 3,
+      "N": 3000,
+      "mode": "timing",
+      "reason": "per-item durable cost measured at ~16 ms (S=8,N=300: 38 s for 2400 items); S=3,N=3000 projects to ~145 s for one run, above the ~60 s cap. Only the single-step N=3000 cancel run was done at this size."
+    },
+    {
+      "S": 8,
+      "N": 3000,
+      "mode": "timing",
+      "reason": "per-item durable cost measured at ~16 ms (S=8,N=300: 38 s for 2400 items); S=3,N=3000 projects to ~145 s for one run, above the ~60 s cap. Only the single-step N=3000 cancel run was done at this size."
+    },
+    {
+      "S": 20,
+      "N": 3000,
+      "mode": "timing",
+      "reason": "per-item durable cost measured at ~16 ms (S=8,N=300: 38 s for 2400 items); S=3,N=3000 projects to ~145 s for one run, above the ~60 s cap. Only the single-step N=3000 cancel run was done at this size."
+    },
+    {
+      "S": 20,
+      "N": 300,
+      "mode": "timing",
+      "reps": 1,
+      "reason": "one rep only: a single run is about 95 s, the 3-rep budget did not fit"
+    },
+    {
+      "S": 20,
+      "N": 300,
+      "mode": "mem",
+      "reason": "tracemalloc run not done at this size (budget)"
+    }
+  ],
+  "raw_runs_file": "/tmp/claude-0/-opt-ConfFlow/cc80ed10-c51c-4235-b626-e658cacab6e0/scratchpad/r6/raw_runs.jsonl",
+  "notes": [
+    "Cancel runs: the first grid attempt started the 0.5 s timer at process start; the run was cancelled at the step boundary before any submit (submitted_futures=0). Those 3 runs are discarded; the cancel point above is a rerun with the timer started at step entry (raw in scratchpad cancel_valid_runs.jsonl).",
+    "Cancel point, N=3000, width 4, 5 ms items: all 3000 futures are submitted before any item finishes (about 3000 submits in the first few ms), so queued_future_mem reflects the pool, not completed results.",
+    "Cancel to step return is about 3.4 s, roughly the time for the remaining queued items to drain as cancelled durable records (about 1.4 ms per item). Every queued future still runs to its cancelled-without-launch path; the pool does not drop them.",
+    "Assembly cost: one call that builds 3000 items took about 2.0 s (about 0.7 ms per item). At S=20,N=300 assembly is about 7% of wall (9.5 s of 132 s); at S=8,N=300 about 4%. The full-plan rebuild is O(S^2 N) in items built (S=20,N=300: 63000 items built vs 6000 needed).",
+    "Durable per-item cost dominates end-to-end time (about 16 ms per item at S=8,N=300), so the item-count cost of re-assembly and the unbounded future list are small next to the durable path at these sizes in this measurement.",
+    "N=3000 end-to-end chains were skipped by the 60 s cap (projected S=3 about 145 s, S=8 about 400 s, S=20 about 960 s). The N=3000 data is the single-step cancel point only.",
+    "Tracemalloc peak in mem runs includes tracemalloc overhead and is not a clean RSS figure; maxrss is the per-process peak."
+  ]
+}
