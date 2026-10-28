@@ -59,7 +59,7 @@ def _isolated_server_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def _marker_interpreter(tmp_path: Path, marker: Path) -> str:
-    """A fake interpreter that records that it ran, then prints an empty version map."""
+    """Write a fake interpreter that records that it ran, then prints an empty version map."""
     path = tmp_path / "bin" / "fake-mlip-python"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
