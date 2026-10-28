@@ -25,7 +25,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from ..domain._immutable import FrozenDict
+from ..domain._immutable import FrozenDict, freeze_value
 from ..domain.artifact import ArtifactLocator, ArtifactRef, ArtifactSet
 from ..domain.completion import WorkItemStatus
 from ..domain.diagnostics import Diagnostic, DiagnosticSeverity
@@ -127,6 +127,14 @@ def _diagnostic(
     )
 
 
+def _sha256_of_file(path: str) -> str:
+    """Return the sha256 hex digest of the file at *path* (same rule as the registry)."""
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError as exc:
+        raise DomainError(f"registered script {path!r} is unreadable before launch: {exc}") from exc
+
+
 def _resolved_script_command(entry: ScriptEntry) -> tuple[str, ...]:
     """Return *entry.command* with the script element as an absolute path."""
     parts = list(entry.command)
@@ -208,6 +216,16 @@ class ScriptExecutor:
         entry = registry.get(script_id)
         if entry is None:
             raise DomainError(f"unknown script {script_id!r}; expected one of {sorted(registry)}")
+        # The workflow was compiled against a specific script identity; a registry
+        # change since then must not run under that compiled digest.
+        if (
+            context.expected_script_identity is not None
+            and freeze_value(script_identity(entry)) != context.expected_script_identity
+        ):
+            raise DomainError(
+                f"script {script_id!r} changed after the workflow was compiled; "
+                "resubmit the workflow"
+            )
         resources = work_item.resources
         cores = resources.cores_per_item
         memory = resources.memory_per_item_bytes
@@ -274,6 +292,10 @@ class ScriptExecutor:
             stderr_file="stderr.log",
             metadata=FrozenDict({"script_id": script_id, "item_key": item_key}),
         )
+        # Narrow the window between registry load and launch: the file must still hash
+        # to the digest the registry recorded when it was loaded.
+        if _sha256_of_file(entry.script_path) != entry.sha256:
+            raise DomainError(f"script {script_id!r} file changed between registry load and launch")
         launched = self._launcher.launch_and_wait(
             context.supervisor,
             request,

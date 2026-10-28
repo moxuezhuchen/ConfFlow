@@ -500,10 +500,12 @@ class TestGenericApplicationLifecycle:
             V4RunApplication(supervisor=object(), registry=registry).run(bad)
 
     def test_unregistered_executor_fails_closed(self, tmp_path: Path) -> None:
-        from confflow.execution.registry import ExecutionRegistry, RegistryLookupError
+        from confflow.execution.registry import RegistryLookupError
 
-        bare = ExecutionRegistry()
-        bare.register_executor(build_default_registry().executor(ExecutorCapability.CALCULATION))
+        # The registry compiles the workflow too, so keep every descriptor and only
+        # drop the calculation implementation: compile passes, dispatch fails closed.
+        bare = build_default_registry()
+        bare.register_executor(bare.executor(ExecutorCapability.CALCULATION))
         with pytest.raises(RegistryLookupError, match="no runtime executor"):
             V4RunApplication(supervisor=object(), registry=bare).run(
                 self._request(str(tmp_path / "run"), import_xyz(TWO_WATER_XYZ))

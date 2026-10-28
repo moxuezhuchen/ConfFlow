@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from ...domain._immutable import FrozenDict
 from ...domain.completion import CompletionPolicy
 from ...domain.diagnostics import Diagnostic, diagnostic_sort_key
 from ...domain.resources import ResourceRequest, SchedulerPolicy
@@ -52,6 +53,10 @@ class PlannedStep:
     completion: CompletionPolicy
     execution: ExecutionBinding | None
     step_semantic_digest: str
+    #: Compile-time script identity (script steps only).  Carried to launch for
+    #: verification; not in :meth:`to_payload` because ``step_semantic_digest``
+    #: already commits to it.
+    script_identity: FrozenDict | None = None
 
     @classmethod
     def from_validated(cls, validated: ValidatedStep) -> PlannedStep:
@@ -73,6 +78,7 @@ class PlannedStep:
             completion=definition.completion,
             execution=definition.execution,
             step_semantic_digest=validated.step_semantic_digest,
+            script_identity=validated.script_identity,
         )
 
     def to_payload(self) -> dict[str, Any]:
