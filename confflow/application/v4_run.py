@@ -218,7 +218,7 @@ def _search_xtb_binding(planned: Any, request: V4RunRequest) -> Any:
 
 def resolve_confgen_xtb_binding(
     binding: Any, native_env: Mapping[str, str], *, step_id: str
-) -> Any:
+) -> tuple[Any, ResolvedCommand | None]:
     """Pin a ConfGen xTB binding to the one absolute file it will launch.
 
     The bare name (or a relative path) is resolved once by the shared command-resolution
@@ -227,11 +227,12 @@ def resolve_confgen_xtb_binding(
     that absolute path, so the policy check, the content measurement and the worker job all
     name the same file.  A binding without an executable is returned unchanged for the
     executor's own missing-executable error.  A name that does not resolve to an executable
-    regular file fails the step.
+    regular file fails the step.  The resolution (with its launch fingerprint) is returned
+    alongside the binding, or ``None`` when there is no executable.
     """
     name = binding.executable if binding is not None else None
     if not name:
-        return binding
+        return binding, None
     try:
         resolved: ResolvedCommand = resolve_command(name, native_env)
     except DomainError as exc:
@@ -239,7 +240,7 @@ def resolve_confgen_xtb_binding(
             f"step {step_id!r} xTB executable {name!r} did not resolve to an executable "
             "file on the binding environment PATH"
         ) from exc
-    return dataclasses.replace(binding, executable=resolved.absolute)
+    return dataclasses.replace(binding, executable=resolved.absolute), resolved
 
 
 def _pure_executable_identity(
@@ -1025,9 +1026,11 @@ class V4RunApplication:
             if binding is not None and planned.executor is ExecutorCapability.CONFGEN:
                 # N2: the single effective environment resolves xTB once; the policy check,
                 # the content measurement and the job all use that absolute file
-                binding = resolve_confgen_xtb_binding(
+                binding, xtb_command = resolve_confgen_xtb_binding(
                     binding, native_env or FrozenDict(), step_id=planned.step_id
                 )
+                if xtb_command is not None:
+                    resolved_command = xtb_command
             identity = _pure_executable_identity(planned, binding, native_env)
             metadata: dict[str, object] = {"step_id": planned.step_id}
             if identity is not None:

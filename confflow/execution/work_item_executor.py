@@ -46,6 +46,7 @@ from .command_resolution import (
     enforce_command_policy,
     launch_environment,
     pinned_or_located,
+    verify_launch_unchanged,
 )
 from .contracts import ExecutionBinding
 from .execution_adapters import DRIVING_STRUCTURE_PORT
@@ -1196,6 +1197,7 @@ class WorkItemExecutor:
                 write_paths=(item_dir,) if item_dir else (),
                 label=f"step {context.step_id!r} executable",
             )
+        verify_launch_unchanged(command)
         return command.absolute
 
     def _stage_checkpoints(

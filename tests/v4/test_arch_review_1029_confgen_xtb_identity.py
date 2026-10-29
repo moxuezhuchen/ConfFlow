@@ -157,13 +157,13 @@ def test_pin_resolves_binding_path_not_control_path(
 
     binding = ExecutionBinding(binding_id="xtb", executable="xtb")
     snapshot = {"PATH": f"{two_xtb['b_dir']}{os.pathsep}{two_xtb['ambient_path']}"}
-    pinned = resolve_confgen_xtb_binding(binding, snapshot, step_id="cg")
+    pinned, command = resolve_confgen_xtb_binding(binding, snapshot, step_id="cg")
     assert pinned.executable == str(two_xtb["b"])
+    assert command is not None and command.absolute == str(two_xtb["b"])
     # the ambient environment is not consulted once the snapshot is given
     monkeypatch.setenv("PATH", str(two_xtb["a_dir"]))
-    assert resolve_confgen_xtb_binding(binding, snapshot, step_id="cg").executable == str(
-        two_xtb["b"]
-    )
+    again, _ = resolve_confgen_xtb_binding(binding, snapshot, step_id="cg")
+    assert again.executable == str(two_xtb["b"])
 
 
 def test_pin_unresolvable_or_missing_binding_fails_closed(
@@ -183,13 +183,13 @@ def test_pin_unresolvable_or_missing_binding_fails_closed(
         )
     # no executable at all leaves the binding for the executor's own missing-executable error
     unset = ExecutionBinding(binding_id="xtb", executable=None)
-    assert resolve_confgen_xtb_binding(unset, absent, step_id="cg") is unset
+    assert resolve_confgen_xtb_binding(unset, absent, step_id="cg") == (unset, None)
     # a relative name with a directory part resolves against the control process cwd
     rel = ExecutionBinding(binding_id="xtb", executable="a/xtb")
     cwd = os.getcwd()
     try:
         os.chdir(tmp_path)
-        pinned = resolve_confgen_xtb_binding(rel, absent, step_id="cg")
+        pinned, _ = resolve_confgen_xtb_binding(rel, absent, step_id="cg")
     finally:
         os.chdir(cwd)
     assert pinned.executable == str(tmp_path / "a" / "xtb")

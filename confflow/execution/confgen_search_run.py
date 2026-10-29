@@ -12,6 +12,7 @@ structures: no chained confgen state is read here.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import math
@@ -40,6 +41,7 @@ from ..domain.errors import DomainError
 from ..domain.result import ResultSet
 from ..domain.structure import StructureRecord, StructureSet
 from ..domain.work_item import RecoveryInfo, Timing, WorkItem, WorkItemResult
+from .command_resolution import verify_launch_unchanged
 from .confgen_executor import ConfgenExecutor
 from .confgen_search_worker import donor_state_label
 from .native import NativeExecutionRequest
@@ -783,6 +785,18 @@ def _run(
             "confgen search requires the step's environment snapshot (context.native_env); "
             "the application layer must supply the summarized native environment"
         )
+    # the xTB file must still be the one measured for this step; checked before any directory
+    # or job file exists, so a replaced binary never starts a search
+    xtb_fingerprint = None
+    if context.resolved_command is not None:
+        if context.resolved_command.absolute != xtb:
+            raise DomainError(
+                f"confgen search xTB executable {xtb!r} is not the resolved command "
+                f"{context.resolved_command.absolute!r}; refusing to launch"
+            )
+        verify_launch_unchanged(context.resolved_command)
+        fingerprint = context.resolved_command.fingerprint
+        xtb_fingerprint = dataclasses.asdict(fingerprint) if fingerprint is not None else None
     attempt = context.attempt_dir(work_item)
     os.makedirs(attempt, exist_ok=True)
     rundir = os.path.join(attempt, "search_run")
@@ -822,6 +836,7 @@ def _run(
         "settings": settings_doc,
         "max_cycles": int(settings_doc.get("max_cycles", 1000)),
         "xtb": xtb,
+        "xtb_fingerprint": xtb_fingerprint,
         "cores": cores,
         "workdir": os.path.join(rundir, "starts"),
         "structures_file": os.path.join(rundir, "structures.xyz"),

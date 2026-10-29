@@ -9,6 +9,9 @@ Policy matching keeps both forms (see ``execution_policy``): the configured name
 bare allow-list entry, and the realpath of the resolved absolute path matches an absolute
 allow-list entry.  A name is never reduced to its basename, so an absolute allow-list entry
 cannot be satisfied by a different file of the same name.
+
+A resolution carries a cheap file fingerprint taken when it is located; :func:`verify_launch_unchanged`
+re-checks it right before launch, so an in-place replacement after measurement is refused.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ from __future__ import annotations
 import os
 import shutil
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..domain.errors import DomainError
@@ -24,6 +27,7 @@ from .binding_resolution import effective_native_env
 from .execution_policy import enforce_execution_policy
 
 __all__ = [
+    "LaunchFingerprint",
     "ResolvedCommand",
     "enforce_command_policy",
     "launch_environment",
@@ -31,7 +35,34 @@ __all__ = [
     "pinned_or_located",
     "resolve_and_enforce_command",
     "resolve_command",
+    "take_fingerprint",
+    "verify_launch_unchanged",
 ]
+
+
+@dataclass(frozen=True)
+class LaunchFingerprint:
+    """Cheap identity of the file a resolution names: stat fields plus the realpath."""
+
+    device: int
+    inode: int
+    size: int
+    mtime_ns: int
+    ctime_ns: int
+    real_path: str
+
+
+def take_fingerprint(path: str) -> LaunchFingerprint:
+    """Return the fingerprint of *path* (symlinks followed); raises ``OSError`` when unstatable."""
+    st = os.stat(path)
+    return LaunchFingerprint(
+        device=st.st_dev,
+        inode=st.st_ino,
+        size=st.st_size,
+        mtime_ns=st.st_mtime_ns,
+        ctime_ns=st.st_ctime_ns,
+        real_path=os.path.realpath(path),
+    )
 
 
 @dataclass(frozen=True)
@@ -39,11 +70,13 @@ class ResolvedCommand:
     """A configured program name and the one absolute file it resolved to.
 
     ``configured`` is the name as written in the configuration (bare name, relative or
-    absolute path).  ``absolute`` is the file that is measured and launched.
+    absolute path).  ``absolute`` is the file that is measured and launched.  ``fingerprint``
+    is taken at resolution and is not part of equality.
     """
 
     configured: str
     absolute: str
+    fingerprint: LaunchFingerprint | None = field(default=None, compare=False)
 
     @property
     def real_path(self) -> str:
@@ -67,7 +100,29 @@ def locate_command(configured: str, env: Mapping[str, str]) -> ResolvedCommand |
         found = os.path.abspath(located) if located else None
     if found is None or not os.path.isfile(found) or not os.access(found, os.X_OK):
         return None
-    return ResolvedCommand(configured=configured, absolute=found)
+    try:
+        fingerprint = take_fingerprint(found)
+    except OSError:
+        return None
+    return ResolvedCommand(configured=configured, absolute=found, fingerprint=fingerprint)
+
+
+def verify_launch_unchanged(command: ResolvedCommand) -> None:
+    """Refuse to launch when the file changed since *command* was resolved and measured.
+
+    A resolution without a fingerprint (built by a caller directly) is not checked.
+    """
+    if command.fingerprint is None:
+        return
+    try:
+        current: LaunchFingerprint | None = take_fingerprint(command.absolute)
+    except OSError:
+        current = None
+    if current != command.fingerprint:
+        raise DomainError(
+            f"executable {command.absolute!r} changed after it was resolved and measured; "
+            "refusing to launch"
+        )
 
 
 def resolve_command(configured: str, env: Mapping[str, str]) -> ResolvedCommand:

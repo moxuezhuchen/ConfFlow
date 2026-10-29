@@ -90,3 +90,5 @@ V1–V3 已修复，验收结果见 PR 描述。不阻断合并的遗留项：
 5. 测试（先写，并确认修复前失败；通过公共入口，不 mock 解析、测量、batch 或持久化）：(i) MLIP：测量 A 之后，更靠前的 PATH 目录出现 B → 启动的仍是 A（或明确拒绝），绝不能以 A 的身份保存 B 的结果；移除 B 后同 root 续跑，结果与 A 一致。(ii) 原生：`max_parallel_items: 1`，第一个工作项启动后出现 B → 两个工作项都启动 A。(iii) 无 resolved_command 的直接调用：同一入口内只解析一次（例如对 `locate_command` 计数）。参考 `resolution_pin_probe.py`。
 回归：`test_executor_command_contract.py`、`test_review_post198_v1_mlip_failure.py`、MLIP 组、执行身份组、`test_v42_executors.py`、`test_v46_application.py`、`test_review_fix_execution_policy.py`、`test_arch_review_1029_confgen_xtb_identity.py`，以及所有构造 `StepExecutionRequest` / `ItemExecutionContext` 的测试。
 - A2 之后：原生 / MLIP 启动使用应用层固定的绝对路径，但启动前不再复核该文件的内容。如果 A 在测量和启动之间被原地替换，不会被发现（不在 A2 范围内）。脚本解释器每次启动前都按内容校验，不受此影响。
+
+**后续处理（2026-10-29，见 `docs/plans/deferred-post199-20261029.md`）：** 原地替换由启动前的文件指纹比对修复（fail closed）。控制服务测量自身按设计关闭。脚本注册时的身份由用户决定保持现状，理由是启动前已有 sha256 校验兜底，而且修改会改变已编译的摘要。
