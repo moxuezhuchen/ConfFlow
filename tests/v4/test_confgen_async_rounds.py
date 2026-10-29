@@ -12,6 +12,7 @@ the fake xtb executable shared with ``test_confgen_xtb``.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from concurrent import futures
@@ -268,7 +269,14 @@ def test_xtb_submit_many_matches_relax_many(
 
     def _make(sub: str) -> XtbCalculator:
         return XtbCalculator(
-            str(exe), tmp_path / sub / "work", els, charge=0, uhf=0, max_cycles=5, cores=2
+            str(exe),
+            tmp_path / sub / "work",
+            els,
+            charge=0,
+            uhf=0,
+            max_cycles=5,
+            cores=2,
+            base_env=dict(os.environ),
         )
 
     asynchronous = _make("async")

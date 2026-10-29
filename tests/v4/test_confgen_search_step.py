@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -19,6 +20,7 @@ from confflow.domain.result import ResultSet, ScientificResult, make_result_id
 from confflow.domain.structure import StructureRecord
 from confflow.domain.work_item import WorkItem, WorkItemInputs, make_work_item_id
 from confflow.execution import confgen_search_run as search_run
+from confflow.execution.binding_resolution import effective_native_env
 from confflow.execution.confgen_executor import ConfgenExecutor
 from confflow.execution.contracts import ExecutionBinding
 from confflow.execution.native import CancelOutcome, NativeExecutionResult
@@ -113,6 +115,9 @@ def _ctx(sci: Any, run_root: str, fake: Path | None, **over: Any) -> ItemExecuti
     }
     if fake is not None:
         params["execution_binding"] = ExecutionBinding(binding_id="t", executable=str(fake))
+    # the explicit snapshot a real step carries: the digested native environment
+    binding = params.get("execution_binding")
+    params["native_env"] = FrozenDict(effective_native_env(binding, inherit=os.environ))
     params.update(over)
     return ItemExecutionContext(**params)
 

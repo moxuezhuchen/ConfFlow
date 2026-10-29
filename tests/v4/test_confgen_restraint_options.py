@@ -84,8 +84,10 @@ def test_constrain_block_custom_force_constant() -> None:
 
 
 def test_calculator_stores_force_constant_and_threads_it(tmp_path: Path) -> None:
-    default = XtbCalculator("xtb", tmp_path, ["H", "H"], 0, 0, 10, 1)
-    custom = XtbCalculator("xtb", tmp_path, ["H", "H"], 0, 0, 10, 1, restraint_force_constant=2.5)
+    default = XtbCalculator("xtb", tmp_path, ["H", "H"], 0, 0, 10, 1, base_env={})
+    custom = XtbCalculator(
+        "xtb", tmp_path, ["H", "H"], 0, 0, 10, 1, restraint_force_constant=2.5, base_env={}
+    )
     assert default._force == 1.0
     assert custom._force == 2.5
     restraint = (DistanceRestraint(0, 1, 1.5),)

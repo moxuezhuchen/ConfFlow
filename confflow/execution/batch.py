@@ -998,6 +998,19 @@ class BatchStepExecutor:
                 should_cancel=should_cancel,
                 _claim_retried=_claim_retried,
             )
+        # Refusals that no generation advance can cure name the same remedy as
+        # the run-level definition refusal (v4_run._definition_mismatch_error).
+        remedy = (
+            "; use a fresh run root or explicit migration"
+            if code
+            in (
+                ReuseCode.INVALIDATE_PROVENANCE,
+                ReuseCode.INVALIDATE_DEFINITION,
+                ReuseCode.INVALIDATE_INPUT,
+                ReuseCode.INVALIDATE_ARTIFACT,
+            )
+            else ""
+        )
         return (
             self._durable_synthetic_failure(
                 request,
@@ -1005,7 +1018,7 @@ class BatchStepExecutor:
                 code=code.value,
                 message=(
                     f"work item {item.logical_key!r} invalidated ({decision.reason}); "
-                    "history is preserved and nothing was re-executed"
+                    "history is preserved and nothing was re-executed" + remedy
                 ),
                 retryable=False,
                 details=dict(decision.details.thaw()),

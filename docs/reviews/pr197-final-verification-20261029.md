@@ -37,4 +37,4 @@ MLIP executor contract 已升到 `confflow.contract.executor.mlip.v2`。参与�
 
 含升级前 MLIP 步骤的旧 run root 需要换新目录重跑。环境变化导致上游重算、进而改变下游输入时，同一 run root 的下游会被拒绝，也需要新的 run root。
 
-合并前核对：PR open、非 draft、mergeable，head 与上述审查 SHA 一致，base 仍为上述基线。合并结果待执行后补记。
+合并前核对：PR open、非 draft、mergeable，head 与上述审查 SHA 一致，base 仍为上述基线。合并结果：2026-10-29 01:16（UTC）由仓库所有者合并，合并提交 `c1ba73f2561955d1513c670e4f2cc808da180249`，合并时 head 为上述审查 SHA `967d1ff3`。复核材料与遗留清单（`docs/plans/deferred-fixes-20261029.md`）在合并后经后续 PR 入库；D1、D2、D4 在同一 PR 中修复，D3 评估后保持现状，新增 D5 待决定。

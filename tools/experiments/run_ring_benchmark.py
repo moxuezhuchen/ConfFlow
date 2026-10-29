@@ -101,6 +101,7 @@ def _main(args):
         int(data["uhf"]),
         300,
         args.cores,
+        base_env=dict(os.environ),
     )
     root = Path(confflow.__file__).resolve().parents[1]
     sources = sorted((root / "confflow/science/confgen").rglob("*.py")) + [

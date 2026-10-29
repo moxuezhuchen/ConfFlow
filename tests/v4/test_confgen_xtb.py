@@ -59,7 +59,14 @@ def fake_xtb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _calc(exe: str | Path, tmp_path: Path, cores: int = 2) -> XtbCalculator:
     return XtbCalculator(
-        str(exe), tmp_path / "work", _ELS, charge=0, uhf=0, max_cycles=5, cores=cores
+        str(exe),
+        tmp_path / "work",
+        _ELS,
+        charge=0,
+        uhf=0,
+        max_cycles=5,
+        cores=cores,
+        base_env=dict(os.environ),
     )
 
 

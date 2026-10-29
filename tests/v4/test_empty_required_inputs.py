@@ -16,6 +16,7 @@ Three layers, one regression family:
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,6 +27,7 @@ import pytest
 from confflow import v4cli
 from confflow.domain import FrozenDict, StructureRecord, StructureSet
 from confflow.domain.completion import StepStatus, WorkItemStatus
+from confflow.execution.binding_resolution import effective_native_env
 from confflow.execution.confgen_executor import ConfgenExecutor
 from confflow.execution.contracts import ExecutionBinding
 from confflow.execution.process import NativeProcessSupervisor
@@ -126,6 +128,7 @@ def test_artifacts_do_not_satisfy_an_empty_required_structure_port() -> None:
 def _execute(record: StructureRecord, fake: Path) -> Any:
     item = _item("c1:g1", "c1", [record])
     sci = _sci(seed=7, native=FrozenDict(_confgen_wire()))
+    binding = ExecutionBinding(binding_id="t", executable=str(fake))
     ctx = ItemExecutionContext(
         step_id="c1",
         scientific=sci,
@@ -135,7 +138,8 @@ def _execute(record: StructureRecord, fake: Path) -> Any:
         supervisor=NativeProcessSupervisor(),
         run_root=tempfile.mkdtemp(),
         poll_interval_seconds=0.01,
-        execution_binding=ExecutionBinding(binding_id="t", executable=str(fake)),
+        execution_binding=binding,
+        native_env=FrozenDict(effective_native_env(binding, inherit=os.environ)),
     )
     return ConfgenExecutor().execute(item, ctx)
 

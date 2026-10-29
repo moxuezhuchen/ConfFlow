@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -19,6 +20,7 @@ from confflow.domain.structure import StructureRecord
 from confflow.domain.work_item import WorkItem, WorkItemInputs, make_work_item_id
 from confflow.execution import confgen_search_run as run_mod
 from confflow.execution import confgen_search_worker as worker
+from confflow.execution.binding_resolution import effective_native_env
 from confflow.execution.confgen_executor import ConfgenExecutor
 from confflow.execution.contracts import ExecutionBinding
 from confflow.execution.output_identity import CONFORMER_MEMBER_METADATA_KEY
@@ -258,6 +260,7 @@ def _run_step(native: FrozenDict, tmp: Path) -> Any:
         multiplicity=1,
     )
     sci = SimpleNamespace(seed=7, native=native, overrides=FrozenDict({}))
+    binding = ExecutionBinding(binding_id="t", executable=str(_write_fake(tmp)))
     ctx = ItemExecutionContext(
         step_id="cg",
         scientific=sci,
@@ -267,7 +270,8 @@ def _run_step(native: FrozenDict, tmp: Path) -> Any:
         supervisor=NativeProcessSupervisor(),
         run_root=str(tmp),
         poll_interval_seconds=0.01,
-        execution_binding=ExecutionBinding(binding_id="t", executable=str(_write_fake(tmp))),
+        execution_binding=binding,
+        native_env=FrozenDict(effective_native_env(binding, inherit=os.environ)),
     )
     return ConfgenExecutor().execute(_item(native, driving), ctx, should_cancel=None)
 

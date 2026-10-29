@@ -20,8 +20,9 @@ import shutil
 import subprocess
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from types import MappingProxyType
 
 import numpy as np
 
@@ -160,8 +161,12 @@ class XtbCalculator:
         cores: int,
         version: str = "",
         restraint_force_constant: float = 1.0,
+        *,
+        base_env: Mapping[str, str],
     ) -> None:
         self._exe, self._work, self._els = exe, workdir, list(elements)
+        # frozen copy: launches use this snapshot, never the live process environment
+        self._base_env: Mapping[str, str] = MappingProxyType(dict(base_env))
         self._charge, self._uhf, self._cycles, self._cores = charge, uhf, max_cycles, cores
         self._force = restraint_force_constant
         self._info = CalculatorInfo(
@@ -244,8 +249,13 @@ class XtbCalculator:
             (here / "c.inp").write_text(cinp, encoding="utf-8")
             argv += ["--input", "c.inp"]
         argv += ["--chrg", str(self._charge), "--uhf", str(self._uhf)]
-        env = dict(os.environ, OMP_NUM_THREADS=str(self._cores), OPENBLAS_NUM_THREADS="1")
-        env.update(MKL_NUM_THREADS="1", OMP_STACKSIZE="2G")
+        env = dict(
+            self._base_env,
+            OMP_NUM_THREADS=str(self._cores),
+            OPENBLAS_NUM_THREADS="1",
+            MKL_NUM_THREADS="1",
+            OMP_STACKSIZE="2G",
+        )
         if not self._launch(argv, here, env):
             return None
         try:
@@ -350,8 +360,13 @@ class XtbCalculator:
                     )
             except (OSError, ValueError, KeyError, TypeError):
                 pass
-        env = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1")
-        env.update(MKL_NUM_THREADS="1", OMP_STACKSIZE="2G")
+        env = dict(
+            self._base_env,
+            OMP_NUM_THREADS="1",
+            OPENBLAS_NUM_THREADS="1",
+            MKL_NUM_THREADS="1",
+            OMP_STACKSIZE="2G",
+        )
         argv = [self._exe, "in.xyz", "--gfn", "2", "--opt"]
         argv += ["--input", "c.inp"] if cinp is not None else []
         argv += [
