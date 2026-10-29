@@ -1,0 +1,19 @@
+{
+  "mode": "fresh",
+  "package_file": "/tmp/confflow-pr197-review.3myUG1/confflow/__init__.py",
+  "status": "completed",
+  "working_topology": [
+    [
+      1
+    ],
+    [
+      0
+    ],
+    []
+  ],
+  "topology_patch": "TopologyPatch(add_edges=(), delete_edges=((1, 3),), provenance='')",
+  "provenance": "Provenance(program='fairchem', program_version=None, method='uma-s-1p2p1', basis=None, adapter='confflow.mlip.executor.v1', step_id='uma', work_item_id='wi:uma:all', metadata=FrozenDict({'task': 'omol'}))",
+  "diagnostics": [
+    "mlip_completed"
+  ]
+}

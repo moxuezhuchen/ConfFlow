@@ -1,0 +1,93 @@
+{
+  "root": "/tmp/confflow-pr197-extra.j9hthzaj",
+  "combined_axes": [
+    {
+      "state": "pending",
+      "changed_axis": "input",
+      "status": "completed",
+      "error": null,
+      "executed": [
+        "B"
+      ],
+      "identity_overwritten": true
+    },
+    {
+      "state": "pending",
+      "changed_axis": "definition",
+      "status": "completed",
+      "error": null,
+      "executed": [
+        "B"
+      ],
+      "identity_overwritten": true
+    },
+    {
+      "state": "pending",
+      "changed_axis": "provenance",
+      "status": null,
+      "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_provenance",
+      "executed": [],
+      "identity_overwritten": false
+    },
+    {
+      "state": "running_dead",
+      "changed_axis": "input",
+      "status": "completed",
+      "error": null,
+      "executed": [
+        "B"
+      ],
+      "identity_overwritten": true
+    },
+    {
+      "state": "running_dead",
+      "changed_axis": "definition",
+      "status": "completed",
+      "error": null,
+      "executed": [
+        "B"
+      ],
+      "identity_overwritten": true
+    },
+    {
+      "state": "running_dead",
+      "changed_axis": "provenance",
+      "status": null,
+      "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_provenance",
+      "executed": [],
+      "identity_overwritten": false
+    },
+    {
+      "state": "interrupted",
+      "changed_axis": "input",
+      "status": "completed",
+      "error": null,
+      "executed": [
+        "B"
+      ],
+      "identity_overwritten": true
+    },
+    {
+      "state": "interrupted",
+      "changed_axis": "definition",
+      "status": "completed",
+      "error": null,
+      "executed": [
+        "B"
+      ],
+      "identity_overwritten": true
+    },
+    {
+      "state": "interrupted",
+      "changed_axis": "provenance",
+      "status": null,
+      "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_provenance",
+      "executed": [],
+      "identity_overwritten": false
+    }
+  ],
+  "named_allowlist": {
+    "error": "DomainError: step 'cg' executable is not allowed by allowed_executables: /tmp/confflow-pr197-extra.j9hthzaj/named-allowlist/b/xtb",
+    "launches": []
+  }
+}

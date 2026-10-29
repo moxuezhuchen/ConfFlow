@@ -1,0 +1,12 @@
+{
+  "mode": "resume",
+  "package_file": "/tmp/confflow-pr197-review.3myUG1/confflow/__init__.py",
+  "status": "completed",
+  "working_topology": null,
+  "topology_patch": null,
+  "provenance": null,
+  "diagnostics": [
+    "mlip_completed",
+    "reuse_hit"
+  ]
+}

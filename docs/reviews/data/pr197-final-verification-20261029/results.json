@@ -1,0 +1,147 @@
+{
+  "combined": {
+    "root": "/tmp/confflow-pr197-extra.tnu3hmis",
+    "combined_axes": [
+      {
+        "state": "pending",
+        "changed_axis": "input",
+        "status": null,
+        "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_input",
+        "executed": [],
+        "identity_overwritten": false
+      },
+      {
+        "state": "pending",
+        "changed_axis": "definition",
+        "status": null,
+        "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_definition",
+        "executed": [],
+        "identity_overwritten": false
+      },
+      {
+        "state": "pending",
+        "changed_axis": "provenance",
+        "status": null,
+        "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_provenance",
+        "executed": [],
+        "identity_overwritten": false
+      },
+      {
+        "state": "running_dead",
+        "changed_axis": "input",
+        "status": null,
+        "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_input",
+        "executed": [],
+        "identity_overwritten": false
+      },
+      {
+        "state": "running_dead",
+        "changed_axis": "definition",
+        "status": null,
+        "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_definition",
+        "executed": [],
+        "identity_overwritten": false
+      },
+      {
+        "state": "running_dead",
+        "changed_axis": "provenance",
+        "status": null,
+        "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_provenance",
+        "executed": [],
+        "identity_overwritten": false
+      },
+      {
+        "state": "interrupted",
+        "changed_axis": "input",
+        "status": null,
+        "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_input",
+        "executed": [],
+        "identity_overwritten": false
+      },
+      {
+        "state": "interrupted",
+        "changed_axis": "definition",
+        "status": null,
+        "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_definition",
+        "executed": [],
+        "identity_overwritten": false
+      },
+      {
+        "state": "interrupted",
+        "changed_axis": "provenance",
+        "status": null,
+        "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_provenance",
+        "executed": [],
+        "identity_overwritten": false
+      }
+    ],
+    "named_allowlist": {
+      "status": "completed",
+      "launches": [
+        "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+        "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+        "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+        "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+        "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+        "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+        "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+        "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+        "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+        "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+        "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+        "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+        "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+        "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb"
+      ]
+    }
+  },
+  "workflow": {
+    "root": "/tmp/confflow-pr197-workflow.jlej75_k",
+    "first_status": "completed",
+    "second_status": null,
+    "error": "PersistenceError: refusing to publish step 'uma': 1 items lack durable results (wi:uma:all); gap code=publication_durability_gap; reasons=wi:uma:all=failed:invalidate_input",
+    "before_x": 1.0,
+    "after_x": null,
+    "environment_changed": false,
+    "input_identity_replaced": false
+  },
+  "upgrade": {
+    "baseline": {
+      "mode": "baseline",
+      "package_file": "/tmp/confflow-review-20261029.h7Jh9l/confflow/__init__.py",
+      "status": "completed",
+      "working_topology": null,
+      "topology_patch": null,
+      "provenance": null,
+      "diagnostics": [
+        "mlip_completed"
+      ]
+    },
+    "refused": "confflow.domain.errors.DomainError: run root already holds a different workflow definition (was 'sha256:7214abdbe2c6f57306515d7594185b9810927ead6a98e4025931b403b2435593', now 'sha256:1d337c240a2fd456a1ed3fa489cdfb6c12a850f112dc132ae24438739bce1854'); use a fresh run root or explicit migration",
+    "old_run_files_unchanged": true,
+    "fresh": {
+      "mode": "fresh",
+      "package_file": "/tmp/confflow-pr197-final.RiClQi/confflow/__init__.py",
+      "status": "completed",
+      "working_topology": [
+        [
+          1
+        ],
+        [
+          0
+        ],
+        []
+      ],
+      "topology_patch": "TopologyPatch(add_edges=(), delete_edges=((1, 3),), provenance='')",
+      "provenance": "Provenance(program='fairchem', program_version=None, method='uma-s-1p2p1', basis=None, adapter='confflow.mlip.executor.v1', step_id='uma', work_item_id='wi:uma:all', metadata=FrozenDict({'task': 'omol'}))",
+      "diagnostics": [
+        "mlip_completed"
+      ]
+    }
+  },
+  "named_allowlist": {
+    "status": "completed",
+    "launches": 14
+  },
+  "original_scenarios": "abandoned_environment PASS\npending_environment PASS\nabandoned_model_workflow PASS\nmlip_topology PASS\nmlip_topology_workflow PASS\nmlip_manifest PASS\nconfgen_path PASS\nREPORT /tmp/confflow-review-cases-20261029._psi0o82/verification.json\n"
+}

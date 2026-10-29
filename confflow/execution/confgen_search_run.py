@@ -40,7 +40,6 @@ from ..domain.errors import DomainError
 from ..domain.result import ResultSet
 from ..domain.structure import StructureRecord, StructureSet
 from ..domain.work_item import RecoveryInfo, Timing, WorkItem, WorkItemResult
-from .binding_resolution import effective_native_env
 from .confgen_executor import ConfgenExecutor
 from .confgen_search_worker import donor_state_label
 from .native import NativeExecutionRequest
@@ -777,6 +776,13 @@ def _run(
             "confgen search requires resolved cores, a process supervisor, "
             "and a run root for item directories"
         )
+    # the launch environment is the step's single digested snapshot; a caller without
+    # one fails closed here, before any directory is created or any process is started
+    if context.native_env is None:
+        raise DomainError(
+            "confgen search requires the step's environment snapshot (context.native_env); "
+            "the application layer must supply the summarized native environment"
+        )
     attempt = context.attempt_dir(work_item)
     os.makedirs(attempt, exist_ok=True)
     rundir = os.path.join(attempt, "search_run")
@@ -828,16 +834,11 @@ def _run(
     }
     with open(job_path, "w", encoding="utf-8") as handle:
         handle.write(json.dumps(job_doc, sort_keys=True, indent=2) + "\n")
-    # the launch environment is the step's single snapshot (the one that was digested);
-    # direct executor callers without a snapshot take the batch executor's own rule
-    native_env = context.native_env
-    if native_env is None:
-        native_env = FrozenDict(effective_native_env(binding, inherit=os.environ))
     request = NativeExecutionRequest(
         sys.executable,
         (sys.executable, "-m", "confflow.execution.confgen_search_worker", job_path),
         rundir,
-        FrozenDict(native_env),
+        FrozenDict(context.native_env),
         walltime,
         "stdout.log",
         "stderr.log",

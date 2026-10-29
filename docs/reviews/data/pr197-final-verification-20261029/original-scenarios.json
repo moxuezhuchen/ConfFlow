@@ -1,0 +1,234 @@
+{
+  "root": "/tmp/confflow-review-cases-20261029._psi0o82",
+  "cases": {
+    "abandoned_environment": {
+      "initial_status": "running",
+      "recovery_status": "completed",
+      "return_to_a_status": "completed",
+      "actual_executions": [
+        "B",
+        "A"
+      ],
+      "registered_as_a": false,
+      "registered_as_b": true,
+      "persisted_actual_environment": "A",
+      "attempts": [
+        1,
+        2,
+        3
+      ]
+    },
+    "pending_environment": {
+      "initial_status": "pending",
+      "recovery_status": "completed",
+      "return_to_a_status": "completed",
+      "actual_executions": [
+        "B",
+        "A"
+      ],
+      "registered_as_a": false,
+      "registered_as_b": true,
+      "persisted_actual_environment": "A",
+      "attempts": [
+        1,
+        2
+      ]
+    },
+    "abandoned_model_workflow": {
+      "statuses": [
+        "completed",
+        "completed",
+        "completed"
+      ],
+      "model_values": [
+        -5,
+        -10,
+        -5
+      ],
+      "returned_energies": [
+        -5.0,
+        -10.0,
+        -5.0
+      ],
+      "recovered_still_registered_as_original": false,
+      "attempts": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "mlip_topology": {
+      "status": "completed",
+      "unchanged_coordinates": true,
+      "input_graph": [
+        [
+          1
+        ],
+        [
+          0
+        ],
+        []
+      ],
+      "output_graph": [
+        [
+          1
+        ],
+        [
+          0
+        ],
+        []
+      ],
+      "output_patch": "TopologyPatch(add_edges=(), delete_edges=((1, 3),), provenance='')",
+      "output_topology": [
+        [
+          1
+        ],
+        [
+          0
+        ],
+        []
+      ],
+      "energy": -76.0,
+      "energy_provenance": "Provenance(program='fairchem', program_version=None, method='uma-s-1p2p1', basis=None, adapter='confflow.mlip.executor.v1', step_id='uma', work_item_id='wi:uma:whole', metadata=FrozenDict({'task': 'omol'}))",
+      "manifest_energy_projection": [
+        {
+          "source_step_id": "uma",
+          "subject_structure_id": "w1:mlip-sp",
+          "electronic_hartree": -76.0,
+          "source": {
+            "program": "fairchem",
+            "method": "uma-s-1p2p1",
+            "adapter": "confflow.mlip.executor.v1"
+          }
+        }
+      ]
+    },
+    "mlip_topology_workflow": {
+      "status": "completed",
+      "declared_deleted_bond": [
+        1,
+        3
+      ],
+      "output_patch": "TopologyPatch(add_edges=(), delete_edges=((1, 3),), provenance='')",
+      "output_topology": [
+        [
+          1
+        ],
+        [
+          0
+        ],
+        []
+      ],
+      "output_graph": [
+        [
+          1
+        ],
+        [
+          0
+        ],
+        []
+      ]
+    },
+    "mlip_manifest": {
+      "status": "completed",
+      "scientific_energy": -5.0,
+      "manifest": {
+        "analyses": [],
+        "artifacts": [
+          {
+            "checksum": "sha256:10360c1c7b47df1f5fa3456c6c7851f88f06c91d71126763d51fa47f16518d28",
+            "fetch": "run-relative:steps/uma/uma/51d5b9c777338d6f27f93b66a16072/attempt_0001/job.json",
+            "locator": "steps/uma/uma/51d5b9c777338d6f27f93b66a16072/attempt_0001/job.json",
+            "role": "mlip_job",
+            "step_id": "uma",
+            "work_item_id": "wi:uma:all"
+          },
+          {
+            "checksum": "sha256:cf797e75867c164e72fc9d5d9d52862724bf90eb127d7bd08cd02044a4ab66fa",
+            "fetch": "run-relative:steps/uma/uma/51d5b9c777338d6f27f93b66a16072/attempt_0001/mlip_results.jsonl",
+            "locator": "steps/uma/uma/51d5b9c777338d6f27f93b66a16072/attempt_0001/mlip_results.jsonl",
+            "role": "mlip_results",
+            "step_id": "uma",
+            "work_item_id": "wi:uma:all"
+          },
+          {
+            "checksum": "sha256:5cc3f529d94fc0a39e77750f3dc387beb1e435f9bc0f8e5e6c1648a033de7882",
+            "fetch": "run-relative:steps/uma/uma/51d5b9c777338d6f27f93b66a16072/attempt_0001/mlip_done.json",
+            "locator": "steps/uma/uma/51d5b9c777338d6f27f93b66a16072/attempt_0001/mlip_done.json",
+            "role": "mlip_done",
+            "step_id": "uma",
+            "work_item_id": "wi:uma:all"
+          },
+          {
+            "checksum": "sha256:e2bf88f6521c218aab0ddf810ac2c9c5ae3c376b7ba66dae98b417d059e31fe5",
+            "fetch": "run-relative:steps/uma/uma/51d5b9c777338d6f27f93b66a16072/attempt_0001/mlip_structures.xyz",
+            "locator": "steps/uma/uma/51d5b9c777338d6f27f93b66a16072/attempt_0001/mlip_structures.xyz",
+            "role": "mlip_structures",
+            "step_id": "uma",
+            "work_item_id": "wi:uma:all"
+          }
+        ],
+        "content_schema": "confflow.run_result_manifest.v1",
+        "definition_digest": "sha256:370c0486a4cd29cc630e65efa3af132faceb636c3a20b862f64c7b8f003fee00",
+        "generation_id": "gen-6897dfaa36a240b9a60fb36874185c7e",
+        "provenance": {
+          "commit": null,
+          "dirty": null,
+          "package": "confflow",
+          "version": "2.1.6"
+        },
+        "results": [
+          {
+            "energies": {
+              "electronic_hartree": -5,
+              "source": {
+                "adapter": "confflow.mlip.executor.v1",
+                "method": "uma-s-1p2p1",
+                "program": "fairchem"
+              }
+            },
+            "identity_digest": "sha256:2aef99baa4704c402170bd0199b754092994852af7d06f7c99a5a78f49a57f1f",
+            "kind": "energy",
+            "origin": "produced",
+            "producer_digest": null,
+            "result_id": "sha256:41ef13724184432e524d9a2c994094c21ef79bfb1bdd2c4144fc05edf2df73ba",
+            "source_step_id": "uma",
+            "source_work_item_id": "wi:uma:all",
+            "subject_structure_id": "6ca488d1656d4b6399b83c7f5509cfa6:mlip-sp",
+            "value_digest": "sha256:8f1db4cf881ad0a6f9ec331d55b200a6462087c46734c672bbfa46b20a43e631"
+          }
+        ],
+        "run_id": "run",
+        "status": "completed",
+        "steps": [
+          {
+            "counts": {
+              "cancelled": 0,
+              "completed": 1,
+              "failed": 0
+            },
+            "diagnostics": [
+              {
+                "code": "mlip_completed",
+                "field_path": null,
+                "message": "mlip sp (uma-s-1p2p1, lbfgs) kept 1 of 1: sp 1, relaxed 0, not converged 0, dropped error 0, dropped stretch 0",
+                "severity": "info",
+                "step_id": "uma"
+              }
+            ],
+            "digest": "sha256:b03b93cf151d35a68a5f545a1d7187ebe6cabecfc0a9125787ff98c2129e6748",
+            "id": "uma",
+            "semantic_digest": "sha256:fa8143c5d611bf87359195e2ae37a725e3f5fd618e558e8bcf851d47990cfbbf",
+            "status": "completed"
+          }
+        ]
+      }
+    },
+    "confgen_path": {
+      "rejected": true,
+      "error": "step 'cg' executable is not allowed by allowed_executables: /tmp/confflow-review-cases-20261029._psi0o82/confgen_path/b/xtb",
+      "launches": 0
+    }
+  }
+}

@@ -674,6 +674,8 @@ def _run(job_path: str) -> int:
         raise _JobError(f"xTB executable not found: {job['xtb']!r}")
     version = xtb_version(exe)
     _write_input_baseline(baseline_path, job, version)
+    # the one process-environment snapshot of this run; the calculator never reads os.environ
+    base_env = dict(os.environ)
     calc = XtbCalculator(
         exe,
         work,
@@ -684,6 +686,7 @@ def _run(job_path: str) -> int:
         job["cores"],
         version,
         restraint_force_constant=job["restraint_force_constant"],
+        base_env=base_env,
     )
     _ACTIVE[:] = [calc]
     if _STOP.is_set():

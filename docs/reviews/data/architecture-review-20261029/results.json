@@ -1,0 +1,206 @@
+{
+  "artifact_root": "/tmp/confflow-review-cases-20261029.73hp0nvw",
+  "source": "/tmp/confflow-review-20261029.h7Jh9l",
+  "abandoned_environment": {
+    "initial_status": "running",
+    "recovery_status": "completed",
+    "return_to_a_status": "completed",
+    "actual_executions": [
+      "B"
+    ],
+    "registered_as_a": true,
+    "registered_as_b": false,
+    "persisted_actual_environment": "B",
+    "attempts": [
+      1,
+      2
+    ]
+  },
+  "pending_environment": {
+    "initial_status": "pending",
+    "recovery_status": "completed",
+    "return_to_a_status": "completed",
+    "actual_executions": [
+      "B"
+    ],
+    "registered_as_a": true,
+    "registered_as_b": false,
+    "persisted_actual_environment": "B",
+    "attempts": [
+      1
+    ]
+  },
+  "mlip_topology_workflow": {
+    "status": "completed",
+    "declared_deleted_bond": [
+      1,
+      3
+    ],
+    "output_patch": null,
+    "output_topology": null,
+    "output_graph": [
+      [
+        1,
+        2
+      ],
+      [
+        0
+      ],
+      [
+        0
+      ]
+    ]
+  },
+  "mlip_topology": {
+    "status": "completed",
+    "unchanged_coordinates": true,
+    "input_graph": [
+      [
+        1
+      ],
+      [
+        0
+      ],
+      []
+    ],
+    "output_graph": [
+      [
+        1,
+        2
+      ],
+      [
+        0
+      ],
+      [
+        0
+      ]
+    ],
+    "output_patch": null,
+    "output_topology": null,
+    "energy": -76.0,
+    "energy_provenance": null,
+    "manifest_energy_projection": {}
+  },
+  "mlip_manifest": {
+    "status": "completed",
+    "scientific_energy": -5.0,
+    "manifest": {
+      "analyses": [],
+      "artifacts": [
+        {
+          "checksum": "sha256:77c3e7a45d9068335df21e4f29a50bcee556a58380415c1f9ab9d8b96e3388ab",
+          "fetch": "run-relative:steps/uma/uma/51d5b9c777338d6f27f93b66a16072/attempt_0001/job.json",
+          "locator": "steps/uma/uma/51d5b9c777338d6f27f93b66a16072/attempt_0001/job.json",
+          "role": "mlip_job",
+          "step_id": "uma",
+          "work_item_id": "wi:uma:all"
+        },
+        {
+          "checksum": "sha256:cf797e75867c164e72fc9d5d9d52862724bf90eb127d7bd08cd02044a4ab66fa",
+          "fetch": "run-relative:steps/uma/uma/51d5b9c777338d6f27f93b66a16072/attempt_0001/mlip_results.jsonl",
+          "locator": "steps/uma/uma/51d5b9c777338d6f27f93b66a16072/attempt_0001/mlip_results.jsonl",
+          "role": "mlip_results",
+          "step_id": "uma",
+          "work_item_id": "wi:uma:all"
+        },
+        {
+          "checksum": "sha256:5cc3f529d94fc0a39e77750f3dc387beb1e435f9bc0f8e5e6c1648a033de7882",
+          "fetch": "run-relative:steps/uma/uma/51d5b9c777338d6f27f93b66a16072/attempt_0001/mlip_done.json",
+          "locator": "steps/uma/uma/51d5b9c777338d6f27f93b66a16072/attempt_0001/mlip_done.json",
+          "role": "mlip_done",
+          "step_id": "uma",
+          "work_item_id": "wi:uma:all"
+        },
+        {
+          "checksum": "sha256:e2bf88f6521c218aab0ddf810ac2c9c5ae3c376b7ba66dae98b417d059e31fe5",
+          "fetch": "run-relative:steps/uma/uma/51d5b9c777338d6f27f93b66a16072/attempt_0001/mlip_structures.xyz",
+          "locator": "steps/uma/uma/51d5b9c777338d6f27f93b66a16072/attempt_0001/mlip_structures.xyz",
+          "role": "mlip_structures",
+          "step_id": "uma",
+          "work_item_id": "wi:uma:all"
+        }
+      ],
+      "content_schema": "confflow.run_result_manifest.v1",
+      "definition_digest": "sha256:679fd6294be96c342eb06feed28c2ec8aff0cf120ec6a41f2a776df75a6ac683",
+      "generation_id": "gen-f79b0898797c47e89a37e2132cd42d66",
+      "provenance": {
+        "commit": null,
+        "dirty": null,
+        "package": "confflow",
+        "version": "2.1.6"
+      },
+      "results": [
+        {
+          "identity_digest": "sha256:067639d849b7e44f6f5e343fb2eece62b594947502000ece909000a4eb12cb22",
+          "kind": "energy",
+          "origin": "produced",
+          "producer_digest": null,
+          "result_id": "sha256:b96405ecc56941ff6588c416cfc6dcf887495d6afafd504c785a851754905112",
+          "source_step_id": "uma",
+          "source_work_item_id": "wi:uma:all",
+          "subject_structure_id": "4cd04453769d46e39b0b11f73b00e144:mlip-sp",
+          "value_digest": "sha256:8f1db4cf881ad0a6f9ec331d55b200a6462087c46734c672bbfa46b20a43e631"
+        }
+      ],
+      "run_id": "run",
+      "status": "completed",
+      "steps": [
+        {
+          "counts": {
+            "cancelled": 0,
+            "completed": 1,
+            "failed": 0
+          },
+          "diagnostics": [
+            {
+              "code": "mlip_completed",
+              "field_path": null,
+              "message": "mlip sp (uma-s-1p2p1, lbfgs) kept 1 of 1: sp 1, relaxed 0, not converged 0, dropped error 0, dropped stretch 0",
+              "severity": "info",
+              "step_id": "uma"
+            }
+          ],
+          "digest": "sha256:2f2b2fa2428553bfb7bc32fbe231fceafc563b960dc64aa4c61f9a5996a14919",
+          "id": "uma",
+          "semantic_digest": "sha256:c44a74e36539147d248c089d67ae01fc5ddd2b5654661ee0d53722faef549928",
+          "status": "completed"
+        }
+      ]
+    }
+  },
+  "confgen_path": {
+    "status": "completed",
+    "second_status": "completed",
+    "allowed_executable": "/tmp/confflow-review-cases-20261029.73hp0nvw/confgen_path/a/xtb",
+    "actually_launched": [
+      "/tmp/confflow-review-cases-20261029.73hp0nvw/confgen_path/b/xtb"
+    ],
+    "launches_before_binary_change": 14,
+    "launches_after_binary_change": 14,
+    "first_energies": [],
+    "second_energies": []
+  },
+  "abandoned_model_workflow": {
+    "statuses": [
+      "completed",
+      "completed",
+      "completed"
+    ],
+    "model_values": [
+      -5,
+      -10,
+      -5
+    ],
+    "returned_energies": [
+      -5.0,
+      -10.0,
+      -10.0
+    ],
+    "recovered_still_registered_as_original": true,
+    "attempts": [
+      1,
+      2,
+      3
+    ]
+  }
+}

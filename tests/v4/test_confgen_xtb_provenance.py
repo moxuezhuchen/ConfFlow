@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -42,7 +43,9 @@ def _launches(counter: Path) -> int:
 
 
 def _calc(exe: Path, tmp_path: Path) -> XtbCalculator:
-    return XtbCalculator(str(exe), tmp_path / "work", _ELS, 0, 0, 5, cores=1)
+    return XtbCalculator(
+        str(exe), tmp_path / "work", _ELS, 0, 0, 5, cores=1, base_env=dict(os.environ)
+    )
 
 
 def test_xtb_version_returns_version_line_after_banner(tmp_path: Path) -> None:

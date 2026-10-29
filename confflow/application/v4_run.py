@@ -154,6 +154,29 @@ class _GenerationContext:
     generation_started: bool = False
 
 
+#: Upper bound on a failure record's ``message`` (characters).
+_FAILURE_MESSAGE_LIMIT: int = 2000
+#: Characters kept from the start and the end of an over-long failure message.
+_FAILURE_MESSAGE_HEAD: int = 1000
+_FAILURE_MESSAGE_TAIL: int = 900
+
+
+def _bounded_failure_message(text: str) -> str:
+    """Return *text* bounded to the failure-record limit, keeping both ends.
+
+    Messages within the limit are returned unchanged.  A longer message keeps
+    its first and last characters so the leading ``refusing to publish`` clause
+    and the trailing remedy both survive, with the omitted count in between.
+    """
+    if len(text) <= _FAILURE_MESSAGE_LIMIT:
+        return text
+    omitted = len(text) - _FAILURE_MESSAGE_HEAD - _FAILURE_MESSAGE_TAIL
+    return (
+        f"{text[:_FAILURE_MESSAGE_HEAD]} … [{omitted} chars omitted] … "
+        f"{text[len(text) - _FAILURE_MESSAGE_TAIL :]}"
+    )
+
+
 def _map_step_status(status: StepStatus) -> RunStepStatus:
     """Map a semantic step status onto its lifecycle record."""
     return {
@@ -688,7 +711,7 @@ class V4RunApplication:
         failure = FrozenDict(
             {
                 "type": type(error).__name__,
-                "message": str(error)[:2000],
+                "message": _bounded_failure_message(str(error)),
                 "step_id": context.active_step_id,
                 "blocked_downstream": "not assemblable" in str(error)
                 or "unmaterialized producer" in str(error),

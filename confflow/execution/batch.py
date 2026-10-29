@@ -24,14 +24,14 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from ..domain._immutable import FrozenDict
-from ..domain.artifact import ArtifactSet
+from ..domain.artifact import ArtifactRef, ArtifactSet
 from ..domain.completion import WorkItemStatus, evaluate_step_status
 from ..domain.diagnostics import Diagnostic, DiagnosticSeverity
 from ..domain.errors import PublicationError
 from ..domain.result import ResultSet
 from ..domain.step_result import StepProvenance, StepResult
 from ..domain.structure import StructureSet
-from ..domain.work_item import WorkItem, WorkItemResult
+from ..domain.work_item import ResultError, WorkItem, WorkItemResult
 from ..persistence.artifacts import ArtifactIntegrityError, verify_artifact
 from ..persistence.contracts import (
     CorruptStateError,
@@ -158,6 +158,28 @@ class InMemoryReuseStore:
             self._results[result.semantic_digest] = result
 
 
+#: Number of gap items whose messages are listed in a publication refusal.
+_LISTED_ITEMS: int = 3
+
+#: Instance attribute carrying a publication refusal's per-item failures.
+_ITEM_FAILURES_ATTR: str = "item_failures"
+
+
+def _publication_refusal(
+    message: str, item_failures: Mapping[str, ResultError]
+) -> PersistenceError:
+    """Return the publication refusal *message* with each gap item's failure attached.
+
+    The error stays a plain ``PersistenceError`` so the recorded failure type and
+    every ``except`` clause are unchanged.  The structured view is the instance
+    attribute ``item_failures`` (work item id -> ``ResultError``), which callers
+    read with ``getattr(exc, "item_failures", {})``.
+    """
+    error = PersistenceError(message)
+    setattr(error, _ITEM_FAILURES_ATTR, FrozenDict(item_failures))
+    return error
+
+
 def _item_error_diagnostics(item: WorkItemResult, *, step_id: str) -> tuple[Diagnostic, ...]:
     """Project one failed item's error into a step-level diagnostic."""
     error = item.error
@@ -178,6 +200,50 @@ def _item_error_diagnostics(item: WorkItemResult, *, step_id: str) -> tuple[Diag
             details=error.details,
         ),
     )
+
+
+def _locator_text(ref: ArtifactRef) -> str:
+    """Return a compact ``kind:target`` rendering of *ref*'s locator."""
+    locator = ref.locator
+    target = locator.path if locator.path is not None else locator.uri
+    return f"{locator.kind.value}:{target}"
+
+
+class _BoundInputVerifier:
+    """Verify bound input artifact bytes once per step, shared by its items.
+
+    Only references that carry a checksum are hashed; checksum-less references
+    and ``EXTERNAL_URI`` locators are left to ``verify_artifact``'s own rules.
+    Outcomes are memoised by artifact id, checksum, and locator, so an
+    artifact bound by several items is hashed once.  The lock serialises the
+    hashing, which keeps the memo race-free across the item thread pool.
+    """
+
+    def __init__(self, run_root: str) -> None:
+        self._run_root = run_root
+        self._lock = threading.Lock()
+        self._outcomes: dict[tuple[str, str, str], ArtifactIntegrityError | None] = {}
+
+    def first_failure(
+        self, item: WorkItem
+    ) -> tuple[str, ArtifactRef, ArtifactIntegrityError] | None:
+        """Return the first bound input of *item* whose bytes fail verification."""
+        for port, artifacts in item.named_inputs.artifacts.items():
+            for ref in artifacts:
+                if ref.checksum is None:
+                    continue
+                key = (ref.id, ref.checksum, _locator_text(ref))
+                with self._lock:
+                    if key not in self._outcomes:
+                        try:
+                            verify_artifact(run_root=self._run_root, ref=ref)
+                            self._outcomes[key] = None
+                        except ArtifactIntegrityError as exc:
+                            self._outcomes[key] = exc
+                    outcome = self._outcomes[key]
+                if outcome is not None:
+                    return port, ref, outcome
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -484,6 +550,7 @@ class BatchStepExecutor:
         results: dict[str, WorkItemResult] = {}
         durable_ids: set[str] = set()
         shared_lock = threading.Lock()
+        bound_inputs = _BoundInputVerifier(run_root_abs)
 
         def run_one(item: WorkItem) -> WorkItemResult:
             if cancelled():
@@ -502,6 +569,7 @@ class BatchStepExecutor:
                     environment_digest=environment_digest,
                     provenance=provenance,
                     should_cancel=cancelled,
+                    bound_inputs=bound_inputs,
                 )
             except (PersistenceError, CorruptStateError) as exc:
                 result = self._durable_synthetic_failure(
@@ -577,12 +645,34 @@ class BatchStepExecutor:
                 return f"{item_id}={item.status.value}:{code}"
 
             reasons = sorted(_gap_reason(item_id) for item_id in gap_ids)
-            raise PersistenceError(
+            # Each gap item's own message (D4 remedy, D5 port/artifact/locator/
+            # reason) rides after the unchanged reasons segment; the same
+            # failures are available structurally on the raised error.
+            item_failures: dict[str, ResultError] = {}
+            for item_id in gap_ids:
+                item_error = by_id[item_id].error
+                if item_error is not None:
+                    item_failures[item_id] = item_error
+            # At most three item messages ride in the text; the full set stays on
+            # the error's ``item_failures`` so a large refusal cannot push the
+            # reasons segment or the remedy out of bounded failure records.
+            ordered_failures = sorted(item_failures.items())
+            listed = [
+                f"{item_id}: {error.message}" for item_id, error in ordered_failures[:_LISTED_ITEMS]
+            ]
+            omitted = len(ordered_failures) - len(listed)
+            if omitted > 0:
+                listed.append(f"(+{omitted} more items; full list on the error's item_failures)")
+            item_text = " | ".join(listed)
+            message = (
                 f"refusing to publish step {step.step_id!r}: "
                 f"{len(gap_ids)} items lack durable results "
                 f"({', '.join(sorted(gap_ids))}); gap code={gap.code}; "
                 f"reasons={', '.join(reasons)}"
             )
+            if item_text:
+                message += f"; item diagnostics: {item_text}"
+            raise _publication_refusal(message, item_failures)
         if request.ownership_guard is not None:
             # CONTRACT 7: once a newer generation owns the run root, a
             # superseded writer must not publish step-level truth either.
@@ -714,6 +804,41 @@ class BatchStepExecutor:
             artifact_checksums=(),
         )
 
+    def _bound_input_failure(
+        self,
+        request: StepExecutionRequest,
+        item: WorkItem,
+        port: str,
+        ref: ArtifactRef,
+        error: ArtifactIntegrityError,
+    ) -> WorkItemResult:
+        """Refuse *item* because a bound input artifact's bytes fail verification.
+
+        The code is ``invalidate_artifact``, the code the reuse decision uses for
+        the same condition on an item's own outputs.  Retrying cannot cure it,
+        and the remedy matches the other invalidation refusals (D4).
+        """
+        locator = _locator_text(ref)
+        return self._durable_synthetic_failure(
+            request,
+            item,
+            code=ReuseCode.INVALIDATE_ARTIFACT.value,
+            message=(
+                f"work item {item.logical_key!r} invalidated (bound input {port!r} "
+                f"artifact {ref.id!r} at {locator} failed byte verification: {error}); "
+                "history is preserved and nothing was re-executed; "
+                "use a fresh run root or explicit migration"
+            ),
+            retryable=False,
+            details={
+                "artifact_id": ref.id,
+                "locator": locator,
+                "port": port,
+                "checksum": ref.checksum,
+                "reason": str(error),
+            },
+        )
+
     def _durable_synthetic_failure(
         self,
         request: StepExecutionRequest,
@@ -764,9 +889,17 @@ class BatchStepExecutor:
         provenance: FrozenDict,
         should_cancel: Callable[[], bool],
         _claim_retried: bool = False,
+        bound_inputs: _BoundInputVerifier | None = None,
     ) -> tuple[WorkItemResult, bool]:
-        """Run one item through register → decide → execute-or-report."""
+        """Run one item through verify-inputs → register → decide → execute-or-report."""
         step = request.step
+        # Bound input bytes are verified before any registration write, the
+        # reuse decision, or a launch.  A failed input refuses only this item.
+        verifier = bound_inputs if bound_inputs is not None else _BoundInputVerifier(run_root)
+        bound_failure = verifier.first_failure(item)
+        if bound_failure is not None:
+            port, ref, error = bound_failure
+            return self._bound_input_failure(request, item, port, ref, error), False
         try:
             store.register_item(
                 work_item_id=item.id,
@@ -901,6 +1034,7 @@ class BatchStepExecutor:
                 run_root=run_root,
                 should_cancel=should_cancel,
                 _claim_retried=_claim_retried,
+                bound_inputs=bound_inputs,
             )
         if code is ReuseCode.BLOCKED_UNCERTAIN_OWNER:
             return (
@@ -997,7 +1131,21 @@ class BatchStepExecutor:
                 run_root=run_root,
                 should_cancel=should_cancel,
                 _claim_retried=_claim_retried,
+                bound_inputs=bound_inputs,
             )
+        # Refusals that no generation advance can cure name the same remedy as
+        # the run-level definition refusal (v4_run._definition_mismatch_error).
+        remedy = (
+            "; use a fresh run root or explicit migration"
+            if code
+            in (
+                ReuseCode.INVALIDATE_PROVENANCE,
+                ReuseCode.INVALIDATE_DEFINITION,
+                ReuseCode.INVALIDATE_INPUT,
+                ReuseCode.INVALIDATE_ARTIFACT,
+            )
+            else ""
+        )
         return (
             self._durable_synthetic_failure(
                 request,
@@ -1005,7 +1153,7 @@ class BatchStepExecutor:
                 code=code.value,
                 message=(
                     f"work item {item.logical_key!r} invalidated ({decision.reason}); "
-                    "history is preserved and nothing was re-executed"
+                    "history is preserved and nothing was re-executed" + remedy
                 ),
                 retryable=False,
                 details=dict(decision.details.thaw()),
@@ -1026,6 +1174,7 @@ class BatchStepExecutor:
         run_root: str,
         should_cancel: Callable[[], bool],
         _claim_retried: bool = False,
+        bound_inputs: _BoundInputVerifier | None = None,
     ) -> tuple[WorkItemResult, bool]:
         """Resolve a lost claim race without duplicating native execution."""
         state = store.get_state(item.id)
@@ -1065,6 +1214,7 @@ class BatchStepExecutor:
                 provenance=provenance,
                 should_cancel=should_cancel,
                 _claim_retried=True,
+                bound_inputs=bound_inputs,
             )
         return (
             self._durable_synthetic_failure(

@@ -669,3 +669,25 @@ def test_worker_rejects_invalid_time_limit(tmp_path: Path, limit: Any) -> None:
 def test_relaxation_batch_follows_cores(tmp_path: Path, cores: int, expected: int) -> None:
     job, *_ = _job(tmp_path, *_metal_parts(tmp_path), cores=cores)
     assert worker._load_job(job)["settings"].relaxation_batch == expected
+
+
+def test_run_hands_calculator_the_process_environment_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hand the calculator one process-environment snapshot taken at ``_run`` start."""
+    job, _, _, _ = _job(tmp_path, *_metal_parts(tmp_path))
+    monkeypatch.setenv("D2_SNAPSHOT_PROBE", "at-start")
+    seen: dict[str, Any] = {}
+
+    class _Stop(Exception):
+        pass
+
+    def _capture(*args: Any, **kwargs: Any) -> None:
+        seen.update(kwargs)
+        raise _Stop
+
+    monkeypatch.setattr(worker, "XtbCalculator", _capture)
+    with pytest.raises(_Stop):
+        worker._run(job)
+    assert seen["base_env"]["D2_SNAPSHOT_PROBE"] == "at-start"
+    assert dict(seen["base_env"]) == dict(os.environ)
