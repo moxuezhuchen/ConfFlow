@@ -27,10 +27,13 @@ from typing import Any, Literal
 import numpy as np
 
 import confflow.science.confgen.search as search
+from confflow.execution.command_resolution import LaunchFingerprint
 from confflow.execution.confgen_xtb import (
     Cancelled,
+    ExecutableChanged,
     XtbCalculator,
     resolve_xtb,
+    verify_executable,
     write_xyz_frames,
     xtb_version,
 )
@@ -76,6 +79,22 @@ def _text(value: Any, name: str) -> str:
     if not isinstance(value, str) or not value:
         raise _JobError(f"job field {name!r} must be a non-empty string")
     return value
+
+
+def _launch_fingerprint(raw: Any) -> LaunchFingerprint | None:
+    """Return the xTB launch fingerprint a job carries, or None when it carries none."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise _JobError("job field 'xtb_fingerprint' must be a mapping or null")
+    ints = ("device", "inode", "size", "mtime_ns", "ctime_ns")
+    if (
+        set(raw) != {*ints, "real_path"}
+        or any(isinstance(raw[k], bool) or not isinstance(raw[k], int) for k in ints)
+        or not isinstance(raw["real_path"], str)
+    ):
+        raise _JobError(f"job field 'xtb_fingerprint' is malformed: {raw!r}")
+    return LaunchFingerprint(**raw)
 
 
 def _load_job(path: str) -> dict[str, Any]:
@@ -672,22 +691,34 @@ def _run(job_path: str) -> int:
     if (exe := resolve_xtb(job["xtb"])) is None:
         _write_input_baseline(baseline_path, job, None, execution_status="failed")
         raise _JobError(f"xTB executable not found: {job['xtb']!r}")
+    fingerprint = _launch_fingerprint(job.get("xtb_fingerprint"))
+    try:
+        # the version probe runs xtb, so the measured file is checked before it too
+        verify_executable(exe, fingerprint)
+    except ExecutableChanged as exc:
+        _write_input_baseline(baseline_path, job, None, execution_status="failed")
+        raise _JobError(f"search failed: {exc}") from exc
     version = xtb_version(exe)
     _write_input_baseline(baseline_path, job, version)
     # the one process-environment snapshot of this run; the calculator never reads os.environ
     base_env = dict(os.environ)
-    calc = XtbCalculator(
-        exe,
-        work,
-        els,
-        job["charge"],
-        job["uhf"],
-        job["max_cycles"],
-        job["cores"],
-        version,
-        restraint_force_constant=job["restraint_force_constant"],
-        base_env=base_env,
-    )
+    try:
+        calc = XtbCalculator(
+            exe,
+            work,
+            els,
+            job["charge"],
+            job["uhf"],
+            job["max_cycles"],
+            job["cores"],
+            version,
+            restraint_force_constant=job["restraint_force_constant"],
+            base_env=base_env,
+            expected_fingerprint=fingerprint,
+        )
+    except ExecutableChanged as exc:
+        _write_input_baseline(baseline_path, job, version, execution_status="failed")
+        raise _JobError(f"search failed: {exc}") from exc
     _ACTIVE[:] = [calc]
     if _STOP.is_set():
         calc.cancel()
@@ -725,6 +756,9 @@ def _run(job_path: str) -> int:
     except search.SearchCancelled:
         _write_input_baseline(baseline_path, job, version, last_snapshot, "cancelled")
         raise
+    except ExecutableChanged as exc:
+        _write_input_baseline(baseline_path, job, version, last_snapshot, "failed")
+        raise _JobError(f"search failed: {exc}") from exc
     except search.SearchError as exc:
         _write_input_baseline(baseline_path, job, version, last_snapshot, "failed")
         raise _JobError(f"search failed: {exc}") from exc

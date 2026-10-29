@@ -26,6 +26,7 @@ from types import MappingProxyType
 
 import numpy as np
 
+from confflow.execution.command_resolution import LaunchFingerprint, take_fingerprint
 from confflow.science.confgen.calculator import (
     CAP_FIXED_ATOMS,
     CAP_HESSIAN,
@@ -40,9 +41,11 @@ from confflow.science.confgen.calculator import (
 
 __all__ = [
     "Cancelled",
+    "ExecutableChanged",
     "XtbCalculator",
     "read_first_frame",
     "resolve_xtb",
+    "verify_executable",
     "write_xyz_frames",
     "xtb_version",
 ]
@@ -54,6 +57,24 @@ _HAS_WORD = re.compile(r"[A-Za-z0-9]")
 
 class Cancelled(RuntimeError):
     """Raised by ``relax_many`` when the batch was cancelled."""
+
+
+class ExecutableChanged(RuntimeError):
+    """The xTB file changed after it was measured; no further xTB process is started."""
+
+
+def verify_executable(path: str, expected: LaunchFingerprint | None) -> None:
+    """Raise ``ExecutableChanged`` when *path* no longer matches *expected* (None: no check)."""
+    if expected is None:
+        return
+    try:
+        current: LaunchFingerprint | None = take_fingerprint(path)
+    except OSError:
+        current = None
+    if current != expected:
+        raise ExecutableChanged(
+            f"xTB executable {path!r} changed after it was measured; refusing to launch"
+        )
 
 
 def resolve_xtb(path: str) -> str | None:
@@ -163,8 +184,10 @@ class XtbCalculator:
         restraint_force_constant: float = 1.0,
         *,
         base_env: Mapping[str, str],
+        expected_fingerprint: LaunchFingerprint | None = None,
     ) -> None:
         self._exe, self._work, self._els = exe, workdir, list(elements)
+        self._expected = expected_fingerprint
         # frozen copy: launches use this snapshot, never the live process environment
         self._base_env: Mapping[str, str] = MappingProxyType(dict(base_env))
         self._charge, self._uhf, self._cycles, self._cores = charge, uhf, max_cycles, cores
@@ -180,6 +203,11 @@ class XtbCalculator:
         self._live: set[subprocess.Popen[str]] = set()
         self._lock = threading.Lock()
         self._pool: futures.ThreadPoolExecutor | None = None
+        self._check_executable()
+
+    def _check_executable(self) -> None:
+        """Refuse to launch xtb when its file changed since the search measured it."""
+        verify_executable(self._exe, self._expected)
 
     @property
     def info(self) -> CalculatorInfo:
@@ -270,6 +298,7 @@ class XtbCalculator:
     def _launch(self, argv: list[str], here: Path, env: dict[str, str]) -> bool:
         """Run one xtb process in ``here`` (cancellable); return whether it exited with 0."""
         proc = None
+        self._check_executable()
         try:
             with open(here / "xtb.out", "w", encoding="utf-8") as log:
                 proc = subprocess.Popen(
@@ -378,6 +407,7 @@ class XtbCalculator:
             str(self._cycles),
         ]
         tick, proc, out = time.monotonic(), None, ""
+        self._check_executable()
         try:
             with open(here / "xtb.out", "w", encoding="utf-8") as log:
                 proc = subprocess.Popen(

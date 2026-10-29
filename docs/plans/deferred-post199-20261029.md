@@ -26,3 +26,16 @@
 - `tests/v4/test_launch_fingerprint.py`：原地改写、`os.replace`、符号链接改指向都会被拒绝启动；文件未变则正常启动；原生和 MLIP 两条路径都覆盖。
 - 现有契约测试 `test_executor_command_contract.py`、`test_pr199_resolution_pin.py`、`test_review_post198_v1_mlip_failure.py` 全部通过。
 - 全量测试、ruff、black（CI 版本）、LOC 门禁全部通过。
+
+## 第 4 项：ConfGen 接入指纹检查（用户 2026-10-29 同意，并入本 PR）
+
+**问题：** 应用层对 xtb 做 sha256 测量，之后 ConfGen 搜索会持续数小时，调用 xtb 几千次。`XtbCalculator` 在开始时也算了一遍 sha，但只写进统计信息，从不比对。测量之后 xtb 被替换，结果仍会按旧身份登记。
+
+**修复：**
+- `v4_run.resolve_confgen_xtb_binding` 同时返回 `ResolvedCommand`（带解析时的指纹，指纹在 sha 测量之前取得），ConfGen 步骤也把它放进 `resolved_command`。
+- `confgen_search_run`：有 `resolved_command` 时，在建目录、写任务之前先调用 `verify_launch_unchanged`，再把指纹写入 `search_job.json` 的 `xtb_fingerprint` 字段。
+- worker / `XtbCalculator`：任务带指纹时，开始搜索前以及每次启动 xtb 子进程前，都和当前文件比对一次（只做 stat，开销可忽略）。不一致时抛出 `ExecutableChanged`。worker 把它当作任务失败处理（`input_baseline` 记为 failed，退出码非 0），不当作普通的单次优化失败，因此整个条目记为 FAILED，不发布结果。
+- 没有指纹的直接调用（旧任务文件、测试）行为不变。
+- 已核对异常传播路径：`_relax_one` / `_launch` / `hessian` → `explore._run_round`（`f.result()`，没有拦截）→ search → worker，worker 显式处理该异常。唯一会吞掉异常的地方是 `explore.py` 的 `_settle_planned`：到达时限后丢弃排队中的优化时，用了 `except Exception: pass`。这里保持不改，原因有二：
+  1. 抛出 `ExecutableChanged` 时，校验发生在启动之前，被替换的程序从未运行；而这批结果本来就要被丢弃。之后所有 xtb 启动（包括 release）都会再校验一次，并让任务失败。因此被替换的程序产出的结果不会被发布。
+  2. `science/` 层不能导入 `execution` 层。
