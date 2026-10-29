@@ -14,3 +14,11 @@
 PR #198 验收（`docs/reviews/pr198-acceptance-20261029.md`）A1 / P2：D4、D5 的诊断在拒绝发布的异常中丢失。已修：异常保留 `reasons=` 段，后面追加最多 3 个条目的诊断（完整清单在异常的 `item_failures` 属性上）；`run_generation.json` / `generation_ownership.json` 的 failure.message 超过 2000 字符时保留首尾、截掉中间。`run_result.json` 清单没有失败信息字段（schema 本身如此），未改动。
 
 不计入遗留：R6 维持"测量后暂不改"；原 review 复现脚本的 tuple 键问题已解决。统一启动描述、科学输出最低契约属于后续架构改进建议（见 `architecture-review-20261029.md` 末尾），尚未实施。
+
+PR #199 后的遗留项（`docs/plans/deferred-post199-20261029.md`）：
+
+| # | 遗留项 | 处理 | 状态 |
+|---|---|---|---|
+| P1 | 控制服务测量自身时按控制进程 PATH 解析（`workflow_adapter._resolve_executable`） | 测的就是控制进程自己的解释器（默认 `sys.executable`），用控制进程 PATH 正确 | 已关闭（按设计） |
+| P2 | 脚本注册时按控制进程 PATH 解析解释器身份 | 启动前有 sha256 校验兜底；修改会改变已编译的摘要。用户 2026-10-29 决定保持 | 已关闭（保持） |
+| P3 | 原生 / MLIP 启动前不复核固定路径文件（测量后被原地替换不会被发现） | 解析时记录文件指纹（设备号、inode、大小、mtime、ctime、realpath），启动前比对，不一致时拒绝 | 已修（refactor/deferred-post199-20261029） |

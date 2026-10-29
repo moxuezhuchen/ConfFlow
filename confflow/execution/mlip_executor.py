@@ -32,7 +32,11 @@ from ..domain.structure import StructureRecord, StructureSet
 from ..domain.units import Unit
 from ..domain.work_item import RecoveryInfo, ResultError, Timing, WorkItem, WorkItemResult
 from ..science.topology import resolve_and_persist_kwargs
-from .command_resolution import launch_environment, resolve_and_enforce_command
+from .command_resolution import (
+    launch_environment,
+    resolve_and_enforce_command,
+    verify_launch_unchanged,
+)
 from .mlip_analysis import (
     MlipOutput,
     calibration,
@@ -544,6 +548,7 @@ class MlipExecutor:
             unresolved_message=_unresolved_interpreter_message(interpreter),
             pinned=context.resolved_command,
         )
+        verify_launch_unchanged(resolved)
         executable = resolved.absolute
         if not RUNNER_PATH.is_file():
             raise DomainError(f"mlip runner source is missing: {RUNNER_PATH}")
