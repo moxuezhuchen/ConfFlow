@@ -1,0 +1,49 @@
+{
+  "root": "/tmp/post200-quota-probe.f3dfe9dt",
+  "mlip": {
+    "queued": {
+      "status": "failed",
+      "energies": [],
+      "codes": [
+        "native_input_error"
+      ],
+      "errors": []
+    },
+    "resumed": {
+      "status": "completed",
+      "energies": [
+        -5.0
+      ],
+      "codes": [
+        "mlip_completed"
+      ],
+      "errors": []
+    },
+    "fresh": {
+      "status": "completed",
+      "energies": [
+        -5.0
+      ],
+      "codes": [
+        "mlip_completed"
+      ],
+      "errors": []
+    },
+    "launches": [
+      "A",
+      "A"
+    ]
+  },
+  "native": {
+    "queued": {
+      "status": "failed",
+      "energies": [],
+      "codes": [],
+      "errors": [
+        "executable '/tmp/post200-quota-probe.f3dfe9dt/orca' changed after it was resolved and measured; refusing to launch"
+      ]
+    },
+    "launches": []
+  },
+  "remaining_leases": {}
+}

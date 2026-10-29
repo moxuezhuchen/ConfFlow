@@ -36,6 +36,15 @@ _BACKEND: Any = None  # per-process backend, set by _init_worker in pool workers
 _BACKEND_ERROR: str | None = None  # why the per-process backend is missing, if it is
 
 
+#: Measured model and refs files: (job path key, expected sha256 key, label in messages).
+_MEASURED_ASSETS = (
+    ("model_path", "expected_model_sha256", "model"),
+    ("refs_path", "expected_refs_sha256", "refs"),
+)
+#: Job key of the stat fingerprints pinned for the measured files (set by ``pin_measured_assets``).
+_PINNED_KEY = "pinned_fingerprints"
+
+
 def _check(ok: bool, name: str) -> None:
     if not ok:
         raise ValueError(f"invalid job field: {name}")
@@ -78,6 +87,12 @@ def validate_job(job: Any) -> None:
     _check(isinstance(job, dict), "job object")
     _check(isinstance(job.get("model_path"), str), "model_path")
     _check(job.get("refs_path") is None or isinstance(job["refs_path"], str), "refs_path")
+    for _path_key, sha_key, _label in _MEASURED_ASSETS:
+        _check(job.get(sha_key) is None or isinstance(job[sha_key], str), sha_key)
+    _check(
+        job.get("expected_refs_sha256") is None or isinstance(job.get("refs_path"), str),
+        "expected_refs_sha256 needs refs_path",
+    )
     _check(isinstance(job.get("task"), str) and isinstance(job.get("device"), str), "task/device")
     for name in ("charge", "multiplicity", "max_steps", "workers", "threads"):
         _check(_is_int(job.get(name)), name)
@@ -230,11 +245,69 @@ class BackendLoadError(RuntimeError):
     """The model backend could not be built: a task-level failure, never a bad structure."""
 
 
+def _fingerprint(path: str) -> tuple[int, int, int, int, int]:
+    """Cheap identity of a file: device, inode, size, mtime and ctime (ns)."""
+    st = os.stat(path)
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+
+def pin_measured_assets(job: dict[str, Any]) -> None:
+    """Check the model and refs files against the sha256 measured by the executor, then pin them.
+
+    Each file is stat-fingerprinted, hashed, and fingerprinted again: a fingerprint that moved
+    while the file was hashed means it was being replaced.  The verified fingerprint is kept in
+    the job, so every later load can refuse a file that changed since.  A job without expected
+    sha256 values is left unpinned, as before.
+    """
+    pinned: dict[str, tuple[int, int, int, int, int]] = {}
+    for path_key, sha_key, label in _MEASURED_ASSETS:
+        expected = job.get(sha_key)
+        if expected is None:
+            continue
+        path = job[path_key]
+        try:
+            before = _fingerprint(path)
+            actual = _sha256(path)
+            after = _fingerprint(path)
+        except OSError as exc:
+            raise BackendLoadError(
+                f"{label} file cannot be read after it was measured: {exc}"
+            ) from exc
+        if actual != expected or after != before:
+            raise BackendLoadError(
+                f"{label} file changed after it was measured "
+                f"(sha256 {actual}, measured {expected})"
+            )
+        pinned[path_key] = before
+    if pinned:
+        job[_PINNED_KEY] = pinned
+
+
+def _check_pinned(job: dict[str, Any]) -> None:
+    """Refuse when a pinned file's stat fingerprint differs from the one verified in ``main``."""
+    pinned = job.get(_PINNED_KEY) or {}
+    for path_key, _sha_key, label in _MEASURED_ASSETS:
+        if path_key not in pinned:
+            continue
+        try:
+            current: tuple[int, int, int, int, int] | None = _fingerprint(job[path_key])
+        except OSError:
+            current = None
+        if current != pinned[path_key]:
+            raise BackendLoadError(
+                f"{label} file changed after it was measured; refusing to load it"
+            )
+
+
 def _load_backend(factory: Callable[[dict[str, Any]], Any], job: dict[str, Any]) -> Any:
+    """Build the backend; the pinned files must be unchanged before and after the factory runs."""
+    _check_pinned(job)
     try:
-        return factory(job)
+        backend = factory(job)
     except Exception as exc:
         raise BackendLoadError(f"{type(exc).__name__}: {exc}") from exc
+    _check_pinned(job)
+    return backend
 
 
 def _init_worker(factory: Callable[[dict[str, Any]], Any], job: dict[str, Any]) -> None:
@@ -293,6 +366,22 @@ def _pkg_version(name: str) -> str | None:
 def _write_done(workdir: str, info: dict[str, Any]) -> None:
     with open(os.path.join(workdir, DONE), "w", encoding="utf-8") as fh:
         json.dump(info, fh, indent=1)
+
+
+def _record_backend_failure(workdir: str, job: dict[str, Any], reason: str, wall_s: float) -> int:
+    """Write the ``backend_failed`` done file for *reason* and return ``BACKEND_EXIT_CODE``."""
+    _log(workdir, f"backend failed to load, job stopped: {reason}")
+    _write_done(
+        workdir,
+        dict(
+            status=BACKEND_FAILED,
+            backend_error=reason,
+            workers=job["workers"],
+            torch_threads=job["threads"],
+            wall_s=round(wall_s, 3),
+        ),
+    )
+    return BACKEND_EXIT_CODE
 
 
 def run_job(
@@ -362,19 +451,7 @@ def run_job(
                 by_key = {s["key"]: s for s in structures}
                 drain([task(by_key[k], "relax") for k in relax_keys if (k, "relax") not in done])
     except BackendLoadError as exc:
-        reason = str(exc)
-        _log(workdir, f"backend failed to load, job stopped: {reason}")
-        _write_done(
-            workdir,
-            dict(
-                status=BACKEND_FAILED,
-                backend_error=reason,
-                workers=job["workers"],
-                torch_threads=job["threads"],
-                wall_s=round(time.time() - t0, 3),
-            ),
-        )
-        return BACKEND_EXIT_CODE
+        return _record_backend_failure(workdir, job, str(exc), time.time() - t0)
 
     info = dict(
         model_sha256=_sha256(job["model_path"]),
@@ -505,7 +582,13 @@ def main(argv: list[str]) -> int:
     except (OSError, ValueError) as exc:
         print(f"mlip_runner: cannot read job {argv[1]}: {exc}", file=sys.stderr)
         return 2
-    return run_job(job, os.getcwd(), _fairchem_backend)
+    workdir = os.getcwd()
+    t0 = time.time()
+    try:
+        pin_measured_assets(job)  # before any load: the measured model and refs bytes
+    except BackendLoadError as exc:
+        return _record_backend_failure(workdir, job, str(exc), time.time() - t0)
+    return run_job(job, workdir, _fairchem_backend)
 
 
 if __name__ == "__main__":  # pragma: no cover

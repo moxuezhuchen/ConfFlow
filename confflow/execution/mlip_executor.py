@@ -252,6 +252,53 @@ def _runner_settings(
     return model_path, refs_path, device, threads, workers
 
 
+def _measured_job_fields(
+    expected: Mapping[str, Any] | None, model_path: str, refs_path: str | None
+) -> dict[str, str]:
+    """Job fields pinning the model and refs bytes measured for this launch.
+
+    The measured paths must be the paths the job reads: a launch whose model or refs path moved
+    since measurement is refused.  Without expected inputs (a direct caller) nothing is pinned.
+    """
+    if expected is None:
+        return {}
+    if expected.get("model_path") != model_path or expected.get("refs_path") != refs_path:
+        raise DomainError(
+            "mlip model or refs path differs from the one measured for this launch; "
+            "refusing to launch"
+        )
+    model_sha = expected.get("model_sha256")
+    if not isinstance(model_sha, str):
+        raise DomainError("mlip measured launch inputs carry no model sha256; refusing to launch")
+    fields = {"expected_model_sha256": model_sha}
+    refs_sha = expected.get("refs_sha256")
+    if refs_path is not None:
+        if not isinstance(refs_sha, str):
+            raise DomainError(
+                "mlip measured launch inputs carry no refs sha256; refusing to launch"
+            )
+        fields["expected_refs_sha256"] = refs_sha
+    return fields
+
+
+def _file_sha256(path: str) -> str | None:
+    """Full-content sha256 of *path*, or None when it cannot be read."""
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(block)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def _check_runner_copy(path: str, expected_sha: str) -> None:
+    """Refuse to launch when the runner copy in the attempt directory is not the measured one."""
+    if _file_sha256(path) != expected_sha:
+        raise DomainError(f"mlip runner {path!r} changed after it was measured; refusing to launch")
+
+
 def _stable_keys(records: Sequence[StructureRecord]) -> dict[str, str]:
     """Map record id to a short key ``s00001`` in sorted record-id order."""
     ordered = sorted(record.id for record in records)
@@ -530,6 +577,8 @@ class MlipExecutor:
         env = _launch_env(context)
         cores = work_item.resources.cores_per_item
         model_path, refs_path, device, threads, workers = _runner_settings(env, cores)
+        expected = context.expected_mlip_runtime
+        measured_fields = _measured_job_fields(expected, model_path, refs_path)
         science = _batch_scientific(records, context, work_item)
         keys = _stable_keys(records)
         ordered = sorted(records, key=lambda record: record.id)
@@ -553,7 +602,16 @@ class MlipExecutor:
         if not RUNNER_PATH.is_file():
             raise DomainError(f"mlip runner source is missing: {RUNNER_PATH}")
         os.makedirs(work_dir, exist_ok=True)
-        shutil.copyfile(RUNNER_PATH, os.path.join(work_dir, "mlip_runner.py"))
+        runner_copy = os.path.join(work_dir, "mlip_runner.py")
+        shutil.copyfile(RUNNER_PATH, runner_copy)
+        expected_runner = expected.get("runner_sha256") if expected is not None else None
+
+        def _final_launch_check() -> None:
+            """Run once the quota is held, right before submit: the file that starts is the measured one."""
+            verify_launch_unchanged(resolved)
+            if expected_runner is not None:
+                _check_runner_copy(runner_copy, expected_runner)
+
         job = {
             "model_path": model_path,
             "refs_path": refs_path,
@@ -582,6 +640,7 @@ class MlipExecutor:
                 for record in ordered
             ],
         }
+        job.update(measured_fields)
         with open(os.path.join(work_dir, _JOB_NAME), "w", encoding="utf-8") as handle:
             json.dump(job, handle, indent=2)
         walltime = float(binding.walltime_seconds) if binding and binding.walltime_seconds else None
@@ -601,6 +660,7 @@ class MlipExecutor:
             context.poll_interval_seconds,
             should_cancel=should_cancel,
             quota=(work_item.resources, str(context.run_root), work_item.id),
+            before_submit=_final_launch_check,
         )
         if launched is None:
             return self._fail(

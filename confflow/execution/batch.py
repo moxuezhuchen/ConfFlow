@@ -285,6 +285,9 @@ class StepExecutionRequest:
     #: made by the application on the step's effective environment.  Items reuse it for policy,
     #: measurement and launch.  ``None`` means a direct caller: each item resolves at its entry.
     resolved_command: ResolvedCommand | None = None
+    #: MLIP launch inputs as measured by the application (``mlip_runtime_components``):
+    #: the executor checks the launched files against them.  ``None``: direct caller.
+    expected_mlip_runtime: FrozenDict | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "items", tuple(self.items))
@@ -392,6 +395,7 @@ class BatchStepExecutor:
             native_env=request.native_env,
             expected_script_identity=step.script_identity,
             resolved_command=request.resolved_command,
+            expected_mlip_runtime=request.expected_mlip_runtime,
         )
         fail_fast = (
             step.scheduler.on_failure is not None and step.scheduler.on_failure.value == "fail_fast"
@@ -543,6 +547,7 @@ class BatchStepExecutor:
             executor_capability=request.executor_capability,
             expected_script_identity=step.script_identity,
             resolved_command=request.resolved_command,
+            expected_mlip_runtime=request.expected_mlip_runtime,
         )
         stop_event = threading.Event()
         stop_event_proxy = request.should_cancel

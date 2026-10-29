@@ -42,6 +42,8 @@ __all__ = [
     "EnvironmentMeasurer",
     "build_pure_environment",
     "measure_executable",
+    "mlip_identity_of_payload",
+    "mlip_runtime_components",
     "mlip_runtime_identity",
     "select_relevant_env",
     "strip_session_env",
@@ -415,6 +417,53 @@ def _require_absolute_path(value: str, label: str) -> str:
     return value
 
 
+def mlip_runtime_components(
+    *,
+    interpreter: str,
+    runner_path: str,
+    env: Mapping[str, str],
+    model_env: str,
+    refs_env: str,
+) -> dict[str, Any] | None:
+    """Measure one MLIP launch once; ``None`` when any part is unresolvable.
+
+    Returns ``{"payload": ..., "paths": ...}``.  ``payload`` is exactly what
+    :func:`mlip_identity_of_payload` digests (content hashes and package versions only).
+    ``paths`` holds the absolute model and refs paths the job will read; paths are locators,
+    never digested, so moving a file never changes the identity.
+    """
+    try:
+        real_interpreter = _resolve_interpreter(interpreter, env)
+        interpreter_sha = _content_sha256(real_interpreter)
+        runner_sha = _content_sha256(runner_path)
+        model_text = env.get(model_env, "").strip()
+        if not model_text:
+            return None
+        model_path = _require_absolute_path(model_text, model_env)
+        model_sha = _content_sha256(model_path)
+        refs_text = env.get(refs_env, "").strip()
+        refs_path = _require_absolute_path(refs_text, refs_env) if refs_text else None
+        refs_sha = _content_sha256(refs_path) if refs_path is not None else None
+        versions = _interpreter_package_versions(real_interpreter, env)
+    except DomainError:
+        return None
+    payload = {
+        "kind": _MLIP_IDENTITY_KIND,
+        "interpreter_sha256": interpreter_sha,
+        "runner_sha256": runner_sha,
+        "model_sha256": model_sha,
+        "refs_sha256": refs_sha,
+        "packages": versions,
+    }
+    return {"payload": payload, "paths": {"model_path": model_path, "refs_path": refs_path}}
+
+
+def mlip_identity_of_payload(payload: Mapping[str, Any]) -> str:
+    """Return the ``sha256:`` identity digest of an MLIP payload (see ``mlip_runtime_components``)."""
+    encoded = json.dumps(dict(payload), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
 def mlip_runtime_identity(
     *,
     interpreter: str,
@@ -430,31 +479,16 @@ def mlip_runtime_identity(
     interpreter. Paths are locators only; content is the identity. Any unresolvable
     part makes the whole identity ``None`` so the caller can fail closed.
     """
-    try:
-        real_interpreter = _resolve_interpreter(interpreter, env)
-        interpreter_sha = _content_sha256(real_interpreter)
-        runner_sha = _content_sha256(runner_path)
-        model_text = env.get(model_env, "").strip()
-        if not model_text:
-            return None
-        model_sha = _content_sha256(_require_absolute_path(model_text, model_env))
-        refs_text = env.get(refs_env, "").strip()
-        refs_sha = (
-            _content_sha256(_require_absolute_path(refs_text, refs_env)) if refs_text else None
-        )
-        versions = _interpreter_package_versions(real_interpreter, env)
-    except DomainError:
+    components = mlip_runtime_components(
+        interpreter=interpreter,
+        runner_path=runner_path,
+        env=env,
+        model_env=model_env,
+        refs_env=refs_env,
+    )
+    if components is None:
         return None
-    payload = {
-        "kind": _MLIP_IDENTITY_KIND,
-        "interpreter_sha256": interpreter_sha,
-        "runner_sha256": runner_sha,
-        "model_sha256": model_sha,
-        "refs_sha256": refs_sha,
-        "packages": versions,
-    }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+    return mlip_identity_of_payload(components["payload"])
 
 
 def unresolved_runtime_identity() -> str:
