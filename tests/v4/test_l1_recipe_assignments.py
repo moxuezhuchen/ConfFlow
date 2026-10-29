@@ -208,8 +208,10 @@ def test_b1_contract_boundary_bytes_unchanged() -> None:
     # ConfGen search.arrangement default keep→search: contract digest updated, boundary fixed.
     # ConfGen adds optional search.restraint_force_constant/max_donor_stretch:
     # contract digest updated, boundary fixed.
+    # MLIP contract mlip.v1→v2 (outputs keep authoritative topology, energies carry provenance):
+    # contract digest updated, boundary fixed.
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(env)).hexdigest() == (
-        "sha256:f7ca6bc5c0382a10b7bb700e1edab5cb53946da7e2f70e71ce36dce0cb2aa908"
+        "sha256:0eb15645b9660f6a3671bbe90f3c79c23d0d26e49716b4631df618c4db2b873d"
     )
     assert "sha256:" + hashlib.sha256(canonical_json_bytes(bdoc)).hexdigest() == (
         "sha256:ff7491007ffd37e4e688e9dd1c73aba5301ccd699f9610d060bd2029cf370f27"

@@ -228,6 +228,31 @@ class StepExecutionRequest:
             object.__setattr__(self, "native_env", FrozenDict(self.native_env))
 
 
+def _require_environment_only_change(
+    stored: ReuseInputs | None,
+    current: ReuseInputs,
+    *,
+    artifacts_verified: bool,
+) -> None:
+    """Fail closed unless the environment is the only axis that moved.
+
+    ``evaluate_reuse`` reports the environment alone only when every other axis
+    matches.  This second check runs before any registration is advanced, so a
+    regression in the decision layer cannot overwrite a definition or input change.
+    """
+    if (
+        stored is None
+        or stored.work_item_digest != current.work_item_digest
+        or stored.step_semantic_digest != current.step_semantic_digest
+        or stored.producer_provenance != current.producer_provenance
+        or stored.artifact_checksums != current.artifact_checksums
+        or not artifacts_verified
+    ):
+        raise PersistenceError(
+            "environment is not the only changed axis; refusing to advance the registration"
+        )
+
+
 class BatchStepExecutor:
     """Schedule one step's work items and assemble its step result.
 
@@ -915,6 +940,11 @@ class BatchStepExecutor:
                 refresh = getattr(store, "refresh_for_new_environment", None)
                 if not callable(refresh):
                     raise PersistenceError("store cannot advance environment generation")
+                _require_environment_only_change(
+                    stored_inputs,
+                    current_inputs,
+                    artifacts_verified=artifacts_verified,
+                )
                 if stored_status is StoredWorkItemStatus.RUNNING:
                     store.mark_interrupted(
                         item.id,

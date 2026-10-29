@@ -214,3 +214,41 @@ def test_confgen_executor_refuses_bare_xtb_name_before_launch(tmp_path: Path) ->
     out, _item = _run(_native(), _driving_metal(), Path("xtb"), tmp_path)
     assert out.status.value == "failed"
     assert "absolute xTB executable path" in out.diagnostics[0].message
+
+
+def test_bare_name_allow_list_completes_with_binding_path_executable(
+    tmp_path: Path, toy_text: str, two_xtb: dict[str, Any]
+) -> None:
+    # configured name "xtb" matches the name rule; the launch is the file the binding PATH resolves
+    document = _document(two_xtb, allowed=Path("xtb"))
+    report = _run(document, tmp_path / "run", toy_text)
+    assert report.status == "completed"
+    launches = _launches(two_xtb["record"])
+    assert launches
+    assert set(launches) == {os.path.realpath(two_xtb["b"])}
+
+
+def test_resolved_absolute_allow_list_completes(
+    tmp_path: Path, toy_text: str, two_xtb: dict[str, Any]
+) -> None:
+    # the allow list names the file the binding PATH resolves to, as an absolute path
+    document = _document(two_xtb, allowed=two_xtb["b"])
+    report = _run(document, tmp_path / "run", toy_text)
+    assert report.status == "completed"
+    launches = _launches(two_xtb["record"])
+    assert launches
+    assert set(launches) == {os.path.realpath(two_xtb["b"])}
+
+
+def test_other_absolute_allow_list_refuses_without_launch(
+    tmp_path: Path, toy_text: str, two_xtb: dict[str, Any]
+) -> None:
+    # only a/xtb is allowed (absolute), the binding PATH resolves to b/xtb: refused, no launch
+    document = _document(two_xtb, allowed=two_xtb["a"])
+    try:
+        report = _run(document, tmp_path / "run", toy_text)
+    except DomainError as exc:
+        assert "not allowed by allowed_executables" in str(exc)
+    else:
+        assert report.status != "completed"
+    assert _launches(two_xtb["record"]) == []

@@ -716,7 +716,7 @@ def _default_executors() -> tuple[ExecutorContract, ...]:
         ),
         ExecutorContract(
             capability=ExecutorCapability.MLIP,
-            contract_version="confflow.contract.executor.mlip.v1",
+            contract_version="confflow.contract.executor.mlip.v2",
             input_ports=(
                 _structure_port(
                     "structure",

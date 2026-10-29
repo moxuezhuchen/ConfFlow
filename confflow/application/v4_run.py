@@ -970,6 +970,8 @@ class V4RunApplication:
                 from ..execution.binding_resolution import effective_native_env
 
                 native_env = FrozenDict(effective_native_env(binding, inherit=os.environ))
+            # F3: the configured name survives the resolution below, for name-rule matching
+            configured_executable = binding.executable if binding is not None else None
             if binding is not None and planned.executor is ExecutorCapability.CONFGEN:
                 # N2: the single effective environment resolves xTB once; the policy check,
                 # the content measurement and the job all use that absolute file
@@ -1010,9 +1012,11 @@ class V4RunApplication:
 
                 # scripts check their interpreter in the executor; MLIP was checked above
                 is_script = planned.executor in _EXECUTION_BINDING_CAPABILITIES
+                # F3: the name rule sees the configured name; the absolute rule sees the one
+                # resolved file (the same file measured and launched)
                 enforce_execution_policy(
                     binding,
-                    executable=None if is_script else binding.executable,
+                    executable=None if is_script else configured_executable,
                     resolved_executable=(
                         None
                         if is_script or not binding.executable

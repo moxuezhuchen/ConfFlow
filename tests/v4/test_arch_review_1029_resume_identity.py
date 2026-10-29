@@ -14,6 +14,8 @@ executor are real.
 from __future__ import annotations
 
 import dataclasses
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -21,14 +23,19 @@ import pytest
 
 from confflow.domain import FrozenDict
 from confflow.domain.completion import WorkItemStatus
+from confflow.execution import batch as batch_module
 from confflow.execution.batch import BatchStepExecutor
 from confflow.execution.process import NativeProcessSupervisor
 from confflow.persistence.contracts import (
     OwnerIdentity,
+    OwnerVerdict,
     PersistenceError,
+    ReuseCode,
+    ReuseDecision,
     StoredWorkItemStatus,
     store_path,
 )
+from confflow.persistence.reuse import ReuseInputs, evaluate_reuse
 from confflow.persistence.work_items import SqliteWorkItemStore
 from tests.v4._helpers import v43_coverage as h
 
@@ -115,6 +122,27 @@ def _seed(root: Path, case: _Case, state: str, **overrides: Any) -> None:
         )
         if state == "interrupted":
             store.mark_interrupted(case.item.id, reason="seeded interruption")
+
+
+def _seed_stored(root: Path, case: _Case, state: str, **overrides: Any) -> None:
+    """Create *state* with stored axes *overrides* without the batch comparison.
+
+    Terminal rows are written through the store API (claim, then record the
+    finished result), because executing them would compare the overridden
+    axes against the live request and refuse before the test starts.
+    """
+    if not overrides or state not in ("completed", "failed"):
+        _seed(root, case, state, **overrides)
+        return
+    outcome = WorkItemStatus.COMPLETED if state == "completed" else WorkItemStatus.FAILED
+    with SqliteWorkItemStore.open(store_path(case.run_root, case.item.step_id)) as store:
+        _register(store, case, **overrides)
+        assert store.claim(case.item.id, owner=OwnerIdentity(owner_token="seed-A", pid=os.getpid()))
+        finished = dataclasses.replace(
+            h._result(case.item, status=outcome),
+            metadata=FrozenDict({"actual_environment": ENV_A}),
+        )
+        store.record_finished(finished, environment_digest=case.req_a.environment.digest())
 
 
 def _execute(
@@ -258,3 +286,203 @@ def test_refresh_rejects_running_item(tmp_path: Path) -> None:
                 environment_digest=case.req_b.environment.digest(),
                 producer_provenance=registered["producer_provenance"],
             )
+
+
+# ---------------------------------------------------------------------------
+# F1: environment plus another axis is refused, never advanced
+# ---------------------------------------------------------------------------
+
+_STORED_OVERRIDE: dict[str, dict[str, Any]] = {
+    "definition": {"step_semantic_digest": "sha256:" + "5" * 64},
+    "input": {"work_item_digest": "sha256:" + "6" * 64},
+}
+_REFUSAL_CODE: dict[str, str] = {
+    "definition": "invalidate_definition",
+    "input": "invalidate_input",
+    "artifact": "invalidate_artifact",
+}
+#: Artifact verification runs only for COMPLETED rows, so the artifact axis is
+#: exercised there; the other statuses are covered at the decision level below.
+COMBINED_CASES = [(state, axis) for state in STATES for axis in ("input", "definition")] + [
+    ("completed", "artifact")
+]
+
+
+@pytest.mark.parametrize(("state", "axis"), COMBINED_CASES)
+def test_environment_plus_other_axis_is_refused_like_that_axis_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str, axis: str
+) -> None:
+    case = _case(tmp_path)
+    _seed_stored(tmp_path, case, state, **_STORED_OVERRIDE.get(axis, {}))
+    if axis == "artifact":
+        monkeypatch.setattr(
+            BatchStepExecutor, "_verify_stored_artifacts", staticmethod(lambda *_: False)
+        )
+    before = _state(case)
+
+    recorder = _Recorder()
+    with pytest.raises(PersistenceError, match=f"failed:{_REFUSAL_CODE[axis]}"):
+        _run(case, case.req_b, recorder, "resume-B")
+
+    assert recorder.calls == []
+    assert _state(case) == before
+
+
+@pytest.mark.parametrize("state", STATES)
+def test_environment_refresh_fails_closed_when_other_axis_differs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
+) -> None:
+    """Defensive guard: a reuse verdict of environment-only is re-checked before any advance."""
+    case = _case(tmp_path)
+    _seed_stored(tmp_path, case, state, **_STORED_OVERRIDE["input"])
+    before = _state(case)
+
+    def forced_environment_only(**kwargs: Any) -> ReuseDecision:
+        return ReuseDecision(
+            decision=ReuseCode.INVALIDATE_ENVIRONMENT,
+            reason="forced environment-only verdict",
+            work_item_id=kwargs["work_item_id"],
+        )
+
+    monkeypatch.setattr(batch_module, "evaluate_reuse", forced_environment_only)
+    recorder = _Recorder()
+    with pytest.raises(PersistenceError, match="failed:invalidate_environment"):
+        _run(case, case.req_b, recorder, "resume-B")
+
+    assert recorder.calls == []
+    assert _state(case) == before
+
+
+def _reuse_inputs(environment: str, **overrides: Any) -> Any:
+    axes: dict[str, Any] = {
+        "work_item_digest": "sha256:" + "a" * 64,
+        "step_semantic_digest": "sha256:" + "b" * 64,
+        "environment_digest": environment,
+        "producer_provenance": FrozenDict({"adapter_version": "adapter.v1"}),
+        "artifact_checksums": (),
+    }
+    axes.update(overrides)
+    return ReuseInputs(**axes)
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        StoredWorkItemStatus.PENDING,
+        StoredWorkItemStatus.RUNNING,
+        StoredWorkItemStatus.COMPLETED,
+        StoredWorkItemStatus.FAILED,
+        StoredWorkItemStatus.INTERRUPTED,
+    ],
+)
+@pytest.mark.parametrize(
+    ("other", "expected"),
+    [
+        ({"work_item_digest": "sha256:" + "c" * 64}, "invalidate_input"),
+        ({"step_semantic_digest": "sha256:" + "c" * 64}, "invalidate_definition"),
+        ({"artifact_checksums": ("sha256:" + "c" * 64,)}, "invalidate_artifact"),
+    ],
+)
+def test_decision_reports_other_axis_when_environment_also_changed(
+    status: StoredWorkItemStatus, other: dict[str, Any], expected: str
+) -> None:
+    stored = _reuse_inputs("sha256:" + "1" * 64)
+    current = _reuse_inputs("sha256:" + "2" * 64, **other)
+    decision = evaluate_reuse(
+        current=current,
+        stored=stored,
+        stored_status=status,
+        owner_verdict=OwnerVerdict.DEFINITELY_DEAD,
+        work_item_id="wi:f1",
+    )
+    assert decision.decision.value == expected
+    assert decision.details["environment_also_changed"] is True
+    assert decision.decision is not ReuseCode.INVALIDATE_ENVIRONMENT
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        StoredWorkItemStatus.PENDING,
+        StoredWorkItemStatus.RUNNING,
+        StoredWorkItemStatus.COMPLETED,
+        StoredWorkItemStatus.FAILED,
+        StoredWorkItemStatus.INTERRUPTED,
+    ],
+)
+def test_decision_environment_plus_unverified_artifacts_is_refused(
+    status: StoredWorkItemStatus,
+) -> None:
+    decision = evaluate_reuse(
+        current=_reuse_inputs("sha256:" + "2" * 64),
+        stored=_reuse_inputs("sha256:" + "1" * 64),
+        stored_status=status,
+        owner_verdict=OwnerVerdict.DEFINITELY_DEAD,
+        artifacts_verified=False,
+        work_item_id="wi:f1",
+    )
+    if status is StoredWorkItemStatus.PENDING or status is StoredWorkItemStatus.RUNNING:
+        # PENDING and RUNNING never verify artifacts; the environment advance applies.
+        assert decision.decision is ReuseCode.INVALIDATE_ENVIRONMENT
+    else:
+        assert decision.decision is ReuseCode.INVALIDATE_ARTIFACT
+        assert decision.details["environment_also_changed"] is True
+
+
+def test_environment_only_change_still_reports_environment() -> None:
+    decision = evaluate_reuse(
+        current=_reuse_inputs("sha256:" + "2" * 64),
+        stored=_reuse_inputs("sha256:" + "1" * 64),
+        stored_status=StoredWorkItemStatus.COMPLETED,
+        work_item_id="wi:f1",
+    )
+    assert decision.decision is ReuseCode.INVALIDATE_ENVIRONMENT
+    assert "environment_also_changed" not in decision.details
+
+
+def test_script_then_mlip_environment_and_input_change_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Application workflow: script output feeds MLIP; both environment and input move."""
+    from tests.v4 import test_arch_review_launch_identity as launch
+
+    monkeypatch.setenv("CONFFLOW_SERVER_CONFIG", str(tmp_path / "server.toml"))
+    monkeypatch.setenv("CONFFLOW_SERVER_STATE_DIR", str(tmp_path / "quota-state"))
+    monkeypatch.setenv("REVIEW_LAUNCH_X", "1")
+    launch._register_script(tmp_path, tmp_path / "script-launches.log")
+    launch._install_mlip_runner(monkeypatch, tmp_path)
+    model = tmp_path / "model.pt"
+    model.write_text("-5\n", encoding="utf-8")
+    document = launch._script_doc()
+    mlip = launch._mlip_doc(model, sys.executable)["steps"][0]
+    mlip["bindings"]["structure"]["source"] = {"step": "s", "port": "structures"}
+    document["steps"].append(mlip)
+    run_root = tmp_path / "run"
+    first = launch._run_script(run_root, document)
+    assert first.status == "completed"
+
+    item_id = "wi:uma:all"
+    path = store_path(str(run_root), "uma")
+    with SqliteWorkItemStore.open(path) as store:
+        before = store.get_registered(item_id)
+        store.refresh_for_new_environment(
+            item_id,
+            work_item_digest=before["work_item_digest"],
+            step_semantic_digest=before["step_semantic_digest"],
+            environment_digest=before["environment_digest"],
+            producer_provenance=before["producer_provenance"],
+            reason="seed a crashed attempt",
+        )
+        assert store.claim(item_id, owner=OwnerIdentity(owner_token="ghost", pid=DEAD_OWNER_PID))
+        attempts_before = store.get_attempts(item_id)
+
+    monkeypatch.setenv("REVIEW_LAUNCH_X", "2")
+    with pytest.raises(PersistenceError, match="failed:invalidate_input"):
+        launch._run_script(run_root, document)
+
+    with SqliteWorkItemStore.open(path) as store:
+        after = store.get_registered(item_id)
+        assert store.get_attempts(item_id) == attempts_before
+    assert after["environment_digest"] == before["environment_digest"]
+    assert after["work_item_digest"] == before["work_item_digest"]
+    assert after["producer_provenance"] == before["producer_provenance"]
