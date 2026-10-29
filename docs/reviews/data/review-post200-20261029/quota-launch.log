@@ -1,0 +1,56 @@
+{
+  "root": "/tmp/post200-quota-probe.znc45s8z",
+  "mlip": {
+    "queued": {
+      "status": "completed",
+      "energies": [
+        -10.0
+      ],
+      "codes": [
+        "mlip_completed"
+      ],
+      "errors": []
+    },
+    "resumed": {
+      "status": "completed",
+      "energies": [
+        -10.0
+      ],
+      "codes": [
+        "mlip_completed",
+        "reuse_hit"
+      ],
+      "errors": []
+    },
+    "fresh": {
+      "status": "completed",
+      "energies": [
+        -5.0
+      ],
+      "codes": [
+        "mlip_completed"
+      ],
+      "errors": []
+    },
+    "launches": [
+      "B",
+      "A"
+    ]
+  },
+  "native": {
+    "queued": {
+      "status": "completed",
+      "energies": [
+        -76.4601112223
+      ],
+      "codes": [
+        "native_termination"
+      ],
+      "errors": []
+    },
+    "launches": [
+      "B"
+    ]
+  },
+  "remaining_leases": {}
+}

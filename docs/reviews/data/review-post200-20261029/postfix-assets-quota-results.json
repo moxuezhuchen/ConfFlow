@@ -1,0 +1,77 @@
+{
+  "root": "/tmp/post200-assets-probe.8inthtpf",
+  "model": {
+    "queued": {
+      "status": "completed",
+      "energies": [
+        -10.0
+      ],
+      "codes": [
+        "mlip_completed"
+      ],
+      "errors": []
+    },
+    "resumed": {
+      "status": "completed",
+      "energies": [
+        -10.0
+      ],
+      "codes": [
+        "mlip_completed",
+        "reuse_hit"
+      ],
+      "errors": []
+    },
+    "fresh": {
+      "status": "completed",
+      "energies": [
+        -5.0
+      ],
+      "codes": [
+        "mlip_completed"
+      ],
+      "errors": []
+    },
+    "actual_model_sha256": "c171d4ec282b23db89a99880cd624e9ba2940c1d894783602edab5d7481dc1ea",
+    "launches": [
+      "-10.0",
+      "-5.0"
+    ]
+  },
+  "script": {
+    "queued": {
+      "status": "failed",
+      "energies": [],
+      "codes": [
+        "script_failed"
+      ],
+      "errors": [
+        "script 'echo' interpreter '/tmp/post200-assets-probe.8inthtpf/step-bin/review-python' does not match the registered interpreter (registered sha256 a682c761d427eec10b9308c34f6a522c7f4ebae971e152bf8fffa1037a631e38, launch sha256 f325c7f089ca858a32d171aaf897a686ebfe4e169638ed2c6d2cd2e6541e6d11); align the step PATH with the registration"
+      ],
+      "z": null
+    },
+    "resumed": {
+      "status": "completed",
+      "energies": [],
+      "codes": [
+        "script_completed"
+      ],
+      "errors": [],
+      "z": 1.0
+    },
+    "fresh": {
+      "status": "completed",
+      "energies": [],
+      "codes": [
+        "script_completed"
+      ],
+      "errors": [],
+      "z": 1.0
+    },
+    "launches": [
+      "run",
+      "run"
+    ]
+  },
+  "remaining_leases": {}
+}

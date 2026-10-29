@@ -1,0 +1,76 @@
+{
+  "root": "/tmp/post200-assets-probe.b97kwmjy",
+  "model": {
+    "queued": {
+      "status": "completed",
+      "energies": [
+        -10.0
+      ],
+      "codes": [
+        "mlip_completed"
+      ],
+      "errors": []
+    },
+    "resumed": {
+      "status": "completed",
+      "energies": [
+        -10.0
+      ],
+      "codes": [
+        "mlip_completed",
+        "reuse_hit"
+      ],
+      "errors": []
+    },
+    "fresh": {
+      "status": "completed",
+      "energies": [
+        -5.0
+      ],
+      "codes": [
+        "mlip_completed"
+      ],
+      "errors": []
+    },
+    "actual_model_sha256": "c171d4ec282b23db89a99880cd624e9ba2940c1d894783602edab5d7481dc1ea",
+    "launches": [
+      "-10.0",
+      "-5.0"
+    ]
+  },
+  "script": {
+    "queued": {
+      "status": "completed",
+      "energies": [],
+      "codes": [
+        "script_completed"
+      ],
+      "errors": [],
+      "z": 2.0
+    },
+    "resumed": {
+      "status": "completed",
+      "energies": [],
+      "codes": [
+        "script_completed",
+        "reuse_hit"
+      ],
+      "errors": [],
+      "z": 2.0
+    },
+    "fresh": {
+      "status": "completed",
+      "energies": [],
+      "codes": [
+        "script_completed"
+      ],
+      "errors": [],
+      "z": 1.0
+    },
+    "launches": [
+      "run",
+      "run"
+    ]
+  },
+  "remaining_leases": {}
+}

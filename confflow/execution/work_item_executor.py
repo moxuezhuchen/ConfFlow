@@ -290,6 +290,8 @@ class ItemExecutionContext:
     #: The step's one command resolution (configured name and absolute file).  Policy and
     #: launch use it and never search PATH again; ``None`` resolves once at the item's entry.
     resolved_command: ResolvedCommand | None = None
+    #: MLIP launch inputs measured by the application; the launch is checked against them.
+    expected_mlip_runtime: FrozenDict | None = None
 
     def item_directory(self, logical_key: str) -> str:
         """Return the deterministic work directory for a logical key."""
@@ -672,6 +674,12 @@ class WorkItemExecutor:
                 monotonic_start,
                 diagnostics=tuple(diagnostics),
             )
+
+        def _verify_program() -> None:
+            # Final file check once the quota lease is held: the program measured at entry.
+            if command is not None:
+                verify_launch_unchanged(command)
+
         try:
             launched = self._launch_and_wait(
                 supervisor,
@@ -679,6 +687,7 @@ class WorkItemExecutor:
                 context.poll_interval_seconds,
                 should_cancel=should_cancel,
                 quota=(work_item.resources, context.run_root, work_item.id),
+                before_submit=_verify_program,
             )
         except QuotaError as exc:
             if isinstance(exc, QuotaCancelled):
@@ -696,6 +705,17 @@ class WorkItemExecutor:
                 work_item,
                 context,
                 "quota_exceeded",
+                str(exc),
+                wall_start,
+                monotonic_start,
+                diagnostics=tuple(diagnostics),
+            )
+        except DomainError as exc:
+            # The program changed while the item waited for quota; nothing was started.
+            return self._finish_error(
+                work_item,
+                context,
+                NativeErrorCode.ENVIRONMENT_ERROR,
                 str(exc),
                 wall_start,
                 monotonic_start,

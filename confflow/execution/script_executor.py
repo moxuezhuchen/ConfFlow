@@ -139,11 +139,18 @@ def _sha256_of_file(path: str) -> str:
         raise DomainError(f"registered script {path!r} is unreadable before launch: {exc}") from exc
 
 
-def _verify_at_launch(script_id: str, entry: ScriptEntry, expected: FrozenDict | None) -> None:
+def _verify_at_launch(
+    script_id: str,
+    entry: ScriptEntry,
+    expected: FrozenDict | None,
+    launched_interpreter: str | None,
+) -> None:
     """Run the final identity check after the quota lease is held and before submit.
 
     The live registration must still match the identity the workflow was compiled
     against, and the script file must still hash to the digest of the loaded entry.
+    *launched_interpreter* is the interpreter file of a multi-element command (None when
+    the script is itself the interpreter); it must still have the registered content.
     Raises :class:`DomainError` on any mismatch.
     """
     if expected is not None:
@@ -158,6 +165,8 @@ def _verify_at_launch(script_id: str, entry: ScriptEntry, expected: FrozenDict |
             )
     if _sha256_of_file(entry.script_path) != entry.sha256:
         raise DomainError(f"script {script_id!r} file changed between registry load and launch")
+    if launched_interpreter is not None:
+        verify_interpreter_identity(entry, launched_interpreter)
 
 
 def _resolved_script_command(entry: ScriptEntry) -> tuple[str, ...]:
@@ -336,7 +345,10 @@ class ScriptExecutor:
             should_cancel=should_cancel,
             quota=(work_item.resources, str(context.run_root), work_item.id),
             before_submit=lambda: _verify_at_launch(
-                script_id, entry, context.expected_script_identity
+                script_id,
+                entry,
+                context.expected_script_identity,
+                interpreter if len(resolved) > 1 else None,
             ),
         )
         provenance = {

@@ -299,28 +299,57 @@ def _enforce_mlip_interpreter_policy(
     return resolved
 
 
-def _mlip_runtime_digest(
-    binding: Any, native_env: Mapping[str, str] | None, interpreter: str
-) -> str:
-    """Return the pre-run identity of an MLIP launch from its exact launch environment.
+def _mlip_runtime_components(
+    native_env: Mapping[str, str] | None, interpreter: str
+) -> dict[str, Any] | None:
+    """Measure one MLIP launch from its exact launch environment; ``None`` when unresolvable.
 
-    Interpreter, runner source, model file, refs file and MLIP package versions
-    are measured before any reuse decision.  An unmeasurable launch receives a
-    fresh nonce, so it never equals a stored identity and the executor fails it
-    as it does today.  Callers enforce the execution policy first: this function
-    starts the interpreter's version probe.
+    Interpreter, runner source, model file, refs file and MLIP package versions are
+    measured here, before any reuse decision, and only here: the identity digest and the
+    expected launch inputs both come from this one measurement.  Callers enforce the
+    execution policy first: this starts the interpreter's version probe.
     """
     from ..execution import mlip_executor
-    from ..execution.environment import mlip_runtime_identity, unresolved_runtime_identity
+    from ..execution.environment import mlip_runtime_components
 
-    digest = mlip_runtime_identity(
+    return mlip_runtime_components(
         interpreter=interpreter,
         runner_path=str(mlip_executor.RUNNER_PATH),
         env=native_env or {},
         model_env=mlip_executor.MODEL_ENV,
         refs_env=mlip_executor.REFS_ENV,
     )
-    return digest if digest is not None else unresolved_runtime_identity()
+
+
+def _mlip_runtime_digest(components: Mapping[str, Any] | None) -> str:
+    """Return the pre-run identity of an MLIP launch from its measured components.
+
+    An unmeasurable launch (``components`` is None) receives a fresh nonce, so it never equals
+    a stored identity and the executor fails it as it does today.
+    """
+    from ..execution.environment import mlip_identity_of_payload, unresolved_runtime_identity
+
+    if components is None:
+        return unresolved_runtime_identity()
+    return mlip_identity_of_payload(components["payload"])
+
+
+def _mlip_expected_runtime(components: Mapping[str, Any] | None) -> FrozenDict | None:
+    """Return the measured MLIP launch inputs that the executor and the runner check before launch."""
+    if components is None:
+        return None
+    payload = components["payload"]
+    paths = components["paths"]
+    return FrozenDict(
+        {
+            "interpreter_sha256": payload["interpreter_sha256"],
+            "runner_sha256": payload["runner_sha256"],
+            "model_sha256": payload["model_sha256"],
+            "refs_sha256": payload["refs_sha256"],
+            "model_path": paths["model_path"],
+            "refs_path": paths["refs_path"],
+        }
+    )
 
 
 def _declared_input_grouping(document: Any) -> dict[str, str]:
@@ -936,6 +965,7 @@ class V4RunApplication:
         # here with the registry error.
         executor = registry.executor_implementation(planned.executor)()
         program = planned.scientific.program
+        mlip_components: dict[str, Any] | None = None  # set only by the pure MLIP branch
         if contract.requires_adapter:
             if not program:
                 raise DomainError(
@@ -1050,7 +1080,9 @@ class V4RunApplication:
                     if resolved_command is not None
                     else _mlip_interpreter(binding)
                 )
-                executable_digest = _mlip_runtime_digest(binding, native_env, interpreter)
+                # one measurement: the digest and the expected launch inputs share it
+                mlip_components = _mlip_runtime_components(native_env, interpreter)
+                executable_digest = _mlip_runtime_digest(mlip_components)
             environment = build_pure_environment(
                 implementation=implementation,
                 implementation_version=contract.contract_version,
@@ -1120,6 +1152,7 @@ class V4RunApplication:
             ownership_guard=_ownership_guard,
             generation_id=generation_id,
             resolved_command=resolved_command,
+            expected_mlip_runtime=_mlip_expected_runtime(mlip_components),
         )
         with SqliteWorkItemStore.open(store_path(run_root, planned.step_id)) as store:
             return batch.execute_step_resumable(
