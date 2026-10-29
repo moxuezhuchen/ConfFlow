@@ -20,7 +20,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import shutil
 import threading
 import time
 from collections.abc import Callable
@@ -42,9 +41,13 @@ from ..domain.work_item import (
     WorkItemResult,
 )
 from .checks import CHECK_DEFAULTS, CheckContext, ScientificCheck
+from .command_resolution import (
+    enforce_command_policy,
+    launch_environment,
+    locate_command,
+)
 from .contracts import ExecutionBinding
 from .execution_adapters import DRIVING_STRUCTURE_PORT
-from .execution_policy import enforce_execution_policy
 from .native import (
     CancelOutcome,
     GeometryOutput,
@@ -1112,50 +1115,57 @@ class WorkItemExecutor:
     def _enforce_policy(self, context: ItemExecutionContext, item_dir: str) -> None:
         """Enforce the binding's allow-list and sandbox for one item launch.
 
-        Called before any item file is written: the program is then only looked
-        up on PATH (never raising for a missing program) so that a forbidden
-        program is rejected even when it does not exist.  A no-op without a
-        binding.
+        Called before any item file is written: the program is resolved once on the step's
+        launch environment and checked by its configured name and its resolved file.  A
+        program that does not resolve is not an error here (it fails in
+        :meth:`_resolve_executable`), so a forbidden program is rejected even when it is
+        missing.  A no-op without a binding.
         """
         binding = context.execution_binding
         if binding is None:
             return
         candidate = self._policy_candidate(context)
-        enforce_execution_policy(
+        if candidate is None:
+            enforce_command_policy(
+                binding,
+                configured="",
+                resolved=None,
+                write_paths=(item_dir,),
+                label=f"step {context.step_id!r} executable",
+            )
+            return
+        enforce_command_policy(
             binding,
-            executable=candidate,
-            resolved_executable=shutil.which(candidate) if candidate else None,
+            configured=candidate,
+            resolved=locate_command(candidate, launch_environment(context.native_env, binding)),
             write_paths=(item_dir,),
             label=f"step {context.step_id!r} executable",
         )
 
     def _resolve_executable(self, context: ItemExecutionContext, item_dir: str = "") -> str:
+        """Return the one absolute file to launch, resolved on the step's launch environment."""
         binding = context.execution_binding
         candidate = self._policy_candidate(context)
         if candidate is None:
             raise DomainError("no executable configured for this step")
-        if os.path.isabs(candidate):
-            if not os.path.isfile(candidate):
+        resolved = locate_command(candidate, launch_environment(context.native_env, binding))
+        if resolved is None:
+            if os.path.isabs(candidate):
                 raise DomainError(f"executable not found: {candidate!r}")
-            resolved = candidate
-        else:
-            found = shutil.which(candidate)
-            if found is None:
-                raise DomainError(
-                    f"executable {candidate!r} was not found on PATH and no "
-                    "execution binding provides an absolute path"
-                )
-            resolved = found
+            raise DomainError(
+                f"executable {candidate!r} was not found on PATH and no "
+                "execution binding provides an absolute path"
+            )
         if binding is not None:
             # the resolved program and the item directory are checked before any launch
-            enforce_execution_policy(
+            enforce_command_policy(
                 binding,
-                executable=candidate,
-                resolved_executable=resolved,
+                configured=candidate,
+                resolved=resolved,
                 write_paths=(item_dir,) if item_dir else (),
                 label=f"step {context.step_id!r} executable",
             )
-        return resolved
+        return resolved.absolute
 
     def _stage_checkpoints(
         self, work_item: WorkItem, context: ItemExecutionContext, item_dir: str

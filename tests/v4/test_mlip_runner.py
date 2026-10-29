@@ -251,15 +251,16 @@ def test_relax_error_row_keeps_optimizer(tmp_path: Path) -> None:
     assert row["optimizer"] == "precon_lbfgs" and row["converged"] is None
 
 
-def test_backend_load_failure_gives_error_rows(tmp_path: Path) -> None:
+def test_backend_load_failure_is_task_level_failure(tmp_path: Path) -> None:
     def broken(_job: dict[str, Any]) -> Any:
         raise OSError("no such model")
 
     rc = mr.run_job(make_job(structs(("a", None, 1.0), ("b", None, 2.0))), str(tmp_path), broken)
-    assert rc == 0
-    got = rows(tmp_path)
-    assert len(got) == 2
-    assert all("backend failed to load: OSError: no such model" in r["error"] for r in got)
+    assert rc == mr.BACKEND_EXIT_CODE
+    assert rows(tmp_path) == []
+    info = done(tmp_path)
+    assert info["status"] == "backend_failed"
+    assert "OSError: no such model" in info["backend_error"]
     assert "start" in (tmp_path / mr.LOG).read_text(encoding="utf-8")
 
 
@@ -282,13 +283,16 @@ def test_pool_workers_schedule_all_structures(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif("fork" not in mp.get_all_start_methods(), reason="needs fork start method")
-def test_pool_load_failure_gives_error_rows(tmp_path: Path) -> None:
+def test_pool_load_failure_is_task_level_failure(tmp_path: Path) -> None:
     def broken(_job: dict[str, Any]) -> Any:
         raise RuntimeError("cuda missing")
 
     job = make_job(structs(("a", None, 1.0), ("b", None, 2.0)), workers=2)
-    assert mr.run_job(job, str(tmp_path), broken) == 0
-    assert all("cuda missing" in r["error"] for r in rows(tmp_path))
+    assert mr.run_job(job, str(tmp_path), broken) == mr.BACKEND_EXIT_CODE
+    assert rows(tmp_path) == []
+    info = done(tmp_path)
+    assert info["status"] == "backend_failed"
+    assert "cuda missing" in info["backend_error"]
 
 
 def test_sha256_and_package_version(tmp_path: Path) -> None:

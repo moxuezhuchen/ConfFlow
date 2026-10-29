@@ -30,10 +30,9 @@ from ..domain.errors import DomainError
 from ..domain.result import Provenance, ResultSet, ScientificResult, make_result_id
 from ..domain.structure import StructureRecord, StructureSet
 from ..domain.units import Unit
-from ..domain.work_item import RecoveryInfo, Timing, WorkItem, WorkItemResult
+from ..domain.work_item import RecoveryInfo, ResultError, Timing, WorkItem, WorkItemResult
 from ..science.topology import resolve_and_persist_kwargs
-from .binding_resolution import effective_native_env
-from .execution_policy import enforce_execution_policy
+from .command_resolution import launch_environment, resolve_and_enforce_command
 from .mlip_analysis import (
     MlipOutput,
     calibration,
@@ -78,6 +77,10 @@ _STDERR_TAIL_CHARS = 4000
 _JOB_NAME = "job.json"
 _RESULTS_NAME = "mlip_results.jsonl"
 _DONE_NAME = "mlip_done.json"
+#: Runner exit status and done-file status of a job whose backend failed to load (see
+#: ``mlip_runner.BACKEND_EXIT_CODE`` / ``BACKEND_FAILED``; a test keeps them equal).
+_BACKEND_EXIT_CODE = 75
+_BACKEND_FAILED = "backend_failed"
 _LOG_NAME = "mlip_runner.log"
 _XYZ_NAME = "mlip_structures.xyz"
 _ARTIFACT_FILES = (
@@ -87,6 +90,9 @@ _ARTIFACT_FILES = (
     ("mlip_log", _LOG_NAME),
     ("mlip_structures", _XYZ_NAME),
 )
+#: Failure codes: a task-level backend failure, and a run where no structure survived errors.
+BACKEND_FAILURE_CODE = "mlip_backend_failed"
+ALL_ERRORED_CODE = "mlip_all_errored"
 
 
 @dataclass(frozen=True)
@@ -210,11 +216,16 @@ def _fix_pairs(
     return tuple(pairs)
 
 
+def _unresolved_interpreter_message(interpreter: str) -> str:
+    """Return the failure text for an MLIP interpreter that does not resolve."""
+    if os.path.isabs(interpreter):
+        return f"mlip interpreter not found: {interpreter!r}"
+    return f"mlip interpreter {interpreter!r} was not found on PATH"
+
+
 def _launch_env(context: ItemExecutionContext) -> dict[str, str]:
     """Effective environment: the bound native snapshot, else the binding over os.environ."""
-    if context.native_env is not None:
-        return dict(context.native_env)
-    return effective_native_env(context.execution_binding, inherit=os.environ)
+    return dict(launch_environment(context.native_env, context.execution_binding))
 
 
 def _runner_settings(
@@ -396,6 +407,20 @@ def _read_done(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _backend_error(done: Mapping[str, Any], exit_code: int | None) -> str | None:
+    """Reason of a backend failure recorded by the runner, or None when it reported none.
+
+    The done file and the exit status must agree; a marker with any other exit status is
+    still a failure, and the disagreement is named in the reason.
+    """
+    if done.get("status") != _BACKEND_FAILED:
+        return None
+    reason = str(done.get("backend_error") or "reason not recorded by the runner")
+    if exit_code == _BACKEND_EXIT_CODE:
+        return reason
+    return f"{reason} (runner exit code {exit_code} contradicts its backend_failed marker)"
+
+
 def _coords_of(row: Mapping[str, Any], count: int) -> list[list[float]]:
     """Validate and return a relax row's coordinates for *count* atoms."""
     coords = row.get("coords")
@@ -505,16 +530,19 @@ class MlipExecutor:
         keys = _stable_keys(records)
         ordered = sorted(records, key=lambda record: record.id)
         binding = context.execution_binding
-        executable = binding.executable if binding and binding.executable else "python3"
-        executable = self._resolve_executable(executable)
+        interpreter = binding.executable if binding and binding.executable else "python3"
         work_dir = context.attempt_dir(work_item)
-        enforce_execution_policy(
+        # The one resolution: the interpreter is resolved on the launch environment, the policy
+        # is checked before any file is written, and the launch names the resolved file.
+        resolved = resolve_and_enforce_command(
             binding,
-            executable=executable,
-            resolved_executable=executable,
-            write_paths=(work_dir,),
+            interpreter,
+            env,
             label="mlip interpreter",
+            write_paths=(work_dir,),
+            unresolved_message=_unresolved_interpreter_message(interpreter),
         )
+        executable = resolved.absolute
         if not RUNNER_PATH.is_file():
             raise DomainError(f"mlip runner source is missing: {RUNNER_PATH}")
         os.makedirs(work_dir, exist_ok=True)
@@ -594,6 +622,19 @@ class MlipExecutor:
                 monotonic_start,
                 f"mlip execution exceeded walltime of {walltime:g} seconds",
             )
+        backend_error = _backend_error(
+            _read_done(Path(work_dir) / _DONE_NAME), execution_result.exit_code
+        )
+        if backend_error is not None:
+            return self._failed(
+                work_item,
+                context,
+                wall_start,
+                monotonic_start,
+                code=BACKEND_FAILURE_CODE,
+                message=f"mlip model backend failed to load: {backend_error}",
+                retryable=True,
+            )
         if execution_result.exit_code != 0:
             tail = _stderr_tail(work_dir)
             return self._fail(
@@ -608,17 +649,6 @@ class MlipExecutor:
             work_item, context, wall_start, monotonic_start, plan, records, keys, work_dir, science
         )
 
-    @staticmethod
-    def _resolve_executable(executable: str) -> str:
-        if os.path.isabs(executable):
-            if not os.path.isfile(executable):
-                raise DomainError(f"mlip interpreter not found: {executable!r}")
-            return executable
-        resolved = shutil.which(executable)
-        if resolved is None:
-            raise DomainError(f"mlip interpreter {executable!r} was not found on PATH")
-        return resolved
-
     def _assemble(
         self,
         work_item: WorkItem,
@@ -631,6 +661,13 @@ class MlipExecutor:
         work_dir: str,
         science: _Science,
     ) -> WorkItemResult:
+        """Classify every input, then fail only when all were errors and none was filtered.
+
+        A structure is *dropped by error* (an error row, or a required row missing), *dropped
+        by a filter* (bond stretch, or not selected by ``pick``), or *kept*.  Filters are
+        legitimate; errors are not.  No kept output with at least one error and no filter is
+        a FAILED item; anything else is COMPLETED.
+        """
         rows = _read_rows(Path(work_dir) / _RESULTS_NAME)
         done = _read_done(Path(work_dir) / _DONE_NAME)
         stage = "sp" if plan.mode == "sp" else "relax"
@@ -638,6 +675,8 @@ class MlipExecutor:
         error_rows: list[dict[str, str]] = []
         dropped_error: list[str] = []
         dropped_stretch: list[str] = []
+        not_selected: list[str] = []
+        errored: set[str] = set()
         sp_count = 0
         for record in sorted(records, key=lambda item: item.id):
             key = keys[record.id]
@@ -650,25 +689,44 @@ class MlipExecutor:
                     error_rows.append(
                         {"id": record.id, "stage": row_stage, "error": str(row["error"])}
                     )
+                    errored.add(record.id)
             row = rows.get((key, stage))
             if row is None:
                 if plan.mode != "sp_then_relax":
                     dropped_error.append(record.id)
                     error_rows.append({"id": record.id, "stage": stage, "error": "no result row"})
+                    errored.add(record.id)
+                elif sp_row is None or sp_row.get("error"):
+                    errored.add(record.id)
+                else:
+                    not_selected.append(record.id)
                 continue
             if row.get("error"):
                 dropped_error.append(record.id)
+                errored.add(record.id)
                 continue
             try:
                 out = self._output(record, stage, row, sp_row, plan)
             except DomainError as exc:
                 dropped_error.append(record.id)
                 error_rows.append({"id": record.id, "stage": stage, "error": str(exc)})
+                errored.add(record.id)
                 continue
             if out is None:
                 dropped_stretch.append(record.id)
                 continue
             outputs.append(out)
+        failure = None
+        legitimately_filtered = bool(dropped_stretch or not_selected)
+        if not outputs and errored and not legitimately_filtered:
+            first = error_rows[0] if error_rows else None
+            where = (
+                f"; first error: {first['id']} {first['stage']}: {first['error']}" if first else ""
+            )
+            failure = (
+                f"all {len(records)} input structures failed with errors and none was "
+                f"filtered out; no structure was produced{where}"
+            )
         pairs, basis = _calibration_pairs(plan, records, keys, rows, outputs)
         return self._result(
             work_item,
@@ -686,7 +744,33 @@ class MlipExecutor:
             done,
             calibration(pairs, basis),
             science,
+            failure=failure,
         )
+
+    def stored_result_reusable(self, stored_result: WorkItemResult) -> bool:
+        """Whether a stored COMPLETED result may be reused (hook consulted by the batch executor).
+
+        A COMPLETED result without structures in which every input was dropped by an error was
+        written before an all-errored run became FAILED; it is refused so the item runs again.
+        Results whose emptiness comes from a legitimate filter stay reusable.
+        """
+        if len(stored_result.structures) > 0:
+            return True
+        summary = next(
+            (item for item in stored_result.diagnostics if item.code == "mlip_completed"), None
+        )
+        if summary is None:
+            return True
+        inputs = summary.details.get("inputs")
+        if not isinstance(inputs, int) or isinstance(inputs, bool) or inputs < 1:
+            return True
+        rows = summary.details.get("error_rows") or ()
+        errored = {
+            str(row.get("id"))
+            for row in rows
+            if isinstance(row, Mapping) and row.get("id") is not None
+        }
+        return len(errored) < inputs
 
     def _output(
         self,
@@ -749,8 +833,13 @@ class MlipExecutor:
         done: Mapping[str, Any],
         calibration_info: dict[str, Any] | None,
         science: _Science,
+        failure: str | None = None,
     ) -> WorkItemResult:
-        """Build structures, energies, artifacts and diagnostics for the kept outputs."""
+        """Build structures, energies, artifacts and diagnostics for the kept outputs.
+
+        With *failure* set (every input errored, none filtered) the result is FAILED and carries
+        the summary diagnostics and no structures, energies or artifacts.
+        """
         ordered = sorted(outputs, key=lambda out: out.record.id)
         provenance = _provenance(plan, work_item, done)
         structures: list[StructureRecord] = []
@@ -799,9 +888,12 @@ class MlipExecutor:
                     ),
                 )
             )
-        xyz_path = Path(work_dir) / _XYZ_NAME
-        xyz_path.write_text(xyz_text(ordered, keys), encoding="utf-8")
-        artifacts = self._artifacts(work_item, context, work_dir)
+        if failure is None:
+            xyz_path = Path(work_dir) / _XYZ_NAME
+            xyz_path.write_text(xyz_text(ordered, keys), encoding="utf-8")
+            artifacts = self._artifacts(work_item, context, work_dir)
+        else:
+            artifacts = ArtifactSet.of()
         relaxed = [out for out in ordered if out.stage == "relax"]
         not_converged = [out.record.id for out in relaxed if out.row.get("converged") is False]
         stretched = [
@@ -907,6 +999,31 @@ class MlipExecutor:
                 )
             )
         diagnostics.extend(science.diagnostics)
+        if failure is not None:
+            diagnostics.append(
+                _diagnostic(
+                    ALL_ERRORED_CODE,
+                    failure,
+                    work_item,
+                    context,
+                    DiagnosticSeverity.ERROR,
+                    {"error_rows": error_rows, "inputs": input_count},
+                )
+            )
+            return WorkItemResult(
+                work_item_id=work_item.id,
+                status=WorkItemStatus.FAILED,
+                diagnostics=tuple(diagnostics),
+                timing=self._timing(wall_start, monotonic_start),
+                error=ResultError(
+                    code=ALL_ERRORED_CODE,
+                    message=failure,
+                    retryable=True,
+                    details=FrozenDict({"inputs": input_count, "error_rows": error_rows}),
+                ),
+                recovery=RecoveryInfo(profile="none", attempted=False),
+                semantic_digest=work_item.semantic_digest,
+            )
         return WorkItemResult(
             work_item_id=work_item.id,
             status=WorkItemStatus.COMPLETED,
@@ -967,6 +1084,37 @@ class MlipExecutor:
             wall_start=wall_start,
             monotonic_start=monotonic_start,
             message=message,
+        )
+
+    def _failed(
+        self,
+        work_item: WorkItem,
+        context: ItemExecutionContext,
+        wall_start: float,
+        monotonic_start: float,
+        *,
+        code: str,
+        message: str,
+        retryable: bool,
+    ) -> WorkItemResult:
+        """FAILED result with a structured, retryable-aware error and a matching diagnostic."""
+        return WorkItemResult(
+            work_item_id=work_item.id,
+            status=WorkItemStatus.FAILED,
+            diagnostics=(
+                _diagnostic(
+                    code,
+                    message,
+                    work_item,
+                    context,
+                    DiagnosticSeverity.ERROR,
+                    {"retryable": retryable},
+                ),
+            ),
+            timing=self._timing(wall_start, monotonic_start),
+            error=ResultError(code=code, message=message, retryable=retryable),
+            recovery=RecoveryInfo(profile="none", attempted=False),
+            semantic_digest=work_item.semantic_digest,
         )
 
     def _cancelled(

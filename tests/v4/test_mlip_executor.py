@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -486,17 +487,32 @@ def test_interpreter_must_exist(monkeypatch, tmp_path):
 
 def test_default_interpreter_resolves_on_path(monkeypatch, tmp_path):
     _install_runner(monkeypatch, tmp_path)
-    ctx = _ctx(tmp_path, _native(), executable="")
+    # a real PATH entry, set before the context snapshots the environment: the default
+    # "python3" resolves on the launch environment's PATH
+    bin_dir = tmp_path / "default-bin"
+    bin_dir.mkdir()
+    wrapper = bin_dir / "python3"
+    wrapper.write_text(
+        f"#!{sys.executable}\nimport os, sys\n"
+        f"os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+    path = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+    monkeypatch.setenv("PATH", path)
+    ctx = _ctx(tmp_path, _native(), executable="", env={**ENV, "PATH": path})
     ctx = dataclasses.replace(ctx, execution_binding=None)
-    monkeypatch.setattr(mlip_executor.shutil, "which", lambda name: sys.executable)
     result, _ = _run(ctx, _records())
     assert result.status is WorkItemStatus.COMPLETED
 
 
 def test_default_interpreter_missing_on_path_fails(monkeypatch, tmp_path):
     _install_runner(monkeypatch, tmp_path)
-    ctx = dataclasses.replace(_ctx(tmp_path, _native()), execution_binding=None)
-    monkeypatch.setattr(mlip_executor.shutil, "which", lambda name: None)
+    empty = tmp_path / "empty-path"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    ctx = _ctx(tmp_path, _native(), env={**ENV, "PATH": str(empty)})
+    ctx = dataclasses.replace(ctx, execution_binding=None)
     result, _ = _run(ctx, _records())
     assert "not found on PATH" in _message(result)
 

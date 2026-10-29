@@ -18,7 +18,6 @@ import hashlib
 import json
 import logging
 import os
-import shutil
 import stat
 import time
 from collections.abc import Callable, Mapping
@@ -33,7 +32,11 @@ from ..domain.errors import DomainError
 from ..domain.result import ResultSet, ScientificResult, make_result_id
 from ..domain.structure import StructureRecord, StructureSet
 from ..domain.work_item import RecoveryInfo, Timing, WorkItem, WorkItemResult
-from .execution_policy import enforce_execution_policy
+from .command_resolution import (
+    ResolvedCommand,
+    enforce_command_policy,
+    resolve_and_enforce_command,
+)
 from .native import NativeExecutionRequest
 from .quota import QuotaCancelled, QuotaError
 from .script_registry import (
@@ -43,6 +46,7 @@ from .script_registry import (
     load_script_registry,
     script_identity,
     validate_script_args_template,
+    verify_interpreter_identity,
 )
 from .work_item_executor import (
     ItemExecutionContext,
@@ -264,20 +268,34 @@ class ScriptExecutor:
         )
         item_dir = os.path.join(str(context.run_root), "script", context.step_id, item_key)
         resolved = _resolved_script_command(entry)
-        if len(resolved) == 1:
-            interpreter = str(entry.script_path)
-        else:
-            interpreter = self._resolve_interpreter(resolved[0])
         binding = context.execution_binding
+        # The launch environment is the step snapshot (ambient-only without one); the
+        # interpreter is resolved on exactly the PATH the process starts with.
+        if context.native_env is not None:
+            launch_env = dict(context.native_env)
+        else:
+            launch_env = dict(os.environ)
         # Policy before any directory or input file is written (direct batch
         # callers bypass the step-level check in the application layer).
-        enforce_execution_policy(
-            binding,
-            executable=interpreter,
-            resolved_executable=interpreter,
-            write_paths=(item_dir,),
-            label="script interpreter",
-        )
+        if len(resolved) == 1:
+            interpreter = str(entry.script_path)
+            enforce_command_policy(
+                binding,
+                configured=interpreter,
+                resolved=ResolvedCommand(configured=interpreter, absolute=interpreter),
+                write_paths=(item_dir,),
+                label="script interpreter",
+            )
+        else:
+            interpreter = resolve_and_enforce_command(
+                binding,
+                resolved[0],
+                launch_env,
+                label="script interpreter",
+                write_paths=(item_dir,),
+            ).absolute
+        # The launched interpreter must be the registered content (identity fixed at registration).
+        verify_interpreter_identity(entry, interpreter)
         os.makedirs(item_dir, exist_ok=True)
         input_path = os.path.join(item_dir, "input.xyz")
         # The item dir is keyed by inputs, so a retry reuses it. Declared
@@ -299,10 +317,6 @@ class ScriptExecutor:
         walltime = float(binding.walltime_seconds) if binding and binding.walltime_seconds else None
         # Same environment rule as native steps: the snapshot hashed into the
         # environment digest (ambient + declared), else the ambient process env.
-        if context.native_env is not None:
-            launch_env = dict(context.native_env)
-        else:
-            launch_env = dict(os.environ)
         request = NativeExecutionRequest(
             executable=interpreter,
             argv=argv,
@@ -446,18 +460,6 @@ class ScriptExecutor:
             recovery=RecoveryInfo(profile="none", attempted=False),
             semantic_digest=work_item.semantic_digest,
         )
-
-    @staticmethod
-    def _resolve_interpreter(interpreter: str) -> str:
-        """Resolve the registered interpreter to an executable path."""
-        if os.path.isabs(interpreter):
-            if not os.path.isfile(interpreter):
-                raise DomainError(f"script interpreter not found: {interpreter!r}")
-            return interpreter
-        resolved = shutil.which(interpreter)
-        if resolved is None:
-            raise DomainError(f"script interpreter {interpreter!r} was not found on PATH")
-        return resolved
 
     @staticmethod
     def _stderr_tail(item_dir: str) -> str:

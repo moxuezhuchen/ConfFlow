@@ -160,6 +160,8 @@ class InMemoryReuseStore:
 
 #: Number of gap items whose messages are listed in a publication refusal.
 _LISTED_ITEMS: int = 3
+#: Diagnostic code for a stored completed result that the executor refuses to reuse.
+REUSE_REFUSED_CODE: str = "reuse_refused"
 
 #: Instance attribute carrying a publication refusal's per-item failures.
 _ITEM_FAILURES_ATTR: str = "item_failures"
@@ -964,7 +966,22 @@ class BatchStepExecutor:
                     ),
                     False,
                 )
-            return self._rescoped_reuse(item, stored_result), True
+            if self._executor_accepts_stored(stored_result):
+                return self._rescoped_reuse(item, stored_result), True
+            return self._reopen_refused_reuse(
+                request,
+                item,
+                context,
+                store=store,
+                run_root=run_root,
+                owner=owner,
+                environment_digest=environment_digest,
+                provenance=provenance,
+                should_cancel=should_cancel,
+                stored_result=stored_result,
+                _claim_retried=_claim_retried,
+                bound_inputs=bound_inputs,
+            )
         if code is ReuseCode.EXECUTE_NEW and decision.details.get("requires_explicit_retry"):
             carried = store.get_result(item.id)
             if carried is not None:
@@ -1159,6 +1176,98 @@ class BatchStepExecutor:
                 details=dict(decision.details.thaw()),
             ),
             False,
+        )
+
+    def _reopen_refused_reuse(
+        self,
+        request: StepExecutionRequest,
+        item: WorkItem,
+        context: ItemExecutionContext,
+        *,
+        store: SqliteWorkItemStore,
+        run_root: str,
+        owner: OwnerIdentity,
+        environment_digest: str | None,
+        provenance: FrozenDict,
+        should_cancel: Callable[[], bool],
+        stored_result: WorkItemResult,
+        _claim_retried: bool = False,
+        bound_inputs: _BoundInputVerifier | None = None,
+    ) -> tuple[WorkItemResult, bool]:
+        """Run an item again when the executor refuses its stored COMPLETED result.
+
+        The same generation-advance transition as an environment change is used with the
+        unchanged axes: the terminal row moves to INTERRUPTED, the next claim opens a new
+        attempt, and every earlier attempt stays in the history.  The new result carries a
+        ``reuse_refused`` diagnostic naming the refused result.
+        """
+        step = request.step
+        refusal = Diagnostic(
+            code=REUSE_REFUSED_CODE,
+            message=(
+                f"stored completed result of work item {stored_result.work_item_id!r} is not "
+                "reusable under the executor's current rules; re-executing in a new attempt, "
+                "earlier attempts stay in history"
+            ),
+            severity=DiagnosticSeverity.INFO,
+            step_id=step.step_id,
+            work_item_id=item.id,
+            logical_key=item.logical_key,
+            details=FrozenDict(
+                {
+                    "refused_work_item_id": stored_result.work_item_id,
+                    "executor": type(self._executor).__name__,
+                }
+            ),
+        )
+        try:
+            store.refresh_for_new_environment(
+                item.id,
+                work_item_digest=item.semantic_digest,
+                step_semantic_digest=step.step_semantic_digest,
+                environment_digest=environment_digest,
+                producer_provenance=dict(provenance.thaw()),
+                reason="stored completed result refused by executor reuse rule",
+            )
+        except (PersistenceError, CorruptStateError) as exc:
+            failure = self._durable_synthetic_failure(
+                request,
+                item,
+                code="persistence_error",
+                message=(
+                    f"work item {item.logical_key!r} reuse refused but a new attempt could "
+                    f"not be opened ({exc}); history preserved"
+                ),
+                retryable=False,
+                details={"refused_work_item_id": stored_result.work_item_id},
+            )
+            return failure, False
+        if store.claim(item.id, owner=owner):
+            attempt = int(store.get_registered(item.id)["current_attempt"])
+            result = self._launch(
+                item,
+                replace(context, attempt=attempt),
+                store=store,
+                should_cancel=should_cancel,
+                attempt=attempt,
+            )
+            result = replace(result, diagnostics=(refusal, *result.diagnostics))
+            store.record_finished(
+                result, environment_digest=self._commit_environment_digest(result)
+            )
+            return result, True
+        return self._contested_claim(
+            request,
+            item,
+            context,
+            store=store,
+            owner=owner,
+            environment_digest=environment_digest,
+            provenance=provenance,
+            run_root=run_root,
+            should_cancel=should_cancel,
+            _claim_retried=_claim_retried,
+            bound_inputs=bound_inputs,
         )
 
     def _contested_claim(
@@ -1401,6 +1510,8 @@ class BatchStepExecutor:
         hit = self._reuse_store.lookup(item.semantic_digest)
         if hit is None or not hit.is_completed:
             return None
+        if not self._executor_accepts_stored(hit):
+            return None
         diagnostics = tuple(hit.diagnostics) + (
             Diagnostic(
                 code="reuse_hit",
@@ -1424,6 +1535,13 @@ class BatchStepExecutor:
             semantic_digest=item.semantic_digest,
             metadata=hit.metadata,
         )
+
+    def _executor_accepts_stored(self, stored_result: WorkItemResult) -> bool:
+        """Consult the executor's optional ``stored_result_reusable`` hook (default: reusable)."""
+        hook = getattr(self._executor, "stored_result_reusable", None)
+        if not callable(hook):
+            return True
+        return bool(hook(stored_result))
 
     def _reuse_record(self, result: WorkItemResult) -> None:
         if self._reuse_store is not None:

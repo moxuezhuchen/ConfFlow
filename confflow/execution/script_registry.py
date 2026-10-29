@@ -27,6 +27,7 @@ __all__ = [
     "ScriptEntry",
     "expand_script_args",
     "script_identity",
+    "verify_interpreter_identity",
     "format_mem_gb",
     "load_script_registry",
     "validate_script_args_template",
@@ -134,6 +135,33 @@ def script_identity(entry: ScriptEntry) -> dict[str, Any]:
         # content, not the resolved path: a moved but identical interpreter still reuses
         "interpreter_sha256": entry.interpreter_sha256,
     }
+
+
+def verify_interpreter_identity(entry: ScriptEntry, launch_path: str) -> None:
+    """Fail closed unless *launch_path* has the content of the registered interpreter.
+
+    The interpreter identity is fixed at registration, on the control process PATH, and it is
+    folded into compiled digests and item keys.  It therefore cannot follow a step environment:
+    a step environment that resolves the script's interpreter to a different program is refused
+    before anything starts, so the identity and the launched file are always the same content.
+    """
+    if entry.interpreter_sha256 is None:
+        raise DomainError(
+            f"script {entry.id!r} interpreter was not resolvable at registration; "
+            f"refusing to launch {launch_path!r}"
+        )
+    try:
+        digest = hashlib.sha256(Path(launch_path).read_bytes()).hexdigest()
+    except OSError as exc:
+        raise DomainError(
+            f"script {entry.id!r} interpreter {launch_path!r} is unreadable: {exc}"
+        ) from exc
+    if digest != entry.interpreter_sha256:
+        raise DomainError(
+            f"script {entry.id!r} interpreter {launch_path!r} does not match the registered "
+            f"interpreter (registered sha256 {entry.interpreter_sha256}, launch sha256 "
+            f"{digest}); align the step PATH with the registration"
+        )
 
 
 def _resolve_interpreter_identity(

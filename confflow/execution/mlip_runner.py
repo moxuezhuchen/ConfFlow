@@ -27,8 +27,13 @@ EV_PER_EH = 27.211386245988
 RESULTS, DONE, LOG = "mlip_results.jsonl", "mlip_done.json", "mlip_runner.log"
 MODES = ("sp", "relax", "sp_then_relax")
 OPTIMIZERS = ("lbfgs", "precon_lbfgs", "fire")
+#: Exit status of a job whose backend could not be built (EX_TEMPFAIL: a retryable task failure).
+BACKEND_EXIT_CODE = 75
+#: ``mlip_done.json`` status of a job that stopped because its backend failed to load.
+BACKEND_FAILED = "backend_failed"
 
 _BACKEND: Any = None  # per-process backend, set by _init_worker in pool workers
+_BACKEND_ERROR: str | None = None  # why the per-process backend is missing, if it is
 
 
 def _check(ok: bool, name: str) -> None:
@@ -221,31 +226,34 @@ def _compute(backend: Any, task: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-class _BrokenBackend:
-    """Stands in for a backend that failed to load, so each structure gets an error row."""
-
-    def __init__(self, reason: str) -> None:
-        self.reason = reason
-
-    def energy(self, *args: Any) -> Any:
-        raise RuntimeError(f"backend failed to load: {self.reason}")
-
-    relax = energy
+class BackendLoadError(RuntimeError):
+    """The model backend could not be built: a task-level failure, never a bad structure."""
 
 
 def _load_backend(factory: Callable[[dict[str, Any]], Any], job: dict[str, Any]) -> Any:
     try:
         return factory(job)
     except Exception as exc:
-        return _BrokenBackend(f"{type(exc).__name__}: {exc}")
+        raise BackendLoadError(f"{type(exc).__name__}: {exc}") from exc
 
 
 def _init_worker(factory: Callable[[dict[str, Any]], Any], job: dict[str, Any]) -> None:
-    global _BACKEND
-    _BACKEND = _load_backend(factory, job)
+    """Build this worker's backend, recording a failure instead of raising it.
+
+    A raising pool initializer makes the pool respawn workers forever, so every task
+    reports the recorded reason instead.
+    """
+    global _BACKEND, _BACKEND_ERROR
+    try:
+        _BACKEND = _load_backend(factory, job)
+        _BACKEND_ERROR = None
+    except BackendLoadError as exc:
+        _BACKEND, _BACKEND_ERROR = None, str(exc)
 
 
 def _worker_task(task: dict[str, Any]) -> dict[str, Any]:
+    if _BACKEND_ERROR is not None:
+        return {"key": task["key"], "stage": task["stage"], "backend_error": _BACKEND_ERROR}
     return _compute(_BACKEND, task)
 
 
@@ -282,10 +290,21 @@ def _pkg_version(name: str) -> str | None:
         return None
 
 
+def _write_done(workdir: str, info: dict[str, Any]) -> None:
+    with open(os.path.join(workdir, DONE), "w", encoding="utf-8") as fh:
+        json.dump(info, fh, indent=1)
+
+
 def run_job(
     job: dict[str, Any], workdir: str, backend_factory: Callable[[dict[str, Any]], Any]
 ) -> int:
-    """Run the job in ``workdir``; returns 0 once the job ran (errors are rows)."""
+    """Run the job in ``workdir``.
+
+    Returns 0 once the job ran (per-structure errors are rows).  When the backend cannot be
+    built the job is a task-level failure: no structure is attempted, ``mlip_done.json``
+    carries ``status: backend_failed`` with the reason, and the return value is
+    ``BACKEND_EXIT_CODE``.
+    """
     validate_job(job)
     t0 = time.time()
     results = os.path.join(workdir, RESULTS)
@@ -318,27 +337,44 @@ def run_job(
     }
     relax_keys = [s["key"] for s in structures]
     _terminate_torn_line(results)
-    with open(results, "a", encoding="utf-8") as out, _scheduler(job, backend_factory) as run:
+    try:
+        with open(results, "a", encoding="utf-8") as out, _scheduler(job, backend_factory) as run:
 
-        def emit(row: dict[str, Any]) -> None:
-            out.write(json.dumps(row) + "\n")
-            out.flush()
-            status = row["error"] or f"energy_eh={row['energy_eh']}"
-            _log(workdir, f"done {row['key']} {row['stage']} wall_s={row['wall_s']} {status}")
-            if row["stage"] == "sp" and row["error"] is None:
-                sp_energy[row["key"]] = (row["energy_eh"], labels[row["key"]])
+            def emit(row: dict[str, Any]) -> None:
+                out.write(json.dumps(row) + "\n")
+                out.flush()
+                status = row["error"] or f"energy_eh={row['energy_eh']}"
+                _log(workdir, f"done {row['key']} {row['stage']} wall_s={row['wall_s']} {status}")
+                if row["stage"] == "sp" and row["error"] is None:
+                    sp_energy[row["key"]] = (row["energy_eh"], labels[row["key"]])
 
-        if job["mode"] in ("sp", "sp_then_relax"):
-            todo = [task(s, "sp") for s in structures if (s["key"], "sp") not in done]
-            for row in run(todo):
-                emit(row)
-        if job["mode"] == "sp_then_relax":
-            relax_keys = pick_structures(sp_energy, job["pick"])
-        if job["mode"] != "sp":
-            by_key = {s["key"]: s for s in structures}
-            todo = [task(by_key[k], "relax") for k in relax_keys if (k, "relax") not in done]
-            for row in run(todo):
-                emit(row)
+            def drain(tasks: list[dict[str, Any]]) -> None:
+                for row in run(tasks):
+                    if "backend_error" in row:
+                        raise BackendLoadError(str(row["backend_error"]))
+                    emit(row)
+
+            if job["mode"] in ("sp", "sp_then_relax"):
+                drain([task(s, "sp") for s in structures if (s["key"], "sp") not in done])
+            if job["mode"] == "sp_then_relax":
+                relax_keys = pick_structures(sp_energy, job["pick"])
+            if job["mode"] != "sp":
+                by_key = {s["key"]: s for s in structures}
+                drain([task(by_key[k], "relax") for k in relax_keys if (k, "relax") not in done])
+    except BackendLoadError as exc:
+        reason = str(exc)
+        _log(workdir, f"backend failed to load, job stopped: {reason}")
+        _write_done(
+            workdir,
+            dict(
+                status=BACKEND_FAILED,
+                backend_error=reason,
+                workers=job["workers"],
+                torch_threads=job["threads"],
+                wall_s=round(time.time() - t0, 3),
+            ),
+        )
+        return BACKEND_EXIT_CODE
 
     info = dict(
         model_sha256=_sha256(job["model_path"]),
@@ -349,8 +385,7 @@ def run_job(
         wall_s=round(time.time() - t0, 3),
         picked=relax_keys if job["mode"] != "sp" else [],
     )
-    with open(os.path.join(workdir, DONE), "w", encoding="utf-8") as fh:
-        json.dump(info, fh, indent=1)
+    _write_done(workdir, info)
     _log(workdir, f"end: wall_s={info['wall_s']}")
     return 0
 

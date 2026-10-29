@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import dataclasses
 import os
-import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -31,6 +30,11 @@ from ..execution.batch import BatchStepExecutor, StepExecutionRequest
 from ..execution.binding_resolution import (
     BindingRequestDefaults,
     resolve_execution_binding,
+)
+from ..execution.command_resolution import (
+    ResolvedCommand,
+    resolve_and_enforce_command,
+    resolve_command,
 )
 from ..execution.contracts import ExecutorCapability
 from ..execution.quota import QuotaError
@@ -217,30 +221,30 @@ def resolve_confgen_xtb_binding(
 ) -> Any:
     """Pin a ConfGen xTB binding to the one absolute file it will launch.
 
-    The bare name (or a relative path) is resolved on the PATH of the single effective
-    native environment, the binding env over the producer snapshot, never the control
-    process' ambient PATH.  The returned binding carries that absolute path, so the policy
-    check, the content measurement and the worker job all name the same file.  A binding
-    without an executable is returned unchanged for the executor's own missing-executable
-    error.  A name that does not resolve to an executable regular file fails the step.
+    The bare name (or a relative path) is resolved once by the shared command-resolution
+    entry on the PATH of the single effective native environment, the binding env over the
+    producer snapshot, never the control process' ambient PATH.  The returned binding carries
+    that absolute path, so the policy check, the content measurement and the worker job all
+    name the same file.  A binding without an executable is returned unchanged for the
+    executor's own missing-executable error.  A name that does not resolve to an executable
+    regular file fails the step.
     """
     name = binding.executable if binding is not None else None
     if not name:
         return binding
-    if os.path.dirname(name):
-        found = os.path.abspath(name)
-    else:
-        located = shutil.which(name, path=native_env.get("PATH", os.defpath))
-        found = os.path.abspath(located) if located else None
-    if found is None or not os.path.isfile(found) or not os.access(found, os.X_OK):
+    try:
+        resolved: ResolvedCommand = resolve_command(name, native_env)
+    except DomainError as exc:
         raise DomainError(
             f"step {step_id!r} xTB executable {name!r} did not resolve to an executable "
             "file on the binding environment PATH"
-        )
-    return dataclasses.replace(binding, executable=found)
+        ) from exc
+    return dataclasses.replace(binding, executable=resolved.absolute)
 
 
-def _pure_executable_identity(planned: Any, binding: Any) -> Any:
+def _pure_executable_identity(
+    planned: Any, binding: Any, native_env: Mapping[str, str] | None = None
+) -> Any:
     """Return the measured native binary a pure step launches, else None.
 
     Only confgen steps with an xTB binding launch a native program here.
@@ -253,7 +257,7 @@ def _pure_executable_identity(planned: Any, binding: Any) -> Any:
     from ..execution.environment import measure_executable
 
     try:
-        return measure_executable(binding.executable or "xtb")
+        return measure_executable(binding.executable or "xtb", env=native_env)
     except DomainError:
         return None
 
@@ -263,27 +267,39 @@ def _mlip_interpreter(binding: Any) -> str:
     return binding.executable if binding is not None and binding.executable else "python3"
 
 
-def _enforce_mlip_interpreter_policy(binding: Any, *, step_id: str, run_root: str) -> None:
-    """Apply the full execution policy to the MLIP interpreter before any probe runs.
+def _enforce_mlip_interpreter_policy(
+    binding: Any, *, step_id: str, run_root: str, native_env: Mapping[str, str] | None
+) -> str:
+    """Resolve the MLIP interpreter once on the step's effective environment and enforce policy.
 
-    The allow list and sandbox are checked against the interpreter's resolved real path.
-    A violation raises ``DomainError``, so no version probe or computation is started.
+    The interpreter is resolved on the same environment the launch uses (``native_env``, the
+    step snapshot), and the policy is checked by configured name and resolved real path before
+    any version probe or computation starts.  Returns the absolute interpreter the identity
+    and the launch both name.  An interpreter that does not resolve is returned as configured
+    (the identity then fails closed and the executor fails the item, as before).
     """
-    from ..execution.execution_policy import enforce_execution_policy
+    from ..execution.command_resolution import (
+        enforce_command_policy,
+        launch_environment,
+        locate_command,
+    )
 
     interpreter = _mlip_interpreter(binding)
-    resolved = shutil.which(interpreter)
-    enforce_execution_policy(
+    resolved = locate_command(interpreter, launch_environment(native_env, binding))
+    enforce_command_policy(
         binding,
-        executable=interpreter,
-        resolved_executable=os.path.realpath(resolved) if resolved else None,
+        configured=interpreter,
+        resolved=resolved,
         write_paths=(run_root,),
         label=f"step {step_id!r} executable",
         check_program=True,
     )
+    return resolved.absolute if resolved is not None else interpreter
 
 
-def _mlip_runtime_digest(binding: Any, native_env: Mapping[str, str] | None) -> str:
+def _mlip_runtime_digest(
+    binding: Any, native_env: Mapping[str, str] | None, interpreter: str
+) -> str:
     """Return the pre-run identity of an MLIP launch from its exact launch environment.
 
     Interpreter, runner source, model file, refs file and MLIP package versions
@@ -296,7 +312,7 @@ def _mlip_runtime_digest(binding: Any, native_env: Mapping[str, str] | None) -> 
     from ..execution.environment import mlip_runtime_identity, unresolved_runtime_identity
 
     digest = mlip_runtime_identity(
-        interpreter=_mlip_interpreter(binding),
+        interpreter=interpreter,
         runner_path=str(mlip_executor.RUNNER_PATH),
         env=native_env or {},
         model_env=mlip_executor.MODEL_ENV,
@@ -937,28 +953,34 @@ class V4RunApplication:
                 adapter_default_executable=adapter.default_executable,
             )
             from ..execution.binding_resolution import effective_native_env
-            from ..execution.execution_policy import enforce_execution_policy
-
-            # policy before any probe, measurement or file write of this step
-            candidate = binding.executable or adapter.default_executable
-            enforce_execution_policy(
-                binding,
-                executable=candidate,
-                resolved_executable=shutil.which(candidate),
-                write_paths=(run_root,),
-                label=f"step {planned.step_id!r} executable",
-            )
 
             # ONE immutable native-environment snapshot per step.  Ambient
             # inheritance is explicit producer-side policy (os.environ) and
             # is fully digested; binding env wins on collision.  The SAME
-            # snapshot feeds measurement and provenance.
+            # snapshot feeds resolution, measurement, launch and provenance.
+            candidate = binding.executable or adapter.default_executable
             native_env = FrozenDict(effective_native_env(binding, inherit=os.environ))
+            # The one resolution of the program on the snapshot PATH.  Policy is checked
+            # before any probe, measurement or file write, and the measured file is the
+            # resolved absolute path the launch uses.
+            resolved = resolve_and_enforce_command(
+                binding,
+                candidate,
+                native_env,
+                label=f"step {planned.step_id!r} executable",
+                write_paths=(run_root,),
+                unresolved_message=(
+                    f"step {planned.step_id!r}: cannot measure execution environment "
+                    f"for {candidate!r}: {candidate!r} did not resolve to an executable "
+                    "file on the effective environment PATH"
+                ),
+            )
             environment = self._measure_environment(
                 planned=planned,
                 binding=binding,
                 adapter=adapter,
                 relevant_env=native_env,
+                resolved_path=resolved.absolute,
             )
             provenance = None
         else:
@@ -1001,7 +1023,7 @@ class V4RunApplication:
                 binding = resolve_confgen_xtb_binding(
                     binding, native_env or FrozenDict(), step_id=planned.step_id
                 )
-            identity = _pure_executable_identity(planned, binding)
+            identity = _pure_executable_identity(planned, binding, native_env)
             metadata: dict[str, object] = {"step_id": planned.step_id}
             if identity is not None:
                 metadata["executable_resolved_path"] = identity.resolved_path
@@ -1009,10 +1031,13 @@ class V4RunApplication:
             is_mlip = planned.executor is ExecutorCapability.MLIP
             if is_mlip:
                 # F1: the interpreter must pass the full policy before any version probe
-                _enforce_mlip_interpreter_policy(
-                    binding, step_id=planned.step_id, run_root=run_root
+                interpreter = _enforce_mlip_interpreter_policy(
+                    binding,
+                    step_id=planned.step_id,
+                    run_root=run_root,
+                    native_env=native_env,
                 )
-                executable_digest = _mlip_runtime_digest(binding, native_env)
+                executable_digest = _mlip_runtime_digest(binding, native_env, interpreter)
             environment = build_pure_environment(
                 implementation=implementation,
                 implementation_version=contract.contract_version,
@@ -1092,7 +1117,12 @@ class V4RunApplication:
 
     @staticmethod
     def _measure_environment(
-        *, planned: Any, binding: Any, adapter: Any, relevant_env: Any = None
+        *,
+        planned: Any,
+        binding: Any,
+        adapter: Any,
+        relevant_env: Any = None,
+        resolved_path: str | None = None,
     ) -> Any:
         """Measure the real execution environment for the reuse axis.
 
@@ -1110,7 +1140,7 @@ class V4RunApplication:
         from ..execution.binding_resolution import effective_native_env
         from ..execution.environment import EnvironmentMeasurer
 
-        candidate = binding.executable or adapter.default_executable
+        candidate = resolved_path or binding.executable or adapter.default_executable
         if relevant_env is None:
             relevant_env = effective_native_env(binding, inherit=os.environ)
         try:
