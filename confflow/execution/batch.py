@@ -24,7 +24,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from ..domain._immutable import FrozenDict
-from ..domain.artifact import ArtifactSet
+from ..domain.artifact import ArtifactRef, ArtifactSet
 from ..domain.completion import WorkItemStatus, evaluate_step_status
 from ..domain.diagnostics import Diagnostic, DiagnosticSeverity
 from ..domain.errors import PublicationError
@@ -178,6 +178,50 @@ def _item_error_diagnostics(item: WorkItemResult, *, step_id: str) -> tuple[Diag
             details=error.details,
         ),
     )
+
+
+def _locator_text(ref: ArtifactRef) -> str:
+    """Return a compact ``kind:target`` rendering of *ref*'s locator."""
+    locator = ref.locator
+    target = locator.path if locator.path is not None else locator.uri
+    return f"{locator.kind.value}:{target}"
+
+
+class _BoundInputVerifier:
+    """Verify bound input artifact bytes once per step, shared by its items.
+
+    Only references that carry a checksum are hashed; checksum-less references
+    and ``EXTERNAL_URI`` locators are left to ``verify_artifact``'s own rules.
+    Outcomes are memoised by artifact id, checksum, and locator, so an
+    artifact bound by several items is hashed once.  The lock serialises the
+    hashing, which keeps the memo race-free across the item thread pool.
+    """
+
+    def __init__(self, run_root: str) -> None:
+        self._run_root = run_root
+        self._lock = threading.Lock()
+        self._outcomes: dict[tuple[str, str, str], ArtifactIntegrityError | None] = {}
+
+    def first_failure(
+        self, item: WorkItem
+    ) -> tuple[str, ArtifactRef, ArtifactIntegrityError] | None:
+        """Return the first bound input of *item* whose bytes fail verification."""
+        for port, artifacts in item.named_inputs.artifacts.items():
+            for ref in artifacts:
+                if ref.checksum is None:
+                    continue
+                key = (ref.id, ref.checksum, _locator_text(ref))
+                with self._lock:
+                    if key not in self._outcomes:
+                        try:
+                            verify_artifact(run_root=self._run_root, ref=ref)
+                            self._outcomes[key] = None
+                        except ArtifactIntegrityError as exc:
+                            self._outcomes[key] = exc
+                    outcome = self._outcomes[key]
+                if outcome is not None:
+                    return port, ref, outcome
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -484,6 +528,7 @@ class BatchStepExecutor:
         results: dict[str, WorkItemResult] = {}
         durable_ids: set[str] = set()
         shared_lock = threading.Lock()
+        bound_inputs = _BoundInputVerifier(run_root_abs)
 
         def run_one(item: WorkItem) -> WorkItemResult:
             if cancelled():
@@ -502,6 +547,7 @@ class BatchStepExecutor:
                     environment_digest=environment_digest,
                     provenance=provenance,
                     should_cancel=cancelled,
+                    bound_inputs=bound_inputs,
                 )
             except (PersistenceError, CorruptStateError) as exc:
                 result = self._durable_synthetic_failure(
@@ -714,6 +760,41 @@ class BatchStepExecutor:
             artifact_checksums=(),
         )
 
+    def _bound_input_failure(
+        self,
+        request: StepExecutionRequest,
+        item: WorkItem,
+        port: str,
+        ref: ArtifactRef,
+        error: ArtifactIntegrityError,
+    ) -> WorkItemResult:
+        """Refuse *item* because a bound input artifact's bytes fail verification.
+
+        The code is ``invalidate_artifact``, the code the reuse decision uses for
+        the same condition on an item's own outputs.  Retrying cannot cure it,
+        and the remedy matches the other invalidation refusals (D4).
+        """
+        locator = _locator_text(ref)
+        return self._durable_synthetic_failure(
+            request,
+            item,
+            code=ReuseCode.INVALIDATE_ARTIFACT.value,
+            message=(
+                f"work item {item.logical_key!r} invalidated (bound input {port!r} "
+                f"artifact {ref.id!r} at {locator} failed byte verification: {error}); "
+                "history is preserved and nothing was re-executed; "
+                "use a fresh run root or explicit migration"
+            ),
+            retryable=False,
+            details={
+                "artifact_id": ref.id,
+                "locator": locator,
+                "port": port,
+                "checksum": ref.checksum,
+                "reason": str(error),
+            },
+        )
+
     def _durable_synthetic_failure(
         self,
         request: StepExecutionRequest,
@@ -764,9 +845,17 @@ class BatchStepExecutor:
         provenance: FrozenDict,
         should_cancel: Callable[[], bool],
         _claim_retried: bool = False,
+        bound_inputs: _BoundInputVerifier | None = None,
     ) -> tuple[WorkItemResult, bool]:
-        """Run one item through register → decide → execute-or-report."""
+        """Run one item through verify-inputs → register → decide → execute-or-report."""
         step = request.step
+        # Bound input bytes are verified before any registration write, the
+        # reuse decision, or a launch.  A failed input refuses only this item.
+        verifier = bound_inputs if bound_inputs is not None else _BoundInputVerifier(run_root)
+        bound_failure = verifier.first_failure(item)
+        if bound_failure is not None:
+            port, ref, error = bound_failure
+            return self._bound_input_failure(request, item, port, ref, error), False
         try:
             store.register_item(
                 work_item_id=item.id,
@@ -901,6 +990,7 @@ class BatchStepExecutor:
                 run_root=run_root,
                 should_cancel=should_cancel,
                 _claim_retried=_claim_retried,
+                bound_inputs=bound_inputs,
             )
         if code is ReuseCode.BLOCKED_UNCERTAIN_OWNER:
             return (
@@ -997,6 +1087,7 @@ class BatchStepExecutor:
                 run_root=run_root,
                 should_cancel=should_cancel,
                 _claim_retried=_claim_retried,
+                bound_inputs=bound_inputs,
             )
         # Refusals that no generation advance can cure name the same remedy as
         # the run-level definition refusal (v4_run._definition_mismatch_error).
@@ -1039,6 +1130,7 @@ class BatchStepExecutor:
         run_root: str,
         should_cancel: Callable[[], bool],
         _claim_retried: bool = False,
+        bound_inputs: _BoundInputVerifier | None = None,
     ) -> tuple[WorkItemResult, bool]:
         """Resolve a lost claim race without duplicating native execution."""
         state = store.get_state(item.id)
@@ -1078,6 +1170,7 @@ class BatchStepExecutor:
                 provenance=provenance,
                 should_cancel=should_cancel,
                 _claim_retried=True,
+                bound_inputs=bound_inputs,
             )
         return (
             self._durable_synthetic_failure(

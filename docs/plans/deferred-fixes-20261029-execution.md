@@ -33,3 +33,18 @@ D3：只读评估，不改代码。核对 `_current_reuse_inputs` / `_stored_reu
 ## Claude 验收
 
 审 diff；全量 pytest 8 片、ruff、black 26.10.1、mypy、v4_arch_scan、architecture policy / loc_budget；根据 D3 的评估决定后续；更新 `docs/plans/deferred-fixes-20261029.md` 中的状态；PR #197 合并后开 PR，并补记最终复核报告中的合并结果。
+
+## 任务 D — D5：消费方校验绑定输入 artifact 的字节（2026-10-29 用户决定修复）
+
+拥有文件：`confflow/execution/batch.py`；新测试 `tests/v4/test_deferred_d5_input_artifact_bytes.py`。如果其他文件也必须改（例如 imports 的 locator 处理），先停下来报告。
+
+问题：`verify_artifact`（persistence/artifacts.py:32）只在 batch.py `_verify_stored_artifacts` 中，用于 COMPLETED 条目自己的产物。被消费的绑定输入 artifact（`item.named_inputs` 中的 `ArtifactRef`）从来不做字节校验。文件字节被篡改、但 checksum 不变时，复用命中旧结果；新执行则会读取被篡改的字节，结果却仍标着原 checksum。D3 探针：`/tmp/claude-0/-opt-ConfFlow/bfc5cc9d-eb0c-41d7-a82d-612d2df713ea/scratchpad/probe_d3.py`（a-input 场景）。
+
+修复：
+1. 在每个 work item 做复用判定和启动之前（两条路径都要覆盖），对 `named_inputs` 中所有带 checksum 的绑定 `ArtifactRef` 调用 `verify_artifact(run_root=..., ref=...)`。同一步骤内，按 artifact id（加 checksum）去重，每个文件只哈希一次。
+2. 校验失败时，该 item fail closed：返回不可重试的 durable synthetic failure，诊断中写明 artifact id、locator 和原因；不启动计算、不命中复用、不改写登记。按 strict publication 规则，该步骤随后拒绝发布。错误码沿用 `invalidate_artifact`，或者新增一个明确的码；选哪个都要在报告中说明理由，并与 D4 的提示规则保持一致。
+3. 没有 checksum 的引用，以及 `EXTERNAL_URI` locator：保持 `verify_artifact` 现有语义（前者无法校验，后者只做形状检查）。在报告中说明正常工作流中有多少绑定输入不带 checksum。
+4. 性能：大文件（.chk / .gbw）会被哈希。报告一个 TS1 级别或测试级工作流在改动前后的耗时差；如果明显变慢，提出缓存方案，但不实现。
+
+测试（先写，并确认修复前失败）：(i) 上游输出被篡改、下游 COMPLETED 续跑时，拒绝复用，0 次启动；(ii) 下游 PENDING / 新执行在启动前被拒绝，0 次启动；(iii) 通过 `run_inputs.artifacts` 从 run 外部传入的输入被篡改时，被拒绝；(iv) 未篡改的对照组正常复用 / 执行；(v) 同一 artifact 被多个 item 绑定时，只哈希一次（例如对 `verify_artifact` 计数）。
+回归：`test_v43_*.py`、`test_v45_resume*.py`、`test_arch_review_1029_resume_identity.py`、`test_pr197_mlip_upgrade_reuse.py`、`test_deferred_d4_invalidation_hint.py`、artifact / assembly / checkpoint 相关测试（grep `verify_artifact`、`ArtifactRef`）。
