@@ -656,8 +656,12 @@ class TestDurableRunnerSeams:
     def test_ghost_owner_recovers_and_executes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # register under the identity the resumed run will present, so the
+        # ghost-owner recovery is not mistaken for an environment change (N1)
+        monkeypatch.setenv("FAKE_MODE", "success_opt")
         plan = _compile(_document())
         (item,) = _items(plan, 1)
+        live = _request(plan, (item,), str(tmp_path / "run"))
         with SqliteWorkItemStore.open(store_path(str(tmp_path / "run"), STEP_ID)) as store:
             store.register_item(
                 work_item_id=item.id,
@@ -665,8 +669,8 @@ class TestDurableRunnerSeams:
                 step_id=item.step_id,
                 work_item_digest=item.semantic_digest,
                 step_semantic_digest=plan.steps[0].step_semantic_digest,
-                environment_digest=None,
-                producer_provenance={},
+                environment_digest=live.environment.digest(),
+                producer_provenance=dict(BatchStepExecutor._current_provenance(live).thaw()),
             )
             assert store.claim(item.id, owner=OwnerIdentity(owner_token="ghost", pid=2**30))
             result = self._run(

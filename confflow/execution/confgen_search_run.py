@@ -768,6 +768,9 @@ def _run(
             "confgen search requires an xTB executable: set step execution.executable "
             "or provide the request xtb executable"
         )
+    if not os.path.isabs(xtb):
+        # the v4 application pins the binding to the measured file; the job never carries a name
+        raise DomainError(f"confgen search requires an absolute xTB executable path, got {xtb!r}")
     cores = work_item.resources.cores_per_item
     if cores is None or context.supervisor is None or not context.run_root:
         raise DomainError(
@@ -825,11 +828,16 @@ def _run(
     }
     with open(job_path, "w", encoding="utf-8") as handle:
         handle.write(json.dumps(job_doc, sort_keys=True, indent=2) + "\n")
+    # the launch environment is the step's single snapshot (the one that was digested);
+    # direct executor callers without a snapshot take the batch executor's own rule
+    native_env = context.native_env
+    if native_env is None:
+        native_env = FrozenDict(effective_native_env(binding, inherit=os.environ))
     request = NativeExecutionRequest(
         sys.executable,
         (sys.executable, "-m", "confflow.execution.confgen_search_worker", job_path),
         rundir,
-        FrozenDict(effective_native_env(binding, inherit=os.environ)),
+        FrozenDict(native_env),
         walltime,
         "stdout.log",
         "stderr.log",

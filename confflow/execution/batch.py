@@ -228,6 +228,31 @@ class StepExecutionRequest:
             object.__setattr__(self, "native_env", FrozenDict(self.native_env))
 
 
+def _require_environment_only_change(
+    stored: ReuseInputs | None,
+    current: ReuseInputs,
+    *,
+    artifacts_verified: bool,
+) -> None:
+    """Fail closed unless the environment is the only axis that moved.
+
+    ``evaluate_reuse`` reports the environment alone only when every other axis
+    matches.  This second check runs before any registration is advanced, so a
+    regression in the decision layer cannot overwrite a definition or input change.
+    """
+    if (
+        stored is None
+        or stored.work_item_digest != current.work_item_digest
+        or stored.step_semantic_digest != current.step_semantic_digest
+        or stored.producer_provenance != current.producer_provenance
+        or stored.artifact_checksums != current.artifact_checksums
+        or not artifacts_verified
+    ):
+        raise PersistenceError(
+            "environment is not the only changed axis; refusing to advance the registration"
+        )
+
+
 class BatchStepExecutor:
     """Schedule one step's work items and assemble its step result.
 
@@ -832,13 +857,12 @@ class BatchStepExecutor:
                 # Reconciliation is only legal for the SAME registered
                 # execution generation: the abandoned attempt's digest axes
                 # (work item, step semantics, environment, provenance) must
-                # equal the axes of the invocation asking for recovery.  When
-                # they differ (e.g. the execution environment changed after
-                # the crash), adopting the bundle would publish the abandoned
-                # generation's result as the new generation's result without
-                # any diagnostic.  Fall through to the normal
-                # interrupted -> next-attempt -> relaunch protocol instead;
-                # the abandoned bundle stays on disk as history.
+                # equal the axes of the invocation asking for recovery.
+                # ``evaluate_reuse`` only returns RECOVER_ABANDONED after the
+                # compatibility chain matched, so this guard is defensive.
+                # A changed environment never reaches this branch: it takes
+                # the generation-advance path below, and the abandoned bundle
+                # stays on disk as history.
                 reconciled = None
                 if stored_inputs is not None and stored_inputs == current_inputs:
                     reconciled = self._reconcile_before_retry(
@@ -894,6 +918,8 @@ class BatchStepExecutor:
                 False,
             )
         if code is ReuseCode.INVALIDATE_ENVIRONMENT and stored_status in (
+            StoredWorkItemStatus.PENDING,
+            StoredWorkItemStatus.RUNNING,
             StoredWorkItemStatus.COMPLETED,
             StoredWorkItemStatus.FAILED,
             StoredWorkItemStatus.INTERRUPTED,
@@ -901,16 +927,29 @@ class BatchStepExecutor:
             # Environment-only generation advance: the binding (executable
             # content + effective env) moved while definition/inputs stayed
             # put. Unlike definition/input/provenance/artifact invalidation
-            # (terminal, history preserved, nothing re-executes), a new
-            # environment generation re-executes as a fresh attempt: the
-            # registration advances to the new axes (prior attempts
-            # preserved), then the normal claim → launch → commit path runs.
-            # This is what makes ENV -5 → -10 on the same root relaunch
-            # (+1) with the new result instead of reusing stale science.
+            # (nothing re-executes, history preserved), a new environment
+            # generation re-executes as a fresh attempt: the registration
+            # advances to the new axes (prior attempts preserved), then the
+            # normal claim → launch → commit path runs. This is what makes
+            # ENV -5 → -10 on the same root relaunch (+1) with the new result
+            # instead of reusing stale science. A RUNNING row here is a
+            # definitely-dead owner (``evaluate_reuse`` never yields this code
+            # for a live or uncertain owner), so its abandoned attempt is
+            # closed before the identity advances.
             try:
                 refresh = getattr(store, "refresh_for_new_environment", None)
                 if not callable(refresh):
                     raise PersistenceError("store cannot advance environment generation")
+                _require_environment_only_change(
+                    stored_inputs,
+                    current_inputs,
+                    artifacts_verified=artifacts_verified,
+                )
+                if stored_status is StoredWorkItemStatus.RUNNING:
+                    store.mark_interrupted(
+                        item.id,
+                        reason="abandoned by dead owner; closed before environment advance",
+                    )
                 refresh(
                     item.id,
                     work_item_digest=item.semantic_digest,

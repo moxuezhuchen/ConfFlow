@@ -4,12 +4,19 @@
 
 Pure: no SQLite, filesystem, or process access; compares fresh vs stored digest axes
 into ``ReuseDecision``. Frozen rule order in ``evaluate_reuse``:
-1. No durable record never reuses. 2. ``PENDING`` never reuses.
-3. ``RUNNING`` never duplicates: definitely-dead recovers, otherwise blocks on owner.
+1. No durable record never reuses.
+2. ``PENDING`` never reuses; before it executes, the compatibility chain runs.
+3. ``RUNNING`` never duplicates: a live or uncertain owner blocks; a definitely-dead
+owner runs the compatibility chain first, then recovers.
 4. ``CANCELLED`` never auto-relaunches; explicit retry only.
-5. Terminal ``COMPLETED``/``FAILED``/``INTERRUPTED`` run compatibility chain, first
-mismatch wins: provenance, environment digest, step semantic digest, bound-input
-artifact checksums, work-item digest, then artifact verification.
+5. ``COMPLETED``/``FAILED``/``INTERRUPTED``, and the PENDING/dead-RUNNING rows of
+rules 2-3, run the compatibility chain.  Provenance is checked first.  The environment
+digest is an advance-only axis: ``INVALIDATE_ENVIRONMENT`` is returned only when it is
+the sole differing axis.  If the environment differs together with the step semantic
+digest, the bound-input artifact checksums, the work-item digest, or artifact
+verification, the first of those non-environment mismatches is returned instead, with
+``environment_also_changed`` set in its details.  The same chain serves every status,
+so an identity change is reported by the same axis rule whatever the stored status.
 Labels, GUI annotations, scheduler width, absolute binary paths are not
 ``ReuseInputs`` fields, so never invalidate reuse by construction.
 """
@@ -231,6 +238,143 @@ def _verdict_label(value: OwnerVerdict | str | None) -> str | None:
     return None
 
 
+def _non_environment_mismatch(
+    current: ReuseInputs,
+    stored: ReuseInputs,
+    stored_name: str,
+    *,
+    item_id: str,
+    artifacts_verified: bool,
+) -> ReuseDecision | None:
+    """Return the first mismatching non-environment axis, or ``None``.
+
+    The order is step semantic digest, bound-input artifact checksums, work-item
+    digest, then artifact verification.  Provenance is checked by the caller.
+    """
+    if current.step_semantic_digest != stored.step_semantic_digest:
+        return ReuseDecision(
+            decision=ReuseCode.INVALIDATE_DEFINITION,
+            reason="step definition digest mismatch; invalidating stored result",
+            work_item_id=item_id,
+            details=FrozenDict(
+                {
+                    "stored_status": stored_name,
+                    "step_semantic_digest_current": current.step_semantic_digest,
+                    "step_semantic_digest_stored": stored.step_semantic_digest,
+                }
+            ),
+        )
+    if current.artifact_checksums != stored.artifact_checksums:
+        return ReuseDecision(
+            decision=ReuseCode.INVALIDATE_ARTIFACT,
+            reason="bound-input artifact checksums mismatch; invalidating stored result",
+            work_item_id=item_id,
+            details=FrozenDict(
+                {
+                    "stored_status": stored_name,
+                    "artifact_checksums_current": current.artifact_checksums,
+                    "artifact_checksums_stored": stored.artifact_checksums,
+                }
+            ),
+        )
+    if current.work_item_digest != stored.work_item_digest:
+        return ReuseDecision(
+            decision=ReuseCode.INVALIDATE_INPUT,
+            reason="work-item input digest mismatch; invalidating stored result",
+            work_item_id=item_id,
+            details=FrozenDict(
+                {
+                    "stored_status": stored_name,
+                    "work_item_digest_current": current.work_item_digest,
+                    "work_item_digest_stored": stored.work_item_digest,
+                }
+            ),
+        )
+    if not artifacts_verified:
+        return ReuseDecision(
+            decision=ReuseCode.INVALIDATE_ARTIFACT,
+            reason="stored artifacts failed verification",
+            work_item_id=item_id,
+            details=FrozenDict(
+                {
+                    "stored_status": stored_name,
+                    "artifacts_verified": False,
+                    "artifact_checksums_current": current.artifact_checksums,
+                    "artifact_checksums_stored": stored.artifact_checksums,
+                }
+            ),
+        )
+    return None
+
+
+def _first_mismatch(
+    current: ReuseInputs,
+    stored: ReuseInputs,
+    stored_name: str,
+    *,
+    item_id: str,
+    artifacts_verified: bool,
+) -> ReuseDecision | None:
+    """Return the decision for the first mismatching axis, or ``None`` when all match.
+
+    Provenance is checked first.  The environment is reported only when it is the
+    sole differing axis; otherwise the first non-environment mismatch is returned and
+    flagged with ``environment_also_changed``.  Every returned decision carries
+    *item_id* and the stored status name.
+    """
+    if current.producer_provenance != stored.producer_provenance:
+        differing = _provenance_diff(current.producer_provenance, stored.producer_provenance)
+        reported = differing[:MAX_PROVENANCE_DIFF_KEYS_REPORTED]
+        keys_text = ", ".join(reported) if reported else "uncomparable provenance payloads"
+        return ReuseDecision(
+            decision=ReuseCode.INVALIDATE_PROVENANCE,
+            reason=f"producer provenance mismatch on {keys_text}; invalidating stored result",
+            work_item_id=item_id,
+            details=FrozenDict(
+                {
+                    "stored_status": stored_name,
+                    "differing_keys": reported,
+                    "producer_provenance_current": current.producer_provenance.thaw(),
+                    "producer_provenance_stored": stored.producer_provenance.thaw(),
+                }
+            ),
+        )
+    environment_changed = current.environment_digest != stored.environment_digest
+    other = _non_environment_mismatch(
+        current, stored, stored_name, item_id=item_id, artifacts_verified=artifacts_verified
+    )
+    if other is not None:
+        if not environment_changed:
+            return other
+        return ReuseDecision(
+            decision=other.decision,
+            reason=other.reason,
+            work_item_id=item_id,
+            details=FrozenDict(
+                {
+                    **other.details.thaw(),
+                    "environment_also_changed": True,
+                    "environment_digest_current": current.environment_digest,
+                    "environment_digest_stored": stored.environment_digest,
+                }
+            ),
+        )
+    if environment_changed:
+        return ReuseDecision(
+            decision=ReuseCode.INVALIDATE_ENVIRONMENT,
+            reason="execution environment digest mismatch; invalidating stored result",
+            work_item_id=item_id,
+            details=FrozenDict(
+                {
+                    "stored_status": stored_name,
+                    "environment_digest_current": current.environment_digest,
+                    "environment_digest_stored": stored.environment_digest,
+                }
+            ),
+        )
+    return None
+
+
 def evaluate_reuse(
     *,
     current: ReuseInputs,
@@ -295,6 +439,11 @@ def evaluate_reuse(
             ),
         )
     if status is StoredWorkItemStatus.PENDING:
+        mismatch = _first_mismatch(
+            current, stored, status.value, item_id=item_id, artifacts_verified=True
+        )
+        if mismatch is not None:
+            return mismatch
         return ReuseDecision(
             decision=ReuseCode.EXECUTE_NEW,
             reason="pending never reuses; executing new",
@@ -307,6 +456,11 @@ def evaluate_reuse(
             {"stored_status": status.value, "owner_verdict": _verdict_label(owner_verdict)}
         )
         if verdict is OwnerVerdict.DEFINITELY_DEAD:
+            mismatch = _first_mismatch(
+                current, stored, status.value, item_id=item_id, artifacts_verified=True
+            )
+            if mismatch is not None:
+                return mismatch
             return ReuseDecision(
                 decision=ReuseCode.RECOVER_ABANDONED,
                 reason="owner_dead: prior owner is definitely dead; recovering abandoned claim",
@@ -334,100 +488,25 @@ def evaluate_reuse(
             details=FrozenDict({"stored_status": status.value, "requires_explicit_retry": True}),
         )
 
-    stored_name = status.value
-    if current.producer_provenance != stored.producer_provenance:
-        differing = _provenance_diff(current.producer_provenance, stored.producer_provenance)
-        reported = differing[:MAX_PROVENANCE_DIFF_KEYS_REPORTED]
-        keys_text = ", ".join(reported) if reported else "uncomparable provenance payloads"
-        return ReuseDecision(
-            decision=ReuseCode.INVALIDATE_PROVENANCE,
-            reason=f"producer provenance mismatch on {keys_text}; invalidating stored result",
-            work_item_id=item_id,
-            details=FrozenDict(
-                {
-                    "stored_status": stored_name,
-                    "differing_keys": reported,
-                    "producer_provenance_current": current.producer_provenance.thaw(),
-                    "producer_provenance_stored": stored.producer_provenance.thaw(),
-                }
-            ),
-        )
-    if current.environment_digest != stored.environment_digest:
-        return ReuseDecision(
-            decision=ReuseCode.INVALIDATE_ENVIRONMENT,
-            reason="execution environment digest mismatch; invalidating stored result",
-            work_item_id=item_id,
-            details=FrozenDict(
-                {
-                    "stored_status": stored_name,
-                    "environment_digest_current": current.environment_digest,
-                    "environment_digest_stored": stored.environment_digest,
-                }
-            ),
-        )
-    if current.step_semantic_digest != stored.step_semantic_digest:
-        return ReuseDecision(
-            decision=ReuseCode.INVALIDATE_DEFINITION,
-            reason="step definition digest mismatch; invalidating stored result",
-            work_item_id=item_id,
-            details=FrozenDict(
-                {
-                    "stored_status": stored_name,
-                    "step_semantic_digest_current": current.step_semantic_digest,
-                    "step_semantic_digest_stored": stored.step_semantic_digest,
-                }
-            ),
-        )
-    if current.artifact_checksums != stored.artifact_checksums:
-        return ReuseDecision(
-            decision=ReuseCode.INVALIDATE_ARTIFACT,
-            reason="bound-input artifact checksums mismatch; invalidating stored result",
-            work_item_id=item_id,
-            details=FrozenDict(
-                {
-                    "stored_status": stored_name,
-                    "artifact_checksums_current": current.artifact_checksums,
-                    "artifact_checksums_stored": stored.artifact_checksums,
-                }
-            ),
-        )
-    if current.work_item_digest != stored.work_item_digest:
-        return ReuseDecision(
-            decision=ReuseCode.INVALIDATE_INPUT,
-            reason="work-item input digest mismatch; invalidating stored result",
-            work_item_id=item_id,
-            details=FrozenDict(
-                {
-                    "stored_status": stored_name,
-                    "work_item_digest_current": current.work_item_digest,
-                    "work_item_digest_stored": stored.work_item_digest,
-                }
-            ),
-        )
-    if not artifacts_verified:
-        return ReuseDecision(
-            decision=ReuseCode.INVALIDATE_ARTIFACT,
-            reason="stored artifacts failed verification",
-            work_item_id=item_id,
-            details=FrozenDict(
-                {
-                    "stored_status": stored_name,
-                    "artifacts_verified": False,
-                    "artifact_checksums_current": current.artifact_checksums,
-                    "artifact_checksums_stored": stored.artifact_checksums,
-                }
-            ),
-        )
+    mismatch = _first_mismatch(
+        current,
+        stored,
+        status.value,
+        item_id=item_id,
+        artifacts_verified=artifacts_verified,
+    )
+    if mismatch is not None:
+        return mismatch
     if status is StoredWorkItemStatus.COMPLETED:
         return ReuseDecision(
             decision=ReuseCode.REUSE,
             reason="every compatibility axis matches; reusing stored result",
             work_item_id=item_id,
-            details=FrozenDict({"stored_status": stored_name}),
+            details=FrozenDict({"stored_status": status.value}),
         )
     return ReuseDecision(
         decision=ReuseCode.RETRY_FAILED,
         reason="every compatibility axis matches; retrying failed attempt",
         work_item_id=item_id,
-        details=FrozenDict({"stored_status": stored_name}),
+        details=FrozenDict({"stored_status": status.value}),
     )

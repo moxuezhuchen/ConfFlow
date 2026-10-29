@@ -92,7 +92,7 @@ def test_mlip_sp_mode_fills_pick_as_none_in_native() -> None:
 def test_mlip_registry_contract_is_registered() -> None:
     registry = default_registry()
     contract = registry.executor(ExecutorCapability.MLIP)
-    assert contract.contract_version == "confflow.contract.executor.mlip.v1"
+    assert contract.contract_version == "confflow.contract.executor.mlip.v2"
     assert [port.name for port in contract.input_ports] == ["structure"]
     assert [port.name for port in contract.output_ports] == ["structures", "results", "artifacts"]
     artifacts = contract.output_ports[2]

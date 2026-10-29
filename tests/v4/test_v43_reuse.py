@@ -320,13 +320,14 @@ class TestCompatibilityOrder:
         decision = _decide(current, _inputs(), StoredWorkItemStatus.COMPLETED)
         assert decision.decision is ReuseCode.INVALIDATE_PROVENANCE
 
-    def test_environment_beats_definition(self) -> None:
+    def test_definition_reported_when_environment_also_changed(self) -> None:
         current = _inputs(
             environment_digest="sha256:" + "ee" * 32,
             step_semantic_digest="sha256:" + "11" * 32,
         )
         decision = _decide(current, _inputs(), StoredWorkItemStatus.COMPLETED)
-        assert decision.decision is ReuseCode.INVALIDATE_ENVIRONMENT
+        assert decision.decision is ReuseCode.INVALIDATE_DEFINITION
+        assert decision.details["environment_also_changed"] is True
 
     def test_definition_beats_artifact(self) -> None:
         current = _inputs(
