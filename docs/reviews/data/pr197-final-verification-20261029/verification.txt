@@ -1,0 +1,6 @@
+F1 combined identity cases: 9 refused, no launch or registration rewrite
+F1 script-to-MLIP workflow: refused, original identity retained
+F2 real cross-commit upgrade: refused without changing old run; fresh output correct
+F3 bare-name allowlist: completed, 14 launches
+N1–N4 original scenarios: 7 passed
+REPORT /tmp/confflow-pr197-final-evidence.wmi3wiiy/results.json

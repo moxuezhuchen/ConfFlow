@@ -1,0 +1,10 @@
+{
+  "root": "/tmp/confflow-pr197-workflow.jlej75_k",
+  "first_status": "completed",
+  "second_status": null,
+  "error": "PersistenceError: refusing to publish step 'uma': 1 items lack durable results (wi:uma:all); gap code=publication_durability_gap; reasons=wi:uma:all=failed:invalidate_input",
+  "before_x": 1.0,
+  "after_x": null,
+  "environment_changed": false,
+  "input_identity_replaced": false
+}

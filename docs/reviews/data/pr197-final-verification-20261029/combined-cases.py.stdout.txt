@@ -1,0 +1,96 @@
+{
+  "root": "/tmp/confflow-pr197-extra.tnu3hmis",
+  "combined_axes": [
+    {
+      "state": "pending",
+      "changed_axis": "input",
+      "status": null,
+      "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_input",
+      "executed": [],
+      "identity_overwritten": false
+    },
+    {
+      "state": "pending",
+      "changed_axis": "definition",
+      "status": null,
+      "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_definition",
+      "executed": [],
+      "identity_overwritten": false
+    },
+    {
+      "state": "pending",
+      "changed_axis": "provenance",
+      "status": null,
+      "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_provenance",
+      "executed": [],
+      "identity_overwritten": false
+    },
+    {
+      "state": "running_dead",
+      "changed_axis": "input",
+      "status": null,
+      "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_input",
+      "executed": [],
+      "identity_overwritten": false
+    },
+    {
+      "state": "running_dead",
+      "changed_axis": "definition",
+      "status": null,
+      "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_definition",
+      "executed": [],
+      "identity_overwritten": false
+    },
+    {
+      "state": "running_dead",
+      "changed_axis": "provenance",
+      "status": null,
+      "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_provenance",
+      "executed": [],
+      "identity_overwritten": false
+    },
+    {
+      "state": "interrupted",
+      "changed_axis": "input",
+      "status": null,
+      "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_input",
+      "executed": [],
+      "identity_overwritten": false
+    },
+    {
+      "state": "interrupted",
+      "changed_axis": "definition",
+      "status": null,
+      "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_definition",
+      "executed": [],
+      "identity_overwritten": false
+    },
+    {
+      "state": "interrupted",
+      "changed_axis": "provenance",
+      "status": null,
+      "error": "PersistenceError: refusing to publish step 's_opt': 1 items lack durable results (wi:s_opt:c000); gap code=publication_durability_gap; reasons=wi:s_opt:c000=failed:invalidate_provenance",
+      "executed": [],
+      "identity_overwritten": false
+    }
+  ],
+  "named_allowlist": {
+    "status": "completed",
+    "launches": [
+      "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+      "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+      "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+      "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+      "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+      "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+      "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+      "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+      "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+      "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+      "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+      "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+      "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb",
+      "/tmp/confflow-pr197-extra.tnu3hmis/named-allowlist/b/xtb"
+    ]
+  }
+}

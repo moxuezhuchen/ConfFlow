@@ -1,0 +1,10 @@
+{
+  "root": "/tmp/confflow-pr197-workflow.sr2z3ya0",
+  "first_status": "completed",
+  "second_status": "completed",
+  "error": null,
+  "before_x": 1.0,
+  "after_x": 2.0,
+  "environment_changed": true,
+  "input_identity_replaced": true
+}

@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "/opt/ConfFlow/docs/reviews/data/pr197-verification-20261029/upgrade-reuse.py", line 33, in <module>
+    report = V4RunApplication(supervisor=NativeProcessSupervisor()).run(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/confflow-pr197-final.RiClQi/confflow/application/v4_run.py", line 495, in run
+    return self._run_generation(request, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/confflow-pr197-final.RiClQi/confflow/application/v4_run.py", line 532, in _run_generation
+    state = self._load_or_init_run_state(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/confflow-pr197-final.RiClQi/confflow/application/v4_run.py", line 797, in _load_or_init_run_state
+    raise _definition_mismatch_error(existing.definition_digest, definition_digest)
+confflow.domain.errors.DomainError: run root already holds a different workflow definition (was 'sha256:7214abdbe2c6f57306515d7594185b9810927ead6a98e4025931b403b2435593', now 'sha256:1d337c240a2fd456a1ed3fa489cdfb6c12a850f112dc132ae24438739bce1854'); use a fresh run root or explicit migration

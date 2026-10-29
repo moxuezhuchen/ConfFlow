@@ -1,0 +1,26 @@
+{
+  "bound_checksum_changes_work_item_digest": true,
+  "separate_artifact_axis_empty": true,
+  "decisions": [
+    {
+      "state": "pending",
+      "decision": "invalidate_input"
+    },
+    {
+      "state": "running",
+      "decision": "invalidate_input"
+    },
+    {
+      "state": "completed",
+      "decision": "invalidate_input"
+    },
+    {
+      "state": "failed",
+      "decision": "invalidate_input"
+    },
+    {
+      "state": "interrupted",
+      "decision": "invalidate_input"
+    }
+  ]
+}

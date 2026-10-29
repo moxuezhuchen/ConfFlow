@@ -1,0 +1,1 @@
+{"mode": "baseline", "package_file": "/tmp/confflow-review-20261029.h7Jh9l/confflow/__init__.py", "status": "completed", "working_topology": null, "topology_patch": null, "provenance": null, "diagnostics": ["mlip_completed"]}
