@@ -1,0 +1,1 @@
+{"analyses":[],"artifacts":[],"content_schema":"confflow.run_result_manifest.v1","definition_digest":"sha256:6d2111da54c2a051c1222fffbe94603e34813796fb1483efa1237b23f4d71c60","generation_id":"gen-2541ff038d494560a7228fe8574ea39c","provenance":{"commit":null,"dirty":null,"package":"confflow","version":"2.1.6"},"results":[],"run_id":"application","status":"failed","steps":[]}

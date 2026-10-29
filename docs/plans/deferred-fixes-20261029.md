@@ -10,4 +10,7 @@
 | D4 | 旧 MLIP 契约结果被拒绝时，步骤级 provenance 拒绝的诊断里没有"使用新 run root"提示（run 级拒绝信息里有） | 只影响诊断可读性 | 在步骤级失效诊断中补充提示 | 已修（refactor/deferred-20261029） |
 | D5 | 被消费的绑定输入 artifact 从不做字节校验：`verify_artifact` 只在 batch.py:1107 校验 COMPLETED 条目自己的产物 | 同一 run 中上游输出被篡改时，会在其生产步骤被拒绝；只有 run 外部传入的 artifact 输入（`run_inputs.artifacts`，v4_run.py:855）会命中旧字节，而 CLI / 入口目前只传结构 | 用户 2026-10-29 决定修复：`BatchStepExecutor` 在复用判定、登记写入和启动之前，对每个带 checksum 的绑定输入调用 `verify_artifact`（同一步骤内按 id + checksum + locator 去重，只哈希一次）；校验失败时该条目以 `invalidate_artifact` 拒绝，不启动、不复用、不改写登记。注意：手动删除上游大文件（如 .chk / .gbw）后，绑定这些文件的下游条目续跑也会被拒绝。惰性的 `artifact_checksums` 字段仍保持现状（D3） | 已修（refactor/deferred-20261029） |
 
+
+PR #198 验收（`docs/reviews/pr198-acceptance-20261029.md`）A1 / P2：D4、D5 的诊断在拒绝发布的异常中丢失。已修：异常保留 `reasons=` 段，后面追加最多 3 个条目的诊断（完整清单在异常的 `item_failures` 属性上）；`run_generation.json` / `generation_ownership.json` 的 failure.message 超过 2000 字符时保留首尾、截掉中间。`run_result.json` 清单没有失败信息字段（schema 本身如此），未改动。
+
 不计入遗留：R6 维持"测量后暂不改"；原 review 复现脚本的 tuple 键问题已解决。统一启动描述、科学输出最低契约属于后续架构改进建议（见 `architecture-review-20261029.md` 末尾），尚未实施。

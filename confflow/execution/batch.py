@@ -31,7 +31,7 @@ from ..domain.errors import PublicationError
 from ..domain.result import ResultSet
 from ..domain.step_result import StepProvenance, StepResult
 from ..domain.structure import StructureSet
-from ..domain.work_item import WorkItem, WorkItemResult
+from ..domain.work_item import ResultError, WorkItem, WorkItemResult
 from ..persistence.artifacts import ArtifactIntegrityError, verify_artifact
 from ..persistence.contracts import (
     CorruptStateError,
@@ -156,6 +156,28 @@ class InMemoryReuseStore:
             return
         with self._lock:
             self._results[result.semantic_digest] = result
+
+
+#: Number of gap items whose messages are listed in a publication refusal.
+_LISTED_ITEMS: int = 3
+
+#: Instance attribute carrying a publication refusal's per-item failures.
+_ITEM_FAILURES_ATTR: str = "item_failures"
+
+
+def _publication_refusal(
+    message: str, item_failures: Mapping[str, ResultError]
+) -> PersistenceError:
+    """Return the publication refusal *message* with each gap item's failure attached.
+
+    The error stays a plain ``PersistenceError`` so the recorded failure type and
+    every ``except`` clause are unchanged.  The structured view is the instance
+    attribute ``item_failures`` (work item id -> ``ResultError``), which callers
+    read with ``getattr(exc, "item_failures", {})``.
+    """
+    error = PersistenceError(message)
+    setattr(error, _ITEM_FAILURES_ATTR, FrozenDict(item_failures))
+    return error
 
 
 def _item_error_diagnostics(item: WorkItemResult, *, step_id: str) -> tuple[Diagnostic, ...]:
@@ -623,12 +645,34 @@ class BatchStepExecutor:
                 return f"{item_id}={item.status.value}:{code}"
 
             reasons = sorted(_gap_reason(item_id) for item_id in gap_ids)
-            raise PersistenceError(
+            # Each gap item's own message (D4 remedy, D5 port/artifact/locator/
+            # reason) rides after the unchanged reasons segment; the same
+            # failures are available structurally on the raised error.
+            item_failures: dict[str, ResultError] = {}
+            for item_id in gap_ids:
+                item_error = by_id[item_id].error
+                if item_error is not None:
+                    item_failures[item_id] = item_error
+            # At most three item messages ride in the text; the full set stays on
+            # the error's ``item_failures`` so a large refusal cannot push the
+            # reasons segment or the remedy out of bounded failure records.
+            ordered_failures = sorted(item_failures.items())
+            listed = [
+                f"{item_id}: {error.message}" for item_id, error in ordered_failures[:_LISTED_ITEMS]
+            ]
+            omitted = len(ordered_failures) - len(listed)
+            if omitted > 0:
+                listed.append(f"(+{omitted} more items; full list on the error's item_failures)")
+            item_text = " | ".join(listed)
+            message = (
                 f"refusing to publish step {step.step_id!r}: "
                 f"{len(gap_ids)} items lack durable results "
                 f"({', '.join(sorted(gap_ids))}); gap code={gap.code}; "
                 f"reasons={', '.join(reasons)}"
             )
+            if item_text:
+                message += f"; item diagnostics: {item_text}"
+            raise _publication_refusal(message, item_failures)
         if request.ownership_guard is not None:
             # CONTRACT 7: once a newer generation owns the run root, a
             # superseded writer must not publish step-level truth either.

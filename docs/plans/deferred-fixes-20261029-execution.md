@@ -48,3 +48,31 @@ D3：只读评估，不改代码。核对 `_current_reuse_inputs` / `_stored_reu
 
 测试（先写，并确认修复前失败）：(i) 上游输出被篡改、下游 COMPLETED 续跑时，拒绝复用，0 次启动；(ii) 下游 PENDING / 新执行在启动前被拒绝，0 次启动；(iii) 通过 `run_inputs.artifacts` 从 run 外部传入的输入被篡改时，被拒绝；(iv) 未篡改的对照组正常复用 / 执行；(v) 同一 artifact 被多个 item 绑定时，只哈希一次（例如对 `verify_artifact` 计数）。
 回归：`test_v43_*.py`、`test_v45_resume*.py`、`test_arch_review_1029_resume_identity.py`、`test_pr197_mlip_upgrade_reuse.py`、`test_deferred_d4_invalidation_hint.py`、artifact / assembly / checkpoint 相关测试（grep `verify_artifact`、`ArtifactRef`）。
+
+## 任务 E — A1（PR #198 验收 P2）：拒绝诊断传到调用方
+
+来源：`docs/reviews/pr198-acceptance-20261029.md`（复现材料在 `docs/reviews/data/pr198-acceptance-20261029/`）。
+拥有文件：`confflow/execution/batch.py`、`tests/v4/test_deferred_d4_invalidation_hint.py`、`tests/v4/test_deferred_d5_input_artifact_bytes.py`；新测试 `tests/v4/test_pr198_refusal_diagnostics.py`。
+
+问题：batch.py 约 620 行的 `_gap_reason()` 只取 `item.error.code`，随后抛出的 `PersistenceError` 丢掉了工作项失败结果中的 message / details。结果是：D4 的"use a fresh run root or explicit migration"提示和 D5 的端口 / artifact id / locator / 校验失败原因，调用方都看不到；`V4RunApplication.run()` 的异常、`run_generation.json` / `generation_ownership.json` 的 failure 字段里只有通用的 `reasons=...=failed:invalidate_artifact`。
+
+修复：
+1. 拒绝发布时抛出的异常保留每个 gap 工作项的诊断：在现有消息末尾追加每个条目的 error message（D4 / D5 消息里已经包含端口、artifact id、locator、原因和提示）。`reasons=<id>=<status>:<code>` 这一段的格式不变（控制方和测试依赖它）；追加部分放在后面，例如 `; item diagnostics: <id>: <message>`。用 grep 检查所有解析或匹配该异常消息的代码和测试（`gap code=`、`reasons=`、`publication_durability_gap`），确认没有被破坏，尤其是以 `$` 结尾的正则。
+2. 同时提供结构化出口：`PersistenceError` 上附带每个条目的 code / message / details（例如 `exc.item_failures`），前提是该异常类型允许，且不需要改其他模块；如果需要改其他模块，先停下来报告。运行失败记录直接使用 `str(exc)`，所以第 1 点就足以让它可见。
+3. 不改变拒绝语义：仍然拒绝发布，不持久化临时结果，不改写登记。
+
+测试（先写，并确认修复前失败；不使用 spy，只断言对外可见的结果）：
+- 通过公开的 `execute_step_resumable()`，覆盖 D4 的 provenance、input、definition 三种拒绝：抛出的异常文本包含"use a fresh run root or explicit migration"。
+- D5：绑定输入被篡改、缺失、符号链接越出 run root 三种情况，异常文本包含端口、artifact id、locator 和原因。
+- 通过正常的 `V4RunApplication.run()` 与 `RunInputs.artifacts` 传入被篡改的外部 artifact：调用方异常和 `run_generation.json` 的 failure 字段中都能看到 artifact id / locator / 提示。参考 `docs/reviews/data/pr198-acceptance-20261029/probe.py`。
+- 把 D4 / D5 测试中基于 spy 的断言改为（或补充为）对外可见的断言。
+回归：`test_v43_*.py`、`test_v45_resume*.py`、`test_arch_review_1029_resume_identity.py`、`test_pr197_mlip_upgrade_reuse.py`，以及所有匹配 `refusing to publish`、`gap code=`、`reasons=` 的测试和代码。
+
+### 任务 E 补充 — 失败记录截断（2026-10-29）
+
+问题：`v4_run.py:691` 记录失败时使用 `str(error)[:2000]`。一个步骤中被拒条目很多时，`reasons=` 这一段本身就可能超过 2000 字符，追加在末尾的条目诊断（含提示）会被整段截掉。JobDesk 会读取 `failure.message` 并展示给用户（confflow_backend.py:1225）。
+拥有文件：`confflow/execution/batch.py`、`confflow/application/v4_run.py`、`tests/v4/test_pr198_refusal_diagnostics.py`。
+修复：
+1. batch.py：`item diagnostics` 只列出前 3 个条目（按 id 排序），其余写成 `(+N more items; full list on the error's item_failures)`。`item_failures` 属性仍然保留全部条目。
+2. v4_run.py：消息超过 2000 字符时，保留开头约 1000 字符和结尾约 900 字符，中间替换为 ` … [K chars omitted] … `，总长度不超过 2000。不超过 2000 时原样记录。
+3. 测试：一个步骤中有 50 个被拒条目时，`run_generation.json` 的 failure.message 长度 ≤ 2000，开头包含 `refusing to publish`，并且包含提示 `use a fresh run root or explicit migration` 和至少一个 artifact id；异常文本中最多列出 3 条条目诊断，并带有 `+47 more`；`item_failures` 中有 50 条。短消息的已有用例仍然原样记录。

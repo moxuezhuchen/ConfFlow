@@ -73,12 +73,14 @@ def test_pending_invalidation_names_fresh_run_root(
     m._seed(tmp_path, case, "pending", **overrides)
     messages = _capture_messages(monkeypatch)
 
-    with pytest.raises(PersistenceError, match=f"failed:{code}"):
+    with pytest.raises(PersistenceError, match=f"failed:{code}") as excinfo:
         m._run(case, case.req_a, m._Recorder(), "d4-resume")
 
     message = _invalidation_message(messages)
     assert HINT in message, message
     assert "nothing was re-executed" in message
+    # The caller-visible refusal carries the same remedy (PR #198 A1).
+    assert HINT in str(excinfo.value), str(excinfo.value)
 
 
 def test_artifact_invalidation_names_fresh_run_root(
@@ -109,11 +111,12 @@ def test_artifact_invalidation_names_fresh_run_root(
     artifact_file.write_bytes(b"tampered\n")
     messages = _capture_messages(monkeypatch)
 
-    with pytest.raises(PersistenceError, match="failed:invalidate_artifact"):
+    with pytest.raises(PersistenceError, match="failed:invalidate_artifact") as excinfo:
         m._run(case, case.req_a, m._Recorder(), "d4-artifact")
 
     message = _invalidation_message(messages)
     assert HINT in message, message
+    assert HINT in str(excinfo.value), str(excinfo.value)
 
 
 def test_hint_wording_matches_run_level_refusal() -> None:

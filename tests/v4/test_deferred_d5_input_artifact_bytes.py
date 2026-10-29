@@ -137,6 +137,16 @@ def _assert_bound_diagnostic(seen: list[dict[str, Any]], *, count: int = 1) -> N
         assert "checksum mismatch" in kw["details"]["reason"]
 
 
+def _assert_caller_refusal(excinfo: pytest.ExceptionInfo[PersistenceError]) -> None:
+    """Check that the exception a caller receives names the port, artifact, locator and remedy."""
+    text = str(excinfo.value)
+    assert "bound input 'bound'" in text, text
+    assert "artifact 'up'" in text, text
+    assert f"run_relative:{UPSTREAM_REL}" in text, text
+    assert "checksum mismatch" in text, text
+    assert HINT in text, text
+
+
 # (i) tampered upstream output, downstream COMPLETED: refused, no reuse, no launch.
 def test_tampered_upstream_refuses_completed_reuse(
     tmp_path: Path, synthetic: list[dict[str, Any]]
@@ -151,12 +161,13 @@ def test_tampered_upstream_refuses_completed_reuse(
     upstream.write_bytes(TAMPERED)
     before = _snapshot(case, item)
     recorder = m._Recorder()
-    with pytest.raises(PersistenceError, match="failed:invalidate_artifact"):
+    with pytest.raises(PersistenceError, match="failed:invalidate_artifact") as excinfo:
         _run(case, [item], recorder, "d5-reuse")
 
     assert recorder.calls == []
     assert _snapshot(case, item) == before
     _assert_bound_diagnostic(synthetic)
+    _assert_caller_refusal(excinfo)
 
 
 # (ii) tampered upstream, downstream PENDING or never registered: refused before launch.
@@ -173,12 +184,13 @@ def test_tampered_upstream_refuses_new_execution(
     before = _snapshot(case, item)
 
     recorder = m._Recorder()
-    with pytest.raises(PersistenceError, match="failed:invalidate_artifact"):
+    with pytest.raises(PersistenceError, match="failed:invalidate_artifact") as excinfo:
         _run(case, [item], recorder, "d5-new")
 
     assert recorder.calls == []
     assert _snapshot(case, item) == before
     _assert_bound_diagnostic(synthetic)
+    _assert_caller_refusal(excinfo)
 
 
 # (iii) a run-supplied input artifact (run_inputs.artifacts) tampered in the run root.
@@ -197,12 +209,14 @@ def test_tampered_run_supplied_input_is_refused(
     supplied.write_bytes(b"edited-input\n")
 
     recorder = m._Recorder()
-    with pytest.raises(PersistenceError, match="failed:invalidate_artifact"):
+    with pytest.raises(PersistenceError, match="failed:invalidate_artifact") as excinfo:
         _run(case, [item], recorder, "d5-supplied")
 
     assert recorder.calls == []
     assert synthetic and "bound input" in str(synthetic[-1]["message"])
     assert "inputs/external.dat" in str(synthetic[-1]["message"])
+    assert "inputs/external.dat" in str(excinfo.value), str(excinfo.value)
+    assert HINT in str(excinfo.value), str(excinfo.value)
 
 
 # (iv) controls: untampered bound inputs reuse or execute exactly as before.
@@ -270,12 +284,13 @@ def test_shared_tampered_artifact_is_hashed_once_and_refuses_every_item(
 
     monkeypatch.setattr(batch_module, "verify_artifact", counting)
     recorder = m._Recorder()
-    with pytest.raises(PersistenceError, match="failed:invalidate_artifact"):
+    with pytest.raises(PersistenceError, match="failed:invalidate_artifact") as excinfo:
         _run(case, items, recorder, "d5-dedupe-bad")
 
     assert calls.count("up") == 1
     assert recorder.calls == []
     _assert_bound_diagnostic(synthetic, count=3)
+    _assert_caller_refusal(excinfo)
 
 
 # Semantics kept outside the D5 rule.
