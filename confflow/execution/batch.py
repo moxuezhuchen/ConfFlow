@@ -51,6 +51,7 @@ from ..persistence.publication import (
 from ..persistence.recovery import owner_identity_current, reconcile_owner
 from ..persistence.reuse import ReuseInputs, build_producer_provenance, evaluate_reuse
 from .checks import ScientificCheck
+from .command_resolution import ResolvedCommand
 from .contracts import ExecutionBinding, ExecutionEnvironment
 from .native import ProgramAdapter
 from .profiles import ResultProfile
@@ -280,6 +281,10 @@ class StepExecutionRequest:
     #: a superseded generation raises ``StaleGenerationError`` and never
     #: replaces the current generation's durable step truth.
     generation_id: str | None = None
+    #: The one command resolution of the step's executable (configured name and absolute file),
+    #: made by the application on the step's effective environment.  Items reuse it for policy,
+    #: measurement and launch.  ``None`` means a direct caller: each item resolves at its entry.
+    resolved_command: ResolvedCommand | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "items", tuple(self.items))
@@ -386,6 +391,7 @@ class BatchStepExecutor:
             environment=request.environment,
             native_env=request.native_env,
             expected_script_identity=step.script_identity,
+            resolved_command=request.resolved_command,
         )
         fail_fast = (
             step.scheduler.on_failure is not None and step.scheduler.on_failure.value == "fail_fast"
@@ -536,6 +542,7 @@ class BatchStepExecutor:
             native_env=native_env,
             executor_capability=request.executor_capability,
             expected_script_identity=step.script_identity,
+            resolved_command=request.resolved_command,
         )
         stop_event = threading.Event()
         stop_event_proxy = request.should_cancel

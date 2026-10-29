@@ -1,0 +1,50 @@
+[
+  {
+    "group": 0,
+    "exit_code": 0,
+    "seconds": 266.86,
+    "files": 31
+  },
+  {
+    "group": 1,
+    "exit_code": 0,
+    "seconds": 352.89,
+    "files": 31
+  },
+  {
+    "group": 2,
+    "exit_code": 0,
+    "seconds": 175.46,
+    "files": 31
+  },
+  {
+    "group": 3,
+    "exit_code": 0,
+    "seconds": 128.38,
+    "files": 31
+  },
+  {
+    "group": 4,
+    "exit_code": 0,
+    "seconds": 186.93,
+    "files": 30
+  },
+  {
+    "group": 5,
+    "exit_code": 0,
+    "seconds": 165.7,
+    "files": 30
+  },
+  {
+    "group": 6,
+    "exit_code": 0,
+    "seconds": 136.22,
+    "files": 30
+  },
+  {
+    "group": 7,
+    "exit_code": 0,
+    "seconds": 253.02,
+    "files": 30
+  }
+]

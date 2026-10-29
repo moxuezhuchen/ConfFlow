@@ -28,6 +28,7 @@ __all__ = [
     "enforce_command_policy",
     "launch_environment",
     "locate_command",
+    "pinned_or_located",
     "resolve_and_enforce_command",
     "resolve_command",
 ]
@@ -80,6 +81,26 @@ def resolve_command(configured: str, env: Mapping[str, str]) -> ResolvedCommand:
     return resolved
 
 
+def pinned_or_located(
+    configured: str, env: Mapping[str, str], pinned: ResolvedCommand | None
+) -> ResolvedCommand | None:
+    """Return the command a launch uses: the pinned resolution, else one lookup in *env*.
+
+    A pinned resolution is the one the application layer resolved and measured for this
+    step.  The item reuses it for policy and launch and never searches PATH again, so the
+    file that was measured is the file that starts.  Without a pin (a direct low-level
+    caller) the name is resolved here, once, for the caller's own entry.
+    """
+    if pinned is None:
+        return locate_command(configured, env)
+    if pinned.configured != configured:
+        raise DomainError(
+            f"resolved command {pinned.configured!r} does not name the configured executable "
+            f"{configured!r}; refusing to launch a different program"
+        )
+    return pinned
+
+
 def enforce_command_policy(
     binding: Any,
     *,
@@ -114,15 +135,17 @@ def resolve_and_enforce_command(
     label: str,
     write_paths: tuple[str, ...] = (),
     unresolved_message: str | None = None,
+    pinned: ResolvedCommand | None = None,
 ) -> ResolvedCommand:
-    """Resolve once in *env*, then enforce policy, then fail when not runnable.
+    """Resolve once in *env* (or reuse *pinned*), then enforce policy, then fail when not runnable.
 
     The policy is checked before the not-runnable error, so a program that is both
     forbidden and missing is reported as forbidden, and nothing is launched.
     ``unresolved_message`` replaces the default not-runnable text when a caller has its own
-    wording for it (the native path keeps its measurement wording).
+    wording for it (the native path keeps its measurement wording).  ``pinned`` is the
+    application's resolution for the same configured name; it is reused, not searched again.
     """
-    resolved = locate_command(configured, env)
+    resolved = pinned_or_located(configured, env, pinned)
     enforce_command_policy(
         binding, configured=configured, resolved=resolved, write_paths=write_paths, label=label
     )

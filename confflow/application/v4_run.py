@@ -269,14 +269,15 @@ def _mlip_interpreter(binding: Any) -> str:
 
 def _enforce_mlip_interpreter_policy(
     binding: Any, *, step_id: str, run_root: str, native_env: Mapping[str, str] | None
-) -> str:
+) -> ResolvedCommand | None:
     """Resolve the MLIP interpreter once on the step's effective environment and enforce policy.
 
     The interpreter is resolved on the same environment the launch uses (``native_env``, the
     step snapshot), and the policy is checked by configured name and resolved real path before
-    any version probe or computation starts.  Returns the absolute interpreter the identity
-    and the launch both name.  An interpreter that does not resolve is returned as configured
-    (the identity then fails closed and the executor fails the item, as before).
+    any version probe or computation starts.  Returns that one resolution, which the identity
+    and the launch both name and which the batch hands to every item.  ``None`` when the
+    interpreter does not resolve (the identity then fails closed and the executor fails the
+    item, as before).
     """
     from ..execution.command_resolution import (
         enforce_command_policy,
@@ -294,7 +295,7 @@ def _enforce_mlip_interpreter_policy(
         label=f"step {step_id!r} executable",
         check_program=True,
     )
-    return resolved.absolute if resolved is not None else interpreter
+    return resolved
 
 
 def _mlip_runtime_digest(
@@ -925,6 +926,9 @@ class V4RunApplication:
         """
         registry = self._active_registry
         contract = registry.resolve_executor(planned.executor)
+        # The one resolution of the step's executable (configured name and absolute file).  It
+        # is measured here and handed to batch so every item launches the same file.
+        resolved_command: ResolvedCommand | None = None
         # The registry returns the executor CLASS; application instantiates
         # it directly with no capability switch and no dynamic fallback.
         # Unregistered capabilities (analysis until wave-2 F) fail closed
@@ -975,6 +979,7 @@ class V4RunApplication:
                     "file on the effective environment PATH"
                 ),
             )
+            resolved_command = resolved
             environment = self._measure_environment(
                 planned=planned,
                 binding=binding,
@@ -1031,11 +1036,16 @@ class V4RunApplication:
             is_mlip = planned.executor is ExecutorCapability.MLIP
             if is_mlip:
                 # F1: the interpreter must pass the full policy before any version probe
-                interpreter = _enforce_mlip_interpreter_policy(
+                resolved_command = _enforce_mlip_interpreter_policy(
                     binding,
                     step_id=planned.step_id,
                     run_root=run_root,
                     native_env=native_env,
+                )
+                interpreter = (
+                    resolved_command.absolute
+                    if resolved_command is not None
+                    else _mlip_interpreter(binding)
                 )
                 executable_digest = _mlip_runtime_digest(binding, native_env, interpreter)
             environment = build_pure_environment(
@@ -1106,6 +1116,7 @@ class V4RunApplication:
             should_cancel=request.should_cancel,
             ownership_guard=_ownership_guard,
             generation_id=generation_id,
+            resolved_command=resolved_command,
         )
         with SqliteWorkItemStore.open(store_path(run_root, planned.step_id)) as store:
             return batch.execute_step_resumable(

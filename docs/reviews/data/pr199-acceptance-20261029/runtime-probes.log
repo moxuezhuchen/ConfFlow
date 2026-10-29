@@ -1,0 +1,7 @@
+/tmp/confflow-pr199-acceptance/runtime-results.json
+mlip_allow_name completed []
+mlip_allow_absolute completed []
+script_allow_name completed []
+script_allow_absolute completed []
+backend: {'first': 'failed', 'resumed': 'completed', 'fresh': 'completed'}
+native chosen: ['B']

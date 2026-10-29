@@ -532,8 +532,9 @@ class MlipExecutor:
         binding = context.execution_binding
         interpreter = binding.executable if binding and binding.executable else "python3"
         work_dir = context.attempt_dir(work_item)
-        # The one resolution: the interpreter is resolved on the launch environment, the policy
-        # is checked before any file is written, and the launch names the resolved file.
+        # The one resolution: the application's pinned resolution is reused when present (the
+        # file that was measured), else the interpreter is resolved on the launch environment.
+        # The policy is checked before any file is written, and the launch names that file.
         resolved = resolve_and_enforce_command(
             binding,
             interpreter,
@@ -541,6 +542,7 @@ class MlipExecutor:
             label="mlip interpreter",
             write_paths=(work_dir,),
             unresolved_message=_unresolved_interpreter_message(interpreter),
+            pinned=context.resolved_command,
         )
         executable = resolved.absolute
         if not RUNNER_PATH.is_file():

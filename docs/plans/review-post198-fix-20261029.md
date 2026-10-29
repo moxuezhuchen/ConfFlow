@@ -74,3 +74,19 @@
 V1–V3 已修复，验收结果见 PR 描述。不阻断合并的遗留项：
 - `application/execution/workflow_adapter.py` 的 `_resolve_executable` 仍按控制进程 PATH 解析。它用于控制服务测量自己启动的程序，不在步骤 binding / 启动路径上。
 - `script_registry._resolve_interpreter_identity` 在注册时仍按控制进程 PATH 解析解释器身份；现在启动前会按内容（sha256）校验步骤 PATH 解析到的解释器，不一致时 fail closed。需要用别的解释器时，应在注册时使用绝对路径。
+
+## 任务 D — A2（PR #199 验收 P1）：解析结果贯穿到启动
+
+来源：`docs/reviews/pr199-acceptance-20261029.md`，复现脚本 `docs/reviews/data/pr199-acceptance-20261029/resolution_pin_probe.py`。
+拥有文件：`confflow/execution/batch.py`（StepExecutionRequest → ItemExecutionContext 的传递）、`confflow/execution/work_item_executor.py`、`confflow/execution/mlip_executor.py`（只限解释器解析 / 启动部分，不动 V1 的结果判定和 `stored_result_reusable`）、`confflow/application/v4_run.py`、`confflow/execution/command_resolution.py`；新测试 `tests/v4/test_pr199_resolution_pin.py`；以及构造这些 request / context 时需要补字段的测试（列出来，不放宽断言）。
+
+问题：应用层解析出 A 并测量（v4_run.py 约 966 行原生、约 1034 行 MLIP），但交给 batch 的仍是原始 binding（约 1099 行）；`work_item_executor.py` 约 1151 行（以及 `_enforce_policy`）和 `mlip_executor.py` 约 533 / 537 行在启动前重新按 PATH 查找。测量之后，如果 PATH 中更靠前的目录出现了同名程序 B，就会启动 B，结果却按 A 的身份登记；之后恢复 A 续跑，会 reuse_hit，复用 B 的结果。原生计算中，同一步的两个工作项可以分别启动 A 和 B，却登记在同一个环境摘要下。
+
+修复：
+1. `StepExecutionRequest` 和 `ItemExecutionContext` 增加可选字段 `resolved_command: ResolvedCommand | None`（同时保留原始配置名和绝对路径）。batch 把它从 request 原样传进每个 item 的 context。
+2. v4_run：原生和 MLIP 步骤把应用层那一次解析得到的 `ResolvedCommand` 放进 request；测量也使用这一个对象。ConfGen 已经是绝对路径，保持不变（可以同样放入，但不要改变行为）。
+3. 执行器：context 中有 `resolved_command` 时，策略检查（名称规则用 `configured`，绝对路径规则用 `real_path`）和启动都只使用它，不再搜索 PATH。没有时（直接调用的底层入口），在自己的入口解析一次，之后的策略检查和启动都复用这次结果，同一入口内不再查第二次。
+4. 不得重新引入 V2：裸名称白名单必须继续生效（策略检查仍要看到原始名称）。
+5. 测试（先写，并确认修复前失败；通过公共入口，不 mock 解析、测量、batch 或持久化）：(i) MLIP：测量 A 之后，更靠前的 PATH 目录出现 B → 启动的仍是 A（或明确拒绝），绝不能以 A 的身份保存 B 的结果；移除 B 后同 root 续跑，结果与 A 一致。(ii) 原生：`max_parallel_items: 1`，第一个工作项启动后出现 B → 两个工作项都启动 A。(iii) 无 resolved_command 的直接调用：同一入口内只解析一次（例如对 `locate_command` 计数）。参考 `resolution_pin_probe.py`。
+回归：`test_executor_command_contract.py`、`test_review_post198_v1_mlip_failure.py`、MLIP 组、执行身份组、`test_v42_executors.py`、`test_v46_application.py`、`test_review_fix_execution_policy.py`、`test_arch_review_1029_confgen_xtb_identity.py`，以及所有构造 `StepExecutionRequest` / `ItemExecutionContext` 的测试。
+- A2 之后：原生 / MLIP 启动使用应用层固定的绝对路径，但启动前不再复核该文件的内容。如果 A 在测量和启动之间被原地替换，不会被发现（不在 A2 范围内）。脚本解释器每次启动前都按内容校验，不受此影响。

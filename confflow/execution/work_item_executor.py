@@ -42,9 +42,10 @@ from ..domain.work_item import (
 )
 from .checks import CHECK_DEFAULTS, CheckContext, ScientificCheck
 from .command_resolution import (
+    ResolvedCommand,
     enforce_command_policy,
     launch_environment,
-    locate_command,
+    pinned_or_located,
 )
 from .contracts import ExecutionBinding
 from .execution_adapters import DRIVING_STRUCTURE_PORT
@@ -285,6 +286,9 @@ class ItemExecutionContext:
     executor_capability: str | None = None
     #: Compile-time script identity the launch must still match (script steps).
     expected_script_identity: FrozenDict | None = None
+    #: The step's one command resolution (configured name and absolute file).  Policy and
+    #: launch use it and never search PATH again; ``None`` resolves once at the item's entry.
+    resolved_command: ResolvedCommand | None = None
 
     def item_directory(self, logical_key: str) -> str:
         """Return the deterministic work directory for a logical key."""
@@ -521,8 +525,11 @@ class WorkItemExecutor:
             item_dir = context.item_directory(work_item.logical_key)
         # Defence in depth: direct batch callers bypass the step-level policy check, so the
         # binding's allow-list and sandbox are enforced here before the item directory exists.
+        # The program is resolved once here (or pinned by the application); policy and launch
+        # both use that one result.
         try:
-            self._enforce_policy(context, item_dir)
+            command = self._launch_command(context)
+            self._enforce_policy(context, item_dir, command)
         except DomainError as exc:
             return self._finish_error(
                 work_item,
@@ -612,7 +619,7 @@ class WorkItemExecutor:
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(entry.content)
         try:
-            executable = self._resolve_executable(context, item_dir)
+            executable = self._resolve_executable(context, command, item_dir)
         except DomainError as exc:
             return self._finish_error(
                 work_item,
@@ -1112,14 +1119,34 @@ class WorkItemExecutor:
             return binding.executable
         return getattr(context.adapter, "default_executable", None)
 
-    def _enforce_policy(self, context: ItemExecutionContext, item_dir: str) -> None:
+    def _launch_command(self, context: ItemExecutionContext) -> ResolvedCommand | None:
+        """Return the one command this item launches, else None when nothing is configured.
+
+        The application's pinned resolution is reused when present.  Otherwise the configured
+        name is resolved here once, on the step's launch environment, and the result is reused
+        by policy and launch for this item.  ``None`` means the program does not resolve.
+        """
+        candidate = self._policy_candidate(context)
+        if candidate is None:
+            return None
+        return pinned_or_located(
+            candidate,
+            launch_environment(context.native_env, context.execution_binding),
+            context.resolved_command,
+        )
+
+    def _enforce_policy(
+        self,
+        context: ItemExecutionContext,
+        item_dir: str,
+        command: ResolvedCommand | None,
+    ) -> None:
         """Enforce the binding's allow-list and sandbox for one item launch.
 
-        Called before any item file is written: the program is resolved once on the step's
-        launch environment and checked by its configured name and its resolved file.  A
-        program that does not resolve is not an error here (it fails in
-        :meth:`_resolve_executable`), so a forbidden program is rejected even when it is
-        missing.  A no-op without a binding.
+        Called before any item file is written.  The program is checked by its configured
+        name and by the one resolved file *command* (the file the launch uses).  A program that
+        does not resolve is not an error here (it fails in :meth:`_resolve_executable`), so a
+        forbidden program is rejected even when it is missing.  A no-op without a binding.
         """
         binding = context.execution_binding
         if binding is None:
@@ -1137,19 +1164,23 @@ class WorkItemExecutor:
         enforce_command_policy(
             binding,
             configured=candidate,
-            resolved=locate_command(candidate, launch_environment(context.native_env, binding)),
+            resolved=command,
             write_paths=(item_dir,),
             label=f"step {context.step_id!r} executable",
         )
 
-    def _resolve_executable(self, context: ItemExecutionContext, item_dir: str = "") -> str:
-        """Return the one absolute file to launch, resolved on the step's launch environment."""
+    def _resolve_executable(
+        self,
+        context: ItemExecutionContext,
+        command: ResolvedCommand | None,
+        item_dir: str = "",
+    ) -> str:
+        """Return the one absolute file to launch: the file *command* resolved to."""
         binding = context.execution_binding
         candidate = self._policy_candidate(context)
         if candidate is None:
             raise DomainError("no executable configured for this step")
-        resolved = locate_command(candidate, launch_environment(context.native_env, binding))
-        if resolved is None:
+        if command is None:
             if os.path.isabs(candidate):
                 raise DomainError(f"executable not found: {candidate!r}")
             raise DomainError(
@@ -1161,11 +1192,11 @@ class WorkItemExecutor:
             enforce_command_policy(
                 binding,
                 configured=candidate,
-                resolved=resolved,
+                resolved=command,
                 write_paths=(item_dir,) if item_dir else (),
                 label=f"step {context.step_id!r} executable",
             )
-        return resolved.absolute
+        return command.absolute
 
     def _stage_checkpoints(
         self, work_item: WorkItem, context: ItemExecutionContext, item_dir: str
