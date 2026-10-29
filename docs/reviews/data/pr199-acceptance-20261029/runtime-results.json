@@ -1,0 +1,246 @@
+{
+  "root": "/tmp/post198-runtime-probes.s640dqty",
+  "backend_outage": {
+    "first": {
+      "status": "failed",
+      "structures": [
+        0
+      ],
+      "results": [
+        0
+      ],
+      "diagnostics": [
+        {
+          "code": "mlip_backend_failed",
+          "message": "mlip model backend failed to load: RuntimeError: temporary model/backend initialization failure",
+          "details": {
+            "retryable": true
+          }
+        }
+      ],
+      "errors": [
+        "mlip model backend failed to load: RuntimeError: temporary model/backend initialization failure"
+      ]
+    },
+    "resumed": {
+      "status": "completed",
+      "structures": [
+        1
+      ],
+      "results": [
+        1
+      ],
+      "diagnostics": [
+        {
+          "code": "mlip_completed",
+          "message": "mlip sp (uma-s-1p2p1, lbfgs) kept 1 of 1: sp 1, relaxed 0, not converged 0, dropped error 0, dropped stretch 0",
+          "details": {
+            "inputs": 1,
+            "mode": "sp",
+            "model": "uma-s-1p2p1",
+            "optimizer": "lbfgs",
+            "model_sha256": "16c9615091b2054ec980b5f62c71cb2bd8c3e5007f4109cf7ab783d0fa2d11fa",
+            "sp_count": 1,
+            "relaxed_count": 0,
+            "not_converged": 0,
+            "dropped_error": 0,
+            "dropped_stretch": 0,
+            "error_rows": [],
+            "wall_s": 0.001,
+            "mean_n_evals": null,
+            "mean_wall_s": null
+          }
+        }
+      ],
+      "errors": []
+    },
+    "fresh": {
+      "status": "completed",
+      "structures": [
+        1
+      ],
+      "results": [
+        1
+      ],
+      "diagnostics": [
+        {
+          "code": "mlip_completed",
+          "message": "mlip sp (uma-s-1p2p1, lbfgs) kept 1 of 1: sp 1, relaxed 0, not converged 0, dropped error 0, dropped stretch 0",
+          "details": {
+            "inputs": 1,
+            "mode": "sp",
+            "model": "uma-s-1p2p1",
+            "optimizer": "lbfgs",
+            "model_sha256": "16c9615091b2054ec980b5f62c71cb2bd8c3e5007f4109cf7ab783d0fa2d11fa",
+            "sp_count": 1,
+            "relaxed_count": 0,
+            "not_converged": 0,
+            "dropped_error": 0,
+            "dropped_stretch": 0,
+            "error_rows": [],
+            "wall_s": 0.001,
+            "mean_n_evals": null,
+            "mean_wall_s": null
+          }
+        }
+      ],
+      "errors": []
+    },
+    "runner_launches": [
+      "runner",
+      "runner",
+      "runner"
+    ]
+  },
+  "mlip_allow_name": {
+    "status": "completed",
+    "structures": [
+      1
+    ],
+    "results": [
+      1
+    ],
+    "diagnostics": [
+      {
+        "code": "mlip_completed",
+        "message": "mlip sp (uma-s-1p2p1, lbfgs) kept 1 of 1: sp 1, relaxed 0, not converged 0, dropped error 0, dropped stretch 0",
+        "details": {
+          "inputs": 1,
+          "mode": "sp",
+          "model": "uma-s-1p2p1",
+          "optimizer": "lbfgs",
+          "model_sha256": "fake",
+          "sp_count": 1,
+          "relaxed_count": 0,
+          "not_converged": 0,
+          "dropped_error": 0,
+          "dropped_stretch": 0,
+          "error_rows": [],
+          "wall_s": 0.1,
+          "mean_n_evals": null,
+          "mean_wall_s": null
+        }
+      }
+    ],
+    "errors": []
+  },
+  "mlip_allow_absolute": {
+    "status": "completed",
+    "structures": [
+      1
+    ],
+    "results": [
+      1
+    ],
+    "diagnostics": [
+      {
+        "code": "mlip_completed",
+        "message": "mlip sp (uma-s-1p2p1, lbfgs) kept 1 of 1: sp 1, relaxed 0, not converged 0, dropped error 0, dropped stretch 0",
+        "details": {
+          "inputs": 1,
+          "mode": "sp",
+          "model": "uma-s-1p2p1",
+          "optimizer": "lbfgs",
+          "model_sha256": "fake",
+          "sp_count": 1,
+          "relaxed_count": 0,
+          "not_converged": 0,
+          "dropped_error": 0,
+          "dropped_stretch": 0,
+          "error_rows": [],
+          "wall_s": 0.1,
+          "mean_n_evals": null,
+          "mean_wall_s": null
+        }
+      }
+    ],
+    "errors": []
+  },
+  "script_allow_name": {
+    "status": "completed",
+    "structures": [
+      1
+    ],
+    "results": [
+      0
+    ],
+    "diagnostics": [
+      {
+        "code": "script_completed",
+        "message": "script 'echo' completed for 16134f07d48144209d8ccb92e566a80f",
+        "details": {
+          "script_id": "echo",
+          "script_path": "/tmp/post198-runtime-probes.s640dqty/echo_env.py",
+          "script_sha256": "4388a63693a86625917bc3faaad533b9a92672694bc95a9c3f1fc0e8d90b5169",
+          "interpreter": "/usr/bin/python3",
+          "argv": [
+            "/usr/bin/python3",
+            "/tmp/post198-runtime-probes.s640dqty/echo_env.py"
+          ],
+          "item_key": "2f5fc0d6720c292c73c038f38bec6c64",
+          "exit_code": 0,
+          "elapsed_seconds": 0.20141694997437298
+        }
+      }
+    ],
+    "errors": []
+  },
+  "script_allow_absolute": {
+    "status": "completed",
+    "structures": [
+      1
+    ],
+    "results": [
+      0
+    ],
+    "diagnostics": [
+      {
+        "code": "script_completed",
+        "message": "script 'echo' completed for c17ba17728ca455ea7b6aa596d9eff62",
+        "details": {
+          "script_id": "echo",
+          "script_path": "/tmp/post198-runtime-probes.s640dqty/echo_env.py",
+          "script_sha256": "4388a63693a86625917bc3faaad533b9a92672694bc95a9c3f1fc0e8d90b5169",
+          "interpreter": "/usr/bin/python3",
+          "argv": [
+            "/usr/bin/python3",
+            "/tmp/post198-runtime-probes.s640dqty/echo_env.py"
+          ],
+          "item_key": "21f337b3f6501d69f396b87858c47b62",
+          "exit_code": 0,
+          "elapsed_seconds": 0.2015919799450785
+        }
+      }
+    ],
+    "errors": []
+  },
+  "script_launches": [
+    "run",
+    "run"
+  ],
+  "native_binding_path": {
+    "report": {
+      "status": "completed",
+      "structures": [
+        1
+      ],
+      "results": [
+        1
+      ],
+      "diagnostics": [
+        {
+          "code": "native_termination",
+          "message": "Native program reported normal termination.",
+          "details": {
+            "terminated": true
+          }
+        }
+      ],
+      "errors": []
+    },
+    "launches": [
+      "B"
+    ],
+    "expected": "/tmp/post198-runtime-probes.s640dqty/B/orca"
+  }
+}

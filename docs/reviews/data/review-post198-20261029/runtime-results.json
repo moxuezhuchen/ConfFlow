@@ -1,0 +1,261 @@
+{
+  "root": "/tmp/post198-runtime-probes.gzyo_b0q",
+  "backend_outage": {
+    "first": {
+      "status": "completed",
+      "structures": [
+        0
+      ],
+      "results": [
+        0
+      ],
+      "diagnostics": [
+        {
+          "code": "mlip_completed",
+          "message": "mlip sp (uma-s-1p2p1, lbfgs) kept 0 of 1: sp 0, relaxed 0, not converged 0, dropped error 1, dropped stretch 0",
+          "details": {
+            "inputs": 1,
+            "mode": "sp",
+            "model": "uma-s-1p2p1",
+            "optimizer": "lbfgs",
+            "model_sha256": "16c9615091b2054ec980b5f62c71cb2bd8c3e5007f4109cf7ab783d0fa2d11fa",
+            "sp_count": 0,
+            "relaxed_count": 0,
+            "not_converged": 0,
+            "dropped_error": 1,
+            "dropped_stretch": 0,
+            "error_rows": [
+              "FrozenDict({'id': '215b49ed9212449287be4b75428c5481', 'stage': 'sp', 'error': 'RuntimeError: backend failed to load: RuntimeError: temporary model/backend initialization failure'})"
+            ],
+            "wall_s": 0.001,
+            "mean_n_evals": null,
+            "mean_wall_s": null
+          }
+        },
+        {
+          "code": "mlip_dropped",
+          "message": "dropped 1 with errors and 0 for bond stretch",
+          "details": {
+            "error": [
+              "215b49ed9212449287be4b75428c5481"
+            ],
+            "stretch": []
+          }
+        }
+      ],
+      "errors": []
+    },
+    "resumed": {
+      "status": "completed",
+      "structures": [
+        0
+      ],
+      "results": [
+        0
+      ],
+      "diagnostics": [
+        {
+          "code": "mlip_completed",
+          "message": "mlip sp (uma-s-1p2p1, lbfgs) kept 0 of 1: sp 0, relaxed 0, not converged 0, dropped error 1, dropped stretch 0",
+          "details": {
+            "dropped_error": 1,
+            "dropped_stretch": 0,
+            "error_rows": [
+              "FrozenDict({'error': 'RuntimeError: backend failed to load: RuntimeError: temporary model/backend initialization failure', 'id': '215b49ed9212449287be4b75428c5481', 'stage': 'sp'})"
+            ],
+            "inputs": 1,
+            "mean_n_evals": null,
+            "mean_wall_s": null,
+            "mode": "sp",
+            "model": "uma-s-1p2p1",
+            "model_sha256": "16c9615091b2054ec980b5f62c71cb2bd8c3e5007f4109cf7ab783d0fa2d11fa",
+            "not_converged": 0,
+            "optimizer": "lbfgs",
+            "relaxed_count": 0,
+            "sp_count": 0,
+            "wall_s": 0.001
+          }
+        },
+        {
+          "code": "mlip_dropped",
+          "message": "dropped 1 with errors and 0 for bond stretch",
+          "details": {
+            "error": [
+              "215b49ed9212449287be4b75428c5481"
+            ],
+            "stretch": []
+          }
+        },
+        {
+          "code": "reuse_hit",
+          "message": "work item reused from durable completed result",
+          "details": {
+            "reused_from": "wi:uma:all"
+          }
+        }
+      ],
+      "errors": []
+    },
+    "fresh": {
+      "status": "completed",
+      "structures": [
+        1
+      ],
+      "results": [
+        1
+      ],
+      "diagnostics": [
+        {
+          "code": "mlip_completed",
+          "message": "mlip sp (uma-s-1p2p1, lbfgs) kept 1 of 1: sp 1, relaxed 0, not converged 0, dropped error 0, dropped stretch 0",
+          "details": {
+            "inputs": 1,
+            "mode": "sp",
+            "model": "uma-s-1p2p1",
+            "optimizer": "lbfgs",
+            "model_sha256": "16c9615091b2054ec980b5f62c71cb2bd8c3e5007f4109cf7ab783d0fa2d11fa",
+            "sp_count": 1,
+            "relaxed_count": 0,
+            "not_converged": 0,
+            "dropped_error": 0,
+            "dropped_stretch": 0,
+            "error_rows": [],
+            "wall_s": 0.001,
+            "mean_n_evals": null,
+            "mean_wall_s": null
+          }
+        }
+      ],
+      "errors": []
+    },
+    "runner_launches": [
+      "runner",
+      "runner"
+    ]
+  },
+  "mlip_allow_name": {
+    "status": "failed",
+    "structures": [
+      0
+    ],
+    "results": [
+      0
+    ],
+    "diagnostics": [
+      {
+        "code": "native_input_error",
+        "message": "mlip interpreter is not allowed by allowed_executables: /usr/bin/python3",
+        "details": {}
+      }
+    ],
+    "errors": []
+  },
+  "mlip_allow_absolute": {
+    "status": "completed",
+    "structures": [
+      1
+    ],
+    "results": [
+      1
+    ],
+    "diagnostics": [
+      {
+        "code": "mlip_completed",
+        "message": "mlip sp (uma-s-1p2p1, lbfgs) kept 1 of 1: sp 1, relaxed 0, not converged 0, dropped error 0, dropped stretch 0",
+        "details": {
+          "inputs": 1,
+          "mode": "sp",
+          "model": "uma-s-1p2p1",
+          "optimizer": "lbfgs",
+          "model_sha256": "fake",
+          "sp_count": 1,
+          "relaxed_count": 0,
+          "not_converged": 0,
+          "dropped_error": 0,
+          "dropped_stretch": 0,
+          "error_rows": [],
+          "wall_s": 0.1,
+          "mean_n_evals": null,
+          "mean_wall_s": null
+        }
+      }
+    ],
+    "errors": []
+  },
+  "script_allow_name": {
+    "status": "failed",
+    "structures": [
+      0
+    ],
+    "results": [
+      0
+    ],
+    "diagnostics": [
+      {
+        "code": "script_failed",
+        "message": "script interpreter is not allowed by allowed_executables: /usr/bin/python3",
+        "details": {}
+      }
+    ],
+    "errors": [
+      "script interpreter is not allowed by allowed_executables: /usr/bin/python3"
+    ]
+  },
+  "script_allow_absolute": {
+    "status": "completed",
+    "structures": [
+      1
+    ],
+    "results": [
+      0
+    ],
+    "diagnostics": [
+      {
+        "code": "script_completed",
+        "message": "script 'echo' completed for 1bb96b796994432d8d223b095ef47cdd",
+        "details": {
+          "script_id": "echo",
+          "script_path": "/tmp/post198-runtime-probes.gzyo_b0q/echo_env.py",
+          "script_sha256": "9788cd3dc999206634487e15da4155a0569922c5570a7d4c581f1ff49da11888",
+          "interpreter": "/usr/bin/python3",
+          "argv": [
+            "/usr/bin/python3",
+            "/tmp/post198-runtime-probes.gzyo_b0q/echo_env.py"
+          ],
+          "item_key": "2e3286df6e28f93067650e0db83b1654",
+          "exit_code": 0,
+          "elapsed_seconds": 0.21656243491452187
+        }
+      }
+    ],
+    "errors": []
+  },
+  "script_launches": [
+    "run"
+  ],
+  "native_binding_path": {
+    "report": {
+      "status": "completed",
+      "structures": [
+        1
+      ],
+      "results": [
+        1
+      ],
+      "diagnostics": [
+        {
+          "code": "native_termination",
+          "message": "Native program reported normal termination.",
+          "details": {
+            "terminated": true
+          }
+        }
+      ],
+      "errors": []
+    },
+    "launches": [
+      "A"
+    ],
+    "expected": "/tmp/post198-runtime-probes.gzyo_b0q/B/orca"
+  }
+}

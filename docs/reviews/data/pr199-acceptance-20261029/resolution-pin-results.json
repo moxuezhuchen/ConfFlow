@@ -1,0 +1,66 @@
+{
+  "root": "/tmp/pr199-resolution-pin.nm66pm5b",
+  "mlip": {
+    "first": {
+      "status": "completed",
+      "energies": [
+        -10.0
+      ],
+      "codes": [
+        "mlip_completed"
+      ]
+    },
+    "resumed": {
+      "status": "completed",
+      "energies": [
+        -10.0
+      ],
+      "codes": [
+        "mlip_completed",
+        "reuse_hit"
+      ]
+    },
+    "control": {
+      "status": "completed",
+      "energies": [
+        -5.0
+      ],
+      "codes": [
+        "mlip_completed"
+      ]
+    },
+    "first_log": [
+      "probe:A",
+      "launch:B"
+    ],
+    "resumed_log": [
+      "probe:A",
+      "launch:B",
+      "probe:A"
+    ],
+    "all_log": [
+      "probe:A",
+      "launch:B",
+      "probe:A",
+      "probe:A",
+      "launch:A"
+    ]
+  },
+  "native": {
+    "report": {
+      "status": "completed",
+      "energies": [
+        -76.4601112223,
+        -76.4601112223
+      ],
+      "codes": [
+        "native_termination",
+        "native_termination"
+      ]
+    },
+    "launches": [
+      "A",
+      "B"
+    ]
+  }
+}

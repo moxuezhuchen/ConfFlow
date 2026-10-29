@@ -1,0 +1,34 @@
+{
+  "root": "/tmp/pr199-runner-upgrade.bsmxdxo6",
+  "initial": {
+    "status": "completed",
+    "energy": [
+      -1.0
+    ],
+    "codes": [
+      "mlip_completed"
+    ],
+    "launches": 1
+  },
+  "unchanged_resume": {
+    "status": "completed",
+    "energy": [
+      -1.0
+    ],
+    "codes": [
+      "mlip_completed",
+      "reuse_hit"
+    ],
+    "launches": 1
+  },
+  "upgraded_resume": {
+    "status": "completed",
+    "energy": [
+      -1.0
+    ],
+    "codes": [
+      "mlip_completed"
+    ],
+    "launches": 2
+  }
+}

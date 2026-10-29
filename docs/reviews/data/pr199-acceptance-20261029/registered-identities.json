@@ -1,0 +1,32 @@
+{
+  "mlip-run": [
+    [
+      "wi:uma:all",
+      "sha256:e13811f73977c0d930c92ba97562c8e09218f67fe3260e87075658f75c04cc2a",
+      "completed",
+      1
+    ]
+  ],
+  "mlip-control": [
+    [
+      "wi:uma:all",
+      "sha256:e13811f73977c0d930c92ba97562c8e09218f67fe3260e87075658f75c04cc2a",
+      "completed",
+      1
+    ]
+  ],
+  "native-run": [
+    [
+      "wi:s_opt:s0",
+      "sha256:76d9012fc682efc549ce092157bd3296a27a54354ae7d576ed50ab9b094c040f",
+      "completed",
+      1
+    ],
+    [
+      "wi:s_opt:s1",
+      "sha256:76d9012fc682efc549ce092157bd3296a27a54354ae7d576ed50ab9b094c040f",
+      "completed",
+      1
+    ]
+  ]
+}

@@ -21,7 +21,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 import threading
@@ -32,6 +31,7 @@ from typing import Any, Final
 
 from ..domain._immutable import FrozenDict
 from ..domain.errors import DomainError
+from .command_resolution import locate_command
 from .contracts import ExecutionEnvironment
 from .native import ProgramAdapter
 
@@ -163,6 +163,7 @@ def measure_executable(
     *,
     adapter: ProgramAdapter | None = None,
     max_hash_bytes: int | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> ExecutableIdentity:
     """Measure the full file identity of *candidate*.
 
@@ -180,6 +181,10 @@ def measure_executable(
         Adapter consulted for a safe program-version probe.
     max_hash_bytes : int | None
         Deprecated, ignored. Full content is always hashed.
+    env : Mapping[str, str] | None
+        The effective environment whose ``PATH`` resolves a bare name.  Launch paths pass the
+        step snapshot, or hand in an absolute path already resolved by
+        :func:`command_resolution.resolve_command`.  ``None`` keeps the process environment.
 
     Raises
     ------
@@ -190,7 +195,8 @@ def measure_executable(
     if os.path.isabs(text):
         resolved = text
     else:
-        resolved = shutil.which(text) or ""
+        located = locate_command(text, env if env is not None else os.environ)
+        resolved = located.absolute if located is not None else ""
     if not resolved or not os.path.isfile(resolved):
         raise DomainError(f"executable {candidate!r} did not resolve to a file")
     try:
@@ -390,13 +396,14 @@ def _interpreter_package_versions(
     return versions
 
 
-def _resolve_interpreter(interpreter: str) -> str:
-    """Resolve an interpreter the way the MLIP executor launches it."""
+def _resolve_interpreter(interpreter: str, env: Mapping[str, str]) -> str:
+    """Resolve an interpreter on the MLIP launch environment *env*, as the launch does."""
     text = _validate_executable_candidate(interpreter)
     if os.path.isabs(text):
         resolved: str | None = text
     else:
-        resolved = shutil.which(text)
+        located = locate_command(text, env)
+        resolved = located.absolute if located is not None else None
     if not resolved or not os.path.isfile(resolved):
         raise DomainError(f"mlip interpreter {interpreter!r} does not resolve to a file")
     return resolved
@@ -424,7 +431,7 @@ def mlip_runtime_identity(
     part makes the whole identity ``None`` so the caller can fail closed.
     """
     try:
-        real_interpreter = _resolve_interpreter(interpreter)
+        real_interpreter = _resolve_interpreter(interpreter, env)
         interpreter_sha = _content_sha256(real_interpreter)
         runner_sha = _content_sha256(runner_path)
         model_text = env.get(model_env, "").strip()
