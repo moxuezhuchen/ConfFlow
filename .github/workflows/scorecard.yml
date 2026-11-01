@@ -33,7 +33,7 @@ jobs:
           persist-credentials: false
 
       - name: Run Scorecard
-        uses: ossf/scorecard-action@v2.4.4
+        uses: ossf/scorecard-action@v2.5.0
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           results_file: scorecard-results.sarif
